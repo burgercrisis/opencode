@@ -228,16 +228,7 @@ export function Session() {
   let prompt: PromptRef
   const keybind = useKeybind()
 
-  // Allow exit when in child session (prompt is hidden)
-  const exit = useExit()
-  useKeyboard((evt) => {
-    if (!session()?.parentID) return
-    if (keybind.match("app_exit", evt)) {
-      exit()
-    }
-  })
-
-  // Helper: Find next visible message boundary in direction
+<  // Helper: Find next visible message boundary in direction
   const findNextVisibleMessage = (direction: "next" | "prev"): string | null => {
     const children = scroll.getChildren()
     const messagesList = messages()
@@ -282,6 +273,15 @@ export function Session() {
     if (child) scroll.scrollBy(child.y - scroll.y - 1)
     dialog.clear()
   }
+
+  // Allow exit when in child session (prompt is hidden)
+  const exit = useExit()
+  useKeyboard((evt) => {
+    if (!session()?.parentID) return
+    if (keybind.match("app_exit", evt)) {
+      exit()
+    }
+  })
 
   function toBottom() {
     setTimeout(() => {
@@ -736,7 +736,11 @@ export function Session() {
       value: "session.message.next",
       keybind: "messages_next",
       category: "Session",
+<<<<<<< HEAD
       hidden: true,
+=======
+      disabled: true,
+>>>>>>> af214d35c (Add keybindable commands to navigate between user messages (#5078))
       onSelect: (dialog) => scrollToMessage("next", dialog),
     },
     {
@@ -744,7 +748,11 @@ export function Session() {
       value: "session.message.previous",
       keybind: "messages_previous",
       category: "Session",
+<<<<<<< HEAD
       hidden: true,
+=======
+      disabled: true,
+>>>>>>> af214d35c (Add keybindable commands to navigate between user messages (#5078))
       onSelect: (dialog) => scrollToMessage("prev", dialog),
     },
     {
@@ -2162,6 +2170,7 @@ function filetype(input?: string) {
   if (["typescriptreact", "javascriptreact", "javascript"].includes(language)) return "typescript"
   return language
 }
+
 
 
 
