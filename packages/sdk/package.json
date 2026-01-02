@@ -1,0 +1,11 @@
+{
+    "name": "@opencode-ai/sdk",
+    "version": "1.0.0",
+    "type": "module",
+    "main": "index.ts",
+    "exports": {
+        ".": "./index.ts",
+        "./v2": "./v2.ts",
+        "./v2/client": "./v2/client.ts"
+    }
+}

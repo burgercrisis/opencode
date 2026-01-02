@@ -1,0 +1,18 @@
+{
+  "name": "@opencode-ai/util",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "index.ts",
+  "exports": {
+    ".": "./index.ts",
+    "./path": "./path.ts",
+    "./error": "./error.ts",
+    "./fn": "./fn.ts",
+    "./lazy": "./lazy.ts",
+    "./binary": "./binary.ts",
+    "./encode": "./encode.ts",
+    "./iife": "./iife.ts",
+    "./retry": "./retry.ts",
+    "./identifier": "./identifier.ts"
+  }
+}

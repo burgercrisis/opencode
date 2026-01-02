@@ -1,0 +1,11 @@
+{
+    "extends": "../../tsconfig.json",
+    "compilerOptions": {
+        "skipLibCheck": true
+    },
+    "exclude": [
+        "../desktop/src-tauri/target/**",
+        "../desktop/dist/**",
+        "node_modules/.ts-dist"
+    ]
+}
