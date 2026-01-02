@@ -39,6 +39,7 @@ await Bun.file(`./dist/${pkg.name}/package.json`).write(
 const tags = [Script.channel]
 
 const tasks = Object.entries(binaries).map(async ([name]) => {
+  // Windows compatibility: chmod skipped on Windows as it's not supported
   if (process.platform !== "win32") {
     await $`chmod -R 755 .`.cwd(`./dist/${name}`)
   }

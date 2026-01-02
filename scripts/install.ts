@@ -95,7 +95,8 @@ async function checkInstalledVersion(): Promise<string | null> {
 
 // Get latest version from GitHub
 async function getLatestVersion(): Promise<string> {
-  const response = await fetch('https://api.github.com/repos/sst/opencode/releases/latest');
+  const repo = process.env.OPENCODE_REPO || 'sst/opencode';
+  const response = await fetch(`https://api.github.com/repos/${repo}/releases/latest`);
   if (!response.ok) {
     throw new Error('Failed to fetch latest version');
   }
@@ -107,7 +108,8 @@ async function getLatestVersion(): Promise<string> {
 
 // Verify version exists
 async function verifyVersion(version: string): Promise<boolean> {
-  const response = await fetch(`https://github.com/sst/opencode/releases/tag/v${version}`, { method: 'HEAD' });
+  const repo = process.env.OPENCODE_REPO || 'sst/opencode';
+  const response = await fetch(`https://github.com/${repo}/releases/tag/v${version}`, { method: 'HEAD' });
   return response.ok;
 }
 
@@ -147,6 +149,7 @@ async function installOpenCode(requestedVersion?: string): Promise<void> {
   const archiveExt = detectedOs === 'linux' ? '.tar.gz' : '.zip';
 
   // Check for musl (Linux only)
+  // Windows compatibility: Alpine check skipped on Windows as Alpine Linux is not relevant
   if (detectedOs === 'linux') {
     try {
       const alpineCheck = await execCommand('test -f /etc/alpine-release');
@@ -164,6 +167,7 @@ async function installOpenCode(requestedVersion?: string): Promise<void> {
   }
 
   // Check for baseline (x64 only)
+  // Windows compatibility: AVX2 detection skipped on Windows as it's not critical and Node.js APIs don't provide reliable CPU feature detection
   if (detectedArch === 'x64') {
     if (detectedOs === 'linux') {
       try {
@@ -185,6 +189,7 @@ async function installOpenCode(requestedVersion?: string): Promise<void> {
         target += '-baseline';
       }
     }
+    // Windows: No AVX2 check, assume modern Windows x64 supports AVX2
   }
 
   const filename = `${APP}-${target}${archiveExt}`;
@@ -223,9 +228,10 @@ async function installOpenCode(requestedVersion?: string): Promise<void> {
   ensureDir(tmpDir);
 
   try {
+    const repo = process.env.OPENCODE_REPO || 'sst/opencode';
     const url = requestedVersion
-      ? `https://github.com/sst/opencode/releases/download/v${version}/${filename}`
-      : `https://github.com/sst/opencode/releases/latest/download/${filename}`;
+      ? `https://github.com/${repo}/releases/download/v${version}/${filename}`
+      : `https://github.com/${repo}/releases/latest/download/${filename}`;
 
     printMessage('info', `Downloading: ${filename}`);
 

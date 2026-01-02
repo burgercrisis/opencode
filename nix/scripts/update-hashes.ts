@@ -10,6 +10,12 @@ import { writeFileSync, readFileSync, existsSync, mkdtempSync, rmSync } from "fs
 import { tmpdir } from "os";
 import { join } from "path";
 
+// Skip on Windows as Nix doesn't run natively on Windows
+if (process.platform === "win32") {
+  console.log("Skipping Nix hash update on Windows as Nix is not natively supported.");
+  process.exit(0);
+}
+
 const DUMMY = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 const SYSTEM = process.env.SYSTEM || "x86_64-linux";
 const DEFAULT_HASH_FILE = process.env.MODULES_HASH_FILE || "nix/hashes.json";
