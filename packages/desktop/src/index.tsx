@@ -1,6 +1,15 @@
 // @refresh reload
 import { render } from "solid-js/web"
 import { App, PlatformProvider, Platform } from "@opencode-ai/app"
+import { Font } from "@opencode-ai/ui/font"
+import { MarkedProvider } from "@opencode-ai/ui/context"
+import { DiffComponentProvider } from "@opencode-ai/ui/context/diff"
+import { CodeComponentProvider } from "@opencode-ai/ui/context/code"
+import { Diff } from "@opencode-ai/ui/diff"
+import { Code } from "@opencode-ai/ui/code"
+import { ThemeProvider } from "@opencode-ai/ui/theme"
+import { DialogProvider } from "@opencode-ai/ui/context/dialog"
+import { DataProvider } from "@opencode-ai/ui/context"
 import { open, save } from "@tauri-apps/plugin-dialog"
 import { open as shellOpen } from "@tauri-apps/plugin-shell"
 import { type as ostype } from "@tauri-apps/plugin-os"
@@ -197,10 +206,24 @@ root?.addEventListener("mousewheel", (e) => {
 render(() => {
   return (
     <PlatformProvider value={platform}>
-      {ostype() === "macos" && (
-        <div class="bg-background-base border-b border-border-weak-base h-8" data-tauri-drag-region />
-      )}
-      <App />
+      <Font>
+        <ThemeProvider>
+          <DataProvider>
+            <DialogProvider>
+              <MarkedProvider>
+                <DiffComponentProvider component={Diff}>
+                  <CodeComponentProvider component={Code}>
+                    {ostype() === "macos" && (
+                      <div class="bg-background-base border-b border-border-weak-base h-8" data-tauri-drag-region />
+                    )}
+                    <App />
+                  </CodeComponentProvider>
+                </DiffComponentProvider>
+              </MarkedProvider>
+            </DialogProvider>
+          </DataProvider>
+        </ThemeProvider>
+      </Font>
     </PlatformProvider>
   )
 }, root!)

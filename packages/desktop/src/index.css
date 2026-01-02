@@ -1,0 +1,17 @@
+/* Desktop-specific styles */
+body {
+    margin: 0;
+    padding: 0;
+    font-family: var(--font-family-sans);
+}
+
+#root {
+    height: 100vh;
+    width: 100vw;
+}
+
+/* Basic diff styles fallback */
+[data-component="diff"] {
+    font-family: var(--font-family-mono, monospace);
+    font-size: var(--font-size-small, 12px);
+}
