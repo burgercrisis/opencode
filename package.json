@@ -14,7 +14,10 @@
     "analyze:contributors": "bun scripts/analyze-first-time-contributors.ts",
     "analyze:issues": "bun scripts/analyze-recent-weeks.ts",
     "nix:update-hashes": "bun nix/scripts/update-hashes.ts",
-    "install": "bun scripts/install.ts"
+    "install": "bun scripts/install.ts",
+    "desktop:windows": "bun scripts/build-desktop-windows.ts",
+    "desktop-windows": "node scripts/build-desktop-windows.cjs",
+    "build-desktop": "node scripts/build-desktop-windows.cjs"
   },
   "workspaces": {
     "packages": [
