@@ -26,6 +26,10 @@ export namespace ConfigMarkdown {
           path: filePath,
           message: `Failed to parse YAML frontmatter: ${err instanceof Error ? err.message : String(err)}`,
         },
+<<<<<<< HEAD
+=======
+        { cause: err },
+>>>>>>> upstream/dev
       )
     }
   }

@@ -263,12 +263,15 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
             }
           })
         },
+<<<<<<< HEAD
         clearRecent() {
           setStore("recent", [])
         },
         user() {
           return store.user
         },
+=======
+>>>>>>> upstream/dev
         visible(model: ModelKey) {
           const user = store.user.find((x) => x.modelID === model.modelID && x.providerID === model.providerID)
           return (
@@ -436,7 +439,11 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         //   ]
         // })
         // setStore("active", relativePath)
+<<<<<<< HEAD
         context.addActive()
+=======
+        // context.addActive()
+>>>>>>> upstream/dev
         if (options?.pinned) setStore("node", path, "pinned", true)
         if (options?.view && store.node[relativePath].view === undefined) setStore("node", path, "view", options.view)
         if (store.node[relativePath]?.loaded) return
@@ -457,7 +464,11 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
               }),
             )
           })
+<<<<<<< HEAD
           .catch(() => { })
+=======
+          .catch(() => {})
+>>>>>>> upstream/dev
       }
 
       const searchFiles = (query: string) => sdk.client.find.files({ query, dirs: "false" }).then((x) => x.data!)
@@ -544,6 +555,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       }
     })()
 
+<<<<<<< HEAD
     const context = (() => {
       const [store, setStore] = createStore<{
         activeTab: boolean
@@ -598,12 +610,17 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       }
     })()
 
+=======
+>>>>>>> upstream/dev
     const result = {
       slug: createMemo(() => base64Encode(sdk.directory)),
       model,
       agent,
       file,
+<<<<<<< HEAD
       context,
+=======
+>>>>>>> upstream/dev
     }
     return result
   },

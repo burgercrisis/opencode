@@ -27,7 +27,11 @@ export namespace Permission {
       sessionID: z.string(),
       messageID: z.string(),
       callID: z.string().optional(),
+<<<<<<< HEAD
       title: z.string(),
+=======
+      message: z.string(),
+>>>>>>> upstream/dev
       metadata: z.record(z.string(), z.any()),
       time: z.object({
         created: z.number(),
@@ -99,7 +103,11 @@ export namespace Permission {
 
   export async function ask(input: {
     type: Info["type"]
+<<<<<<< HEAD
     title: Info["title"]
+=======
+    message: Info["message"]
+>>>>>>> upstream/dev
     pattern?: Info["pattern"]
     callID?: Info["callID"]
     sessionID: Info["sessionID"]
@@ -123,7 +131,11 @@ export namespace Permission {
       sessionID: input.sessionID,
       messageID: input.messageID,
       callID: input.callID,
+<<<<<<< HEAD
       title: input.title,
+=======
+      message: input.message,
+>>>>>>> upstream/dev
       metadata: input.metadata,
       time: {
         created: Date.now(),

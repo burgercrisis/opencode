@@ -31,9 +31,15 @@ export const ImportCommand = cmd({
       const isUrl = args.file.startsWith("http://") || args.file.startsWith("https://")
 
       if (isUrl) {
+<<<<<<< HEAD
         const urlMatch = args.file.match(/https?:\/\/opncd\.ai\/s\/([a-zA-Z0-9_-]+)/)
         if (!urlMatch) {
           process.stdout.write(`Invalid URL format. Expected: https://opncd.ai/s/<slug>`)
+=======
+        const urlMatch = args.file.match(/https?:\/\/opncd\.ai\/share\/([a-zA-Z0-9_-]+)/)
+        if (!urlMatch) {
+          process.stdout.write(`Invalid URL format. Expected: https://opncd.ai/share/<slug>`)
+>>>>>>> upstream/dev
           process.stdout.write(EOL)
           return
         }

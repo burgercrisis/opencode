@@ -19,6 +19,10 @@ import type {
   EventSubscribeResponses,
   EventTuiCommandExecute,
   EventTuiPromptAppend,
+<<<<<<< HEAD
+=======
+  EventTuiSessionSelect,
+>>>>>>> upstream/dev
   EventTuiToastShow,
   FileListResponses,
   FilePartInput,
@@ -55,8 +59,16 @@ import type {
   PartUpdateResponses,
   PathGetResponses,
   PermissionListResponses,
+<<<<<<< HEAD
   PermissionRespondErrors,
   PermissionRespondResponses,
+=======
+  PermissionReplyErrors,
+  PermissionReplyResponses,
+  PermissionRespondErrors,
+  PermissionRespondResponses,
+  PermissionRuleset,
+>>>>>>> upstream/dev
   ProjectCurrentResponses,
   ProjectListResponses,
   ProjectUpdateErrors,
@@ -116,10 +128,15 @@ import type {
   SessionSummarizeResponses,
   SessionTodoErrors,
   SessionTodoResponses,
+<<<<<<< HEAD
 SessionUnrevertErrors,
   SessionUnrevertResponses,
   SessionRevertFilesErrors,
   SessionRevertFilesResponses,
+=======
+  SessionUnrevertErrors,
+  SessionUnrevertResponses,
+>>>>>>> upstream/dev
   SessionUnshareErrors,
   SessionUnshareResponses,
   SessionUpdateErrors,
@@ -143,9 +160,21 @@ SessionUnrevertErrors,
   TuiOpenThemesResponses,
   TuiPublishErrors,
   TuiPublishResponses,
+<<<<<<< HEAD
   TuiShowToastResponses,
   TuiSubmitPromptResponses,
   VcsGetResponses,
+=======
+  TuiSelectSessionErrors,
+  TuiSelectSessionResponses,
+  TuiShowToastResponses,
+  TuiSubmitPromptResponses,
+  VcsGetResponses,
+  WorktreeCreateErrors,
+  WorktreeCreateInput,
+  WorktreeCreateResponses,
+  WorktreeListResponses,
+>>>>>>> upstream/dev
 } from "./types.gen.js"
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean> = Options2<
@@ -679,6 +708,65 @@ export class Path extends HeyApiClient {
   }
 }
 
+<<<<<<< HEAD
+=======
+export class Worktree extends HeyApiClient {
+  /**
+   * List worktrees
+   *
+   * List all sandbox worktrees for the current project.
+   */
+  public list<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "query", key: "directory" }] }])
+    return (options?.client ?? this.client).get<WorktreeListResponses, unknown, ThrowOnError>({
+      url: "/experimental/worktree",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Create worktree
+   *
+   * Create a new git worktree for the current project.
+   */
+  public create<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      worktreeCreateInput?: WorktreeCreateInput
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { key: "worktreeCreateInput", map: "body" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<WorktreeCreateResponses, WorktreeCreateErrors, ThrowOnError>({
+      url: "/experimental/worktree",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+}
+
+>>>>>>> upstream/dev
 export class Vcs extends HeyApiClient {
   /**
    * Get VCS info
@@ -730,6 +818,10 @@ export class Session extends HeyApiClient {
       directory?: string
       parentID?: string
       title?: string
+<<<<<<< HEAD
+=======
+      permission?: PermissionRuleset
+>>>>>>> upstream/dev
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -741,6 +833,10 @@ export class Session extends HeyApiClient {
             { in: "query", key: "directory" },
             { in: "body", key: "parentID" },
             { in: "body", key: "title" },
+<<<<<<< HEAD
+=======
+            { in: "body", key: "permission" },
+>>>>>>> upstream/dev
           ],
         },
       ],
@@ -1507,12 +1603,17 @@ export class Session extends HeyApiClient {
         },
       ],
     )
+<<<<<<< HEAD
 return (options?.client ?? this.client).post<SessionUnrevertResponses, SessionUnrevertErrors, ThrowOnError>({
+=======
+    return (options?.client ?? this.client).post<SessionUnrevertResponses, SessionUnrevertErrors, ThrowOnError>({
+>>>>>>> upstream/dev
       url: "/session/{sessionID}/unrevert",
       ...options,
       ...params,
     })
   }
+<<<<<<< HEAD
 
   /**
    * Revert specific files
@@ -1534,6 +1635,8 @@ return (options?.client ?? this.client).post<SessionUnrevertResponses, SessionUn
       ...params,
     })
   }
+=======
+>>>>>>> upstream/dev
 }
 
 export class Part extends HeyApiClient {
@@ -1614,6 +1717,11 @@ export class Permission extends HeyApiClient {
    * Respond to permission
    *
    * Approve or deny a permission request from the AI assistant.
+<<<<<<< HEAD
+=======
+   *
+   * @deprecated
+>>>>>>> upstream/dev
    */
   public respond<ThrowOnError extends boolean = false>(
     parameters: {
@@ -1650,6 +1758,48 @@ export class Permission extends HeyApiClient {
   }
 
   /**
+<<<<<<< HEAD
+=======
+   * Respond to permission request
+   *
+   * Approve or deny a permission request from the AI assistant.
+   */
+  public reply<ThrowOnError extends boolean = false>(
+    parameters: {
+      requestID: string
+      directory?: string
+      reply?: "once" | "always" | "reject"
+      message?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "requestID" },
+            { in: "query", key: "directory" },
+            { in: "body", key: "reply" },
+            { in: "body", key: "message" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<PermissionReplyResponses, PermissionReplyErrors, ThrowOnError>({
+      url: "/permission/{requestID}/reply",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
+>>>>>>> upstream/dev
    * List pending permissions
    *
    * Get all pending permission requests across all sessions.
@@ -2667,7 +2817,11 @@ export class Tui extends HeyApiClient {
   public publish<ThrowOnError extends boolean = false>(
     parameters?: {
       directory?: string
+<<<<<<< HEAD
       body?: EventTuiPromptAppend | EventTuiCommandExecute | EventTuiToastShow
+=======
+      body?: EventTuiPromptAppend | EventTuiCommandExecute | EventTuiToastShow | EventTuiSessionSelect
+>>>>>>> upstream/dev
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -2684,6 +2838,44 @@ export class Tui extends HeyApiClient {
     })
   }
 
+<<<<<<< HEAD
+=======
+  /**
+   * Select session
+   *
+   * Navigate the TUI to display the specified session.
+   */
+  public selectSession<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      sessionID?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "body", key: "sessionID" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<TuiSelectSessionResponses, TuiSelectSessionErrors, ThrowOnError>({
+      url: "/tui/select-session",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+>>>>>>> upstream/dev
   control = new Control({ client: this.client })
 }
 
@@ -2730,6 +2922,11 @@ export class OpencodeClient extends HeyApiClient {
 
   path = new Path({ client: this.client })
 
+<<<<<<< HEAD
+=======
+  worktree = new Worktree({ client: this.client })
+
+>>>>>>> upstream/dev
   vcs = new Vcs({ client: this.client })
 
   session = new Session({ client: this.client })

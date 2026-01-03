@@ -3,16 +3,28 @@ import path from "path"
 import { PatchTool } from "../../src/tool/patch"
 import { Instance } from "../../src/project/instance"
 import { tmpdir } from "../fixture/fixture"
+<<<<<<< HEAD
 import { Permission } from "../../src/permission"
+=======
+import { PermissionNext } from "../../src/permission/next"
+>>>>>>> upstream/dev
 import * as fs from "fs/promises"
 
 const ctx = {
   sessionID: "test",
   messageID: "",
+<<<<<<< HEAD
   toolCallID: "",
   agent: "build",
   abort: AbortSignal.any([]),
   metadata: () => {},
+=======
+  callID: "",
+  agent: "build",
+  abort: AbortSignal.any([]),
+  metadata: () => {},
+  ask: async () => {},
+>>>>>>> upstream/dev
 }
 
 const patchTool = await PatchTool.init()
@@ -59,7 +71,12 @@ describe("tool.patch", () => {
         patchTool.execute({ patchText: maliciousPatch }, ctx)
         // TODO: this sucks
         await new Promise((resolve) => setTimeout(resolve, 1000))
+<<<<<<< HEAD
         expect(Permission.pending()[ctx.sessionID]).toBeDefined()
+=======
+        const pending = await PermissionNext.list()
+        expect(pending.find((p) => p.sessionID === ctx.sessionID)).toBeDefined()
+>>>>>>> upstream/dev
       },
     })
   })

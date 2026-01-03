@@ -7,7 +7,11 @@ import type {
   Config,
   Todo,
   Command,
+<<<<<<< HEAD
   Permission,
+=======
+  PermissionRequest,
+>>>>>>> upstream/dev
   LspStatus,
   McpStatus,
   FormatterStatus,
@@ -39,7 +43,11 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       agent: Agent[]
       command: Command[]
       permission: {
+<<<<<<< HEAD
         [sessionID: string]: Permission[]
+=======
+        [sessionID: string]: PermissionRequest[]
+>>>>>>> upstream/dev
       }
       config: Config
       session: Session[]
@@ -89,7 +97,11 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       mcp: {},
       formatter: [],
       vcs: undefined,
+<<<<<<< HEAD
       path: { home: "", state: "", config: "", worktree: "", directory: "" },
+=======
+      path: { state: "", config: "", worktree: "", directory: "" },
+>>>>>>> upstream/dev
     })
 
     const sdk = useSDK()
@@ -97,6 +109,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
     sdk.event.listen((e) => {
       const event = e.details
       switch (event.type) {
+<<<<<<< HEAD
         case "permission.updated": {
           const permissions = store.permission[event.properties.sessionID]
           if (!permissions) {
@@ -121,6 +134,15 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
         case "permission.replied": {
           const permissions = store.permission[event.properties.sessionID]
           const match = Binary.search(permissions, event.properties.permissionID, (p) => p.id)
+=======
+        case "server.instance.disposed":
+          bootstrap()
+          break
+        case "permission.replied": {
+          const requests = store.permission[event.properties.sessionID]
+          if (!requests) break
+          const match = Binary.search(requests, event.properties.requestID, (r) => r.id)
+>>>>>>> upstream/dev
           if (!match.found) break
           setStore(
             "permission",
@@ -132,6 +154,31 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           break
         }
 
+<<<<<<< HEAD
+=======
+        case "permission.asked": {
+          const request = event.properties
+          const requests = store.permission[request.sessionID]
+          if (!requests) {
+            setStore("permission", request.sessionID, [request])
+            break
+          }
+          const match = Binary.search(requests, request.id, (r) => r.id)
+          if (match.found) {
+            setStore("permission", request.sessionID, match.index, reconcile(request))
+            break
+          }
+          setStore(
+            "permission",
+            request.sessionID,
+            produce((draft) => {
+              draft.splice(match.index, 0, request)
+            }),
+          )
+          break
+        }
+
+>>>>>>> upstream/dev
         case "todo.updated":
           setStore("todo", event.properties.sessionID, event.properties.todos)
           break
@@ -258,28 +305,48 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
     const args = useArgs()
 
     async function bootstrap() {
+<<<<<<< HEAD
       const sessionListPromise = sdk.client.session.list().then((x) =>
         setStore(
           "session",
           (x.data ?? []).toSorted((a, b) => a.id.localeCompare(b.id)),
         ),
       )
+=======
+      console.log("bootstrapping")
+      const sessionListPromise = sdk.client.session
+        .list()
+        .then((x) => setStore("session", reconcile((x.data ?? []).toSorted((a, b) => a.id.localeCompare(b.id)))))
+>>>>>>> upstream/dev
 
       // blocking - include session.list when continuing a session
       const blockingRequests: Promise<unknown>[] = [
         sdk.client.config.providers({}, { throwOnError: true }).then((x) => {
           batch(() => {
+<<<<<<< HEAD
             setStore("provider", x.data!.providers)
             setStore("provider_default", x.data!.default)
+=======
+            setStore("provider", reconcile(x.data!.providers))
+            setStore("provider_default", reconcile(x.data!.default))
+>>>>>>> upstream/dev
           })
         }),
         sdk.client.provider.list({}, { throwOnError: true }).then((x) => {
           batch(() => {
+<<<<<<< HEAD
             setStore("provider_next", x.data!)
           })
         }),
         sdk.client.app.agents({}, { throwOnError: true }).then((x) => setStore("agent", x.data ?? [])),
         sdk.client.config.get({}, { throwOnError: true }).then((x) => setStore("config", x.data!)),
+=======
+            setStore("provider_next", reconcile(x.data!))
+          })
+        }),
+        sdk.client.app.agents({}, { throwOnError: true }).then((x) => setStore("agent", reconcile(x.data ?? []))),
+        sdk.client.config.get({}, { throwOnError: true }).then((x) => setStore("config", reconcile(x.data!))),
+>>>>>>> upstream/dev
         ...(args.continue ? [sessionListPromise] : []),
       ]
 
@@ -289,6 +356,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           // non-blocking
           Promise.all([
             ...(args.continue ? [] : [sessionListPromise]),
+<<<<<<< HEAD
             sdk.client.command.list().then((x) => setStore("command", x.data ?? [])),
             sdk.client.lsp.status().then((x) => setStore("lsp", x.data!)),
             sdk.client.mcp.status().then((x) => setStore("mcp", x.data!)),
@@ -297,6 +365,18 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
             sdk.client.provider.auth().then((x) => setStore("provider_auth", x.data ?? {})),
             sdk.client.vcs.get().then((x) => setStore("vcs", x.data)),
             sdk.client.path.get().then((x) => setStore("path", x.data!)),
+=======
+            sdk.client.command.list().then((x) => setStore("command", reconcile(x.data ?? []))),
+            sdk.client.lsp.status().then((x) => setStore("lsp", reconcile(x.data!))),
+            sdk.client.mcp.status().then((x) => setStore("mcp", reconcile(x.data!))),
+            sdk.client.formatter.status().then((x) => setStore("formatter", reconcile(x.data!))),
+            sdk.client.session.status().then((x) => {
+              setStore("session_status", reconcile(x.data!))
+            }),
+            sdk.client.provider.auth().then((x) => setStore("provider_auth", reconcile(x.data ?? {}))),
+            sdk.client.vcs.get().then((x) => setStore("vcs", reconcile(x.data))),
+            sdk.client.path.get().then((x) => setStore("path", reconcile(x.data!))),
+>>>>>>> upstream/dev
           ]).then(() => {
             setStore("status", "complete")
           })

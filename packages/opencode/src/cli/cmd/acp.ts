@@ -4,11 +4,16 @@ import { cmd } from "./cmd"
 import { AgentSideConnection, ndJsonStream } from "@agentclientprotocol/sdk"
 import { ACP } from "@/acp/agent"
 import { Server } from "@/server/server"
+<<<<<<< HEAD
 import { createOpencodeClient } from "@opencode-ai/sdk"
+=======
+import { createOpencodeClient } from "@opencode-ai/sdk/v2"
+>>>>>>> upstream/dev
 import { withNetworkOptions, resolveNetworkOptions } from "../network"
 
 const log = Log.create({ service: "acp-command" })
 
+<<<<<<< HEAD
 process.on("unhandledRejection", (reason, promise) => {
   log.error("Unhandled rejection", {
     promise,
@@ -16,6 +21,8 @@ process.on("unhandledRejection", (reason, promise) => {
   })
 })
 
+=======
+>>>>>>> upstream/dev
 export const AcpCommand = cmd({
   command: "acp",
   describe: "start ACP (Agent Client Protocol) server",

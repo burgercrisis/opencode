@@ -2,6 +2,10 @@ import { $ } from "bun"
 import * as fs from "fs/promises"
 import os from "os"
 import path from "path"
+<<<<<<< HEAD
+=======
+import type { Config } from "../../src/config/config"
+>>>>>>> upstream/dev
 
 // Strip null bytes from paths (defensive fix for CI environment issues)
 function sanitizePath(p: string): string {
@@ -10,6 +14,10 @@ function sanitizePath(p: string): string {
 
 type TmpDirOptions<T> = {
   git?: boolean
+<<<<<<< HEAD
+=======
+  config?: Partial<Config.Info>
+>>>>>>> upstream/dev
   init?: (dir: string) => Promise<T>
   dispose?: (dir: string) => Promise<T>
 }
@@ -20,6 +28,18 @@ export async function tmpdir<T>(options?: TmpDirOptions<T>) {
     await $`git init`.cwd(dirpath).quiet()
     await $`git commit --allow-empty -m "root commit ${dirpath}"`.cwd(dirpath).quiet()
   }
+<<<<<<< HEAD
+=======
+  if (options?.config) {
+    await Bun.write(
+      path.join(dirpath, "opencode.json"),
+      JSON.stringify({
+        $schema: "https://opencode.ai/config.json",
+        ...options.config,
+      }),
+    )
+  }
+>>>>>>> upstream/dev
   const extra = await options?.init?.(dirpath)
   const realpath = sanitizePath(await fs.realpath(dirpath))
   const result = {

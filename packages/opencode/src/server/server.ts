@@ -20,8 +20,13 @@ import { LSP } from "../lsp"
 import { Format } from "../format"
 import { MessageV2 } from "../session/message-v2"
 import { TuiRoute } from "./tui"
+<<<<<<< HEAD
 import { Permission } from "../permission"
 import { Instance } from "../project/instance"
+=======
+import { Instance } from "../project/instance"
+import { Project } from "../project/project"
+>>>>>>> upstream/dev
 import { Vcs } from "../project/vcs"
 import { Agent } from "../agent/agent"
 import { Auth } from "../auth"
@@ -47,8 +52,15 @@ import { SessionStatus } from "@/session/status"
 import { upgradeWebSocket, websocket } from "hono/bun"
 import { errors } from "./error"
 import { Pty } from "@/pty"
+<<<<<<< HEAD
 import { Installation } from "@/installation"
 import { MDNS } from "./mdns"
+=======
+import { PermissionNext } from "@/permission/next"
+import { Installation } from "@/installation"
+import { MDNS } from "./mdns"
+import { Worktree } from "../worktree"
+>>>>>>> upstream/dev
 
 // @ts-ignore This global is needed to prevent ai-sdk from logging warnings to stdout https://github.com/vercel/ai/blob/2dc67e0ef538307f21368db32d5a12345d98831b/packages/ai/src/logger/log-warnings.ts#L85
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -75,6 +87,7 @@ export namespace Server {
         log.error("failed", {
           error: err,
         })
+<<<<<<< HEAD
         if (err && typeof err === 'object' && 'name' in err && 'toObject' in err && typeof err.toObject === 'function') {
           const namedError = err as any
           let status: ContentfulStatusCode
@@ -82,6 +95,15 @@ export namespace Server {
           else if (namedError.name === 'ProviderModelNotFoundError') status = 400
           else status = 500
           return c.json(namedError.toObject(), { status })
+=======
+        if (err instanceof NamedError) {
+          let status: ContentfulStatusCode
+          if (err instanceof Storage.NotFoundError) status = 404
+          else if (err instanceof Provider.ModelNotFoundError) status = 400
+          else if (err.name.startsWith("Worktree")) status = 400
+          else status = 500
+          return c.json(err.toObject(), { status })
+>>>>>>> upstream/dev
         }
         const message = err instanceof Error && err.stack ? err.stack : err.toString()
         return c.json(new NamedError.Unknown({ message }).toObject(), {
@@ -611,6 +633,56 @@ export namespace Server {
           })
         },
       )
+<<<<<<< HEAD
+=======
+      .post(
+        "/experimental/worktree",
+        describeRoute({
+          summary: "Create worktree",
+          description: "Create a new git worktree for the current project.",
+          operationId: "worktree.create",
+          responses: {
+            200: {
+              description: "Worktree created",
+              content: {
+                "application/json": {
+                  schema: resolver(Worktree.Info),
+                },
+              },
+            },
+            ...errors(400),
+          },
+        }),
+        validator("json", Worktree.create.schema),
+        async (c) => {
+          const body = c.req.valid("json")
+          const worktree = await Worktree.create(body)
+          return c.json(worktree)
+        },
+      )
+      .get(
+        "/experimental/worktree",
+        describeRoute({
+          summary: "List worktrees",
+          description: "List all sandbox worktrees for the current project.",
+          operationId: "worktree.list",
+          responses: {
+            200: {
+              description: "List of worktree directories",
+              content: {
+                "application/json": {
+                  schema: resolver(z.array(z.string())),
+                },
+              },
+            },
+          },
+        }),
+        async (c) => {
+          const sandboxes = await Project.sandboxes(Instance.project.id)
+          return c.json(sandboxes)
+        },
+      )
+>>>>>>> upstream/dev
       .get(
         "/vcs",
         describeRoute({
@@ -975,6 +1047,10 @@ export namespace Server {
           return c.json(true)
         },
       )
+<<<<<<< HEAD
+=======
+
+>>>>>>> upstream/dev
       .post(
         "/session/:sessionID/share",
         describeRoute({
@@ -1522,6 +1598,7 @@ export namespace Server {
         },
       )
       .post(
+<<<<<<< HEAD
         "/session/:sessionID/revert/files",
         describeRoute({
           summary: "Revert specific files",
@@ -1560,6 +1637,12 @@ export namespace Server {
         "/session/:sessionID/permissions/:permissionID",
         describeRoute({
           summary: "Respond to permission",
+=======
+        "/session/:sessionID/permissions/:permissionID",
+        describeRoute({
+          summary: "Respond to permission",
+          deprecated: true,
+>>>>>>> upstream/dev
           description: "Approve or deny a permission request from the AI assistant.",
           operationId: "permission.respond",
           responses: {
@@ -1581,6 +1664,7 @@ export namespace Server {
             permissionID: z.string(),
           }),
         ),
+<<<<<<< HEAD
         validator("json", z.object({ response: Permission.Response })),
         async (c) => {
           const params = c.req.valid("param")
@@ -1590,6 +1674,50 @@ export namespace Server {
             sessionID,
             permissionID,
             response: c.req.valid("json").response,
+=======
+        validator("json", z.object({ response: PermissionNext.Reply })),
+        async (c) => {
+          const params = c.req.valid("param")
+          PermissionNext.reply({
+            requestID: params.permissionID,
+            reply: c.req.valid("json").response,
+          })
+          return c.json(true)
+        },
+      )
+      .post(
+        "/permission/:requestID/reply",
+        describeRoute({
+          summary: "Respond to permission request",
+          description: "Approve or deny a permission request from the AI assistant.",
+          operationId: "permission.reply",
+          responses: {
+            200: {
+              description: "Permission processed successfully",
+              content: {
+                "application/json": {
+                  schema: resolver(z.boolean()),
+                },
+              },
+            },
+            ...errors(400, 404),
+          },
+        }),
+        validator(
+          "param",
+          z.object({
+            requestID: z.string(),
+          }),
+        ),
+        validator("json", z.object({ reply: PermissionNext.Reply, message: z.string().optional() })),
+        async (c) => {
+          const params = c.req.valid("param")
+          const json = c.req.valid("json")
+          await PermissionNext.reply({
+            requestID: params.requestID,
+            reply: json.reply,
+            message: json.message,
+>>>>>>> upstream/dev
           })
           return c.json(true)
         },
@@ -1605,14 +1733,22 @@ export namespace Server {
               description: "List of pending permissions",
               content: {
                 "application/json": {
+<<<<<<< HEAD
                   schema: resolver(Permission.Info.array()),
+=======
+                  schema: resolver(PermissionNext.Request.array()),
+>>>>>>> upstream/dev
                 },
               },
             },
           },
         }),
         async (c) => {
+<<<<<<< HEAD
           const permissions = Permission.list()
+=======
+          const permissions = await PermissionNext.list()
+>>>>>>> upstream/dev
           return c.json(permissions)
         },
       )
@@ -1693,6 +1829,7 @@ export namespace Server {
           },
         }),
         async (c) => {
+<<<<<<< HEAD
           try {
             const config = await Config.get()
             if (!config) {
@@ -1733,6 +1870,30 @@ export namespace Server {
             console.error("Error in provider route:", error)
             return c.json({ error: "Internal server error" }, { status: 500 })
           }
+=======
+          const config = await Config.get()
+          const disabled = new Set(config.disabled_providers ?? [])
+          const enabled = config.enabled_providers ? new Set(config.enabled_providers) : undefined
+
+          const allProviders = await ModelsDev.get()
+          const filteredProviders: Record<string, (typeof allProviders)[string]> = {}
+          for (const [key, value] of Object.entries(allProviders)) {
+            if ((enabled ? enabled.has(key) : true) && !disabled.has(key)) {
+              filteredProviders[key] = value
+            }
+          }
+
+          const connected = await Provider.list()
+          const providers = Object.assign(
+            mapValues(filteredProviders, (x) => Provider.fromModelsDevProvider(x)),
+            connected,
+          )
+          return c.json({
+            all: Object.values(providers),
+            default: mapValues(providers, (item) => Provider.sort(Object.values(item.models))[0].id),
+            connected: Object.keys(connected),
+          })
+>>>>>>> upstream/dev
         },
       )
       .get(
@@ -2621,6 +2782,35 @@ export namespace Server {
           return c.json(true)
         },
       )
+<<<<<<< HEAD
+=======
+      .post(
+        "/tui/select-session",
+        describeRoute({
+          summary: "Select session",
+          description: "Navigate the TUI to display the specified session.",
+          operationId: "tui.selectSession",
+          responses: {
+            200: {
+              description: "Session selected successfully",
+              content: {
+                "application/json": {
+                  schema: resolver(z.boolean()),
+                },
+              },
+            },
+            ...errors(400, 404),
+          },
+        }),
+        validator("json", TuiEvent.SessionSelect.properties),
+        async (c) => {
+          const { sessionID } = c.req.valid("json")
+          await Session.get(sessionID)
+          await Bus.publish(TuiEvent.SessionSelect, { sessionID })
+          return c.json(true)
+        },
+      )
+>>>>>>> upstream/dev
       .route("/tui/control", TuiRoute)
       .put(
         "/auth/:providerID",
@@ -2711,12 +2901,24 @@ export namespace Server {
         },
       )
       .all("/*", async (c) => {
+<<<<<<< HEAD
         return proxy(`https://app.opencode.ai${c.req.path}`, {
           ...c.req,
           headers: {
             host: "app.opencode.ai",
           },
         })
+=======
+        const path = c.req.path
+        const response = await proxy(`https://app.opencode.ai${path}`, {
+          ...c.req,
+          headers: {
+            ...c.req.raw.headers,
+            host: "app.opencode.ai",
+          },
+        })
+        return response
+>>>>>>> upstream/dev
       }),
   )
 

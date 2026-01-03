@@ -1,5 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
+<<<<<<< HEAD
   "productName": "OpenCode Dev v2",
   "identifier": "ai.opencode.desktop.dev2",
   "mainBinaryName": "OpenCodeDev2",
@@ -7,6 +8,15 @@
   "build": {
     "beforeDevCommand": "bun run dev",
     "devUrl": "http://localhost:8081",
+=======
+  "productName": "OpenCode Dev",
+  "identifier": "ai.opencode.desktop.dev",
+  "mainBinaryName": "OpenCode",
+  "version": "../package.json",
+  "build": {
+    "beforeDevCommand": "bun run dev",
+    "devUrl": "http://localhost:1420",
+>>>>>>> upstream/dev
     "beforeBuildCommand": "bun run build",
     "frontendDist": "../dist"
   },
@@ -26,6 +36,7 @@
       "icons/dev/icon.ico"
     ],
     "active": true,
+<<<<<<< HEAD
     "targets": [
       "deb",
       "rpm",
@@ -37,6 +48,10 @@
     "externalBin": [
       "sidecars/opencode-cli"
     ],
+=======
+    "targets": ["deb", "rpm", "dmg", "nsis", "app", "appimage"],
+    "externalBin": ["sidecars/opencode-cli"],
+>>>>>>> upstream/dev
     "macOS": {
       "entitlements": "./entitlements.plist"
     },
@@ -48,4 +63,8 @@
       }
     }
   }
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> upstream/dev

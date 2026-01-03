@@ -1,9 +1,21 @@
+<<<<<<< HEAD
 import { onCleanup } from "solid-js"
 import { createStore } from "solid-js/store"
 import { createSimpleContext } from "@opencode-ai/ui/context"
 import type { Permission } from "@opencode-ai/sdk/v2/client"
 import { persisted } from "@/utils/persist"
 import { useGlobalSDK } from "@/context/global-sdk"
+=======
+import { createMemo, onCleanup } from "solid-js"
+import { createStore } from "solid-js/store"
+import { createSimpleContext } from "@opencode-ai/ui/context"
+import type { PermissionRequest } from "@opencode-ai/sdk/v2/client"
+import { persisted } from "@/utils/persist"
+import { useGlobalSDK } from "@/context/global-sdk"
+import { useGlobalSync } from "./global-sync"
+import { useParams } from "@solidjs/router"
+import { base64Decode } from "@opencode-ai/util/encode"
+>>>>>>> upstream/dev
 
 type PermissionRespondFn = (input: {
   sessionID: string
@@ -12,16 +24,34 @@ type PermissionRespondFn = (input: {
   directory?: string
 }) => void
 
+<<<<<<< HEAD
 const AUTO_ACCEPT_TYPES = new Set(["edit", "write"])
 
 function shouldAutoAccept(perm: Permission) {
   return AUTO_ACCEPT_TYPES.has(perm.type)
+=======
+function shouldAutoAccept(perm: PermissionRequest) {
+  return perm.permission === "edit"
+>>>>>>> upstream/dev
 }
 
 export const { use: usePermission, provider: PermissionProvider } = createSimpleContext({
   name: "Permission",
   init: () => {
+<<<<<<< HEAD
     const globalSDK = useGlobalSDK()
+=======
+    const params = useParams()
+    const globalSDK = useGlobalSDK()
+    const globalSync = useGlobalSync()
+
+    const permissionsEnabled = createMemo(() => {
+      if (!params.dir || !base64Decode(params.dir)) return false
+      const [store] = globalSync.child(base64Decode(params.dir))
+      return store.config.permission !== undefined
+    })
+
+>>>>>>> upstream/dev
     const [store, setStore, _, ready] = persisted(
       "permission.v3",
       createStore({
@@ -37,7 +67,11 @@ export const { use: usePermission, provider: PermissionProvider } = createSimple
       })
     }
 
+<<<<<<< HEAD
     function respondOnce(permission: Permission, directory?: string) {
+=======
+    function respondOnce(permission: PermissionRequest, directory?: string) {
+>>>>>>> upstream/dev
       if (responded.has(permission.id)) return
       responded.add(permission.id)
       respond({
@@ -54,7 +88,11 @@ export const { use: usePermission, provider: PermissionProvider } = createSimple
 
     const unsubscribe = globalSDK.event.listen((e) => {
       const event = e.details
+<<<<<<< HEAD
       if (event?.type !== "permission.updated") return
+=======
+      if (event?.type !== "permission.asked") return
+>>>>>>> upstream/dev
 
       const perm = event.properties
       if (!isAutoAccepting(perm.sessionID)) return
@@ -87,7 +125,11 @@ export const { use: usePermission, provider: PermissionProvider } = createSimple
     return {
       ready,
       respond,
+<<<<<<< HEAD
       autoResponds(permission: Permission) {
+=======
+      autoResponds(permission: PermissionRequest) {
+>>>>>>> upstream/dev
         return isAutoAccepting(permission.sessionID) && shouldAutoAccept(permission)
       },
       isAutoAccepting,
@@ -106,6 +148,10 @@ export const { use: usePermission, provider: PermissionProvider } = createSimple
       disableAutoAccept(sessionID: string) {
         disable(sessionID)
       },
+<<<<<<< HEAD
+=======
+      permissionsEnabled,
+>>>>>>> upstream/dev
     }
   },
 })

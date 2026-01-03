@@ -11,6 +11,7 @@ import { Instance } from "../project/instance"
 import { Flag } from "../flag/flag"
 import { Archive } from "../util/archive"
 
+<<<<<<< HEAD
 // Cross-platform executable permission setter
 async function setExecutablePermission(binPath: string): Promise<boolean> {
   if (process.platform === 'win32') {
@@ -34,6 +35,8 @@ async function setExecutablePermission(binPath: string): Promise<boolean> {
   }
 }
 
+=======
+>>>>>>> upstream/dev
 export namespace LSPServer {
   const log = Log.create({ service: "lsp.server" })
 
@@ -112,7 +115,11 @@ export namespace LSPServer {
     ),
     extensions: [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"],
     async spawn(root) {
+<<<<<<< HEAD
       const tsserver = await Bun.resolve("typescript/lib/tsserver.js", Instance.directory).catch(() => { })
+=======
+      const tsserver = await Bun.resolve("typescript/lib/tsserver.js", Instance.directory).catch(() => {})
+>>>>>>> upstream/dev
       log.info("typescript server", { tsserver })
       if (!tsserver) return
       const proc = spawn(BunProc.which(), ["x", "typescript-language-server", "--stdio"], {
@@ -187,7 +194,11 @@ export namespace LSPServer {
     root: NearestRoot(["package-lock.json", "bun.lockb", "bun.lock", "pnpm-lock.yaml", "yarn.lock"]),
     extensions: [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".vue"],
     async spawn(root) {
+<<<<<<< HEAD
       const eslint = await Bun.resolve("eslint", Instance.directory).catch(() => { })
+=======
+      const eslint = await Bun.resolve("eslint", Instance.directory).catch(() => {})
+>>>>>>> upstream/dev
       if (!eslint) return
       log.info("spawning eslint server")
       const serverPath = path.join(Global.Path.bin, "vscode-eslint", "server", "out", "eslintServer.js")
@@ -733,7 +744,13 @@ export namespace LSPServer {
           return
         }
 
+<<<<<<< HEAD
         await setExecutablePermission(bin)
+=======
+        if (platform !== "win32") {
+          await $`chmod +x ${bin}`.quiet().nothrow()
+        }
+>>>>>>> upstream/dev
 
         log.info(`installed zls`, { bin })
       }
@@ -1035,10 +1052,19 @@ export namespace LSPServer {
         return
       }
 
+<<<<<<< HEAD
       await setExecutablePermission(bin)
 
       await fs.unlink(path.join(Global.Path.bin, "clangd")).catch(() => { })
       await fs.symlink(bin, path.join(Global.Path.bin, "clangd")).catch(() => { })
+=======
+      if (platform !== "win32") {
+        await $`chmod +x ${bin}`.quiet().nothrow()
+      }
+
+      await fs.unlink(path.join(Global.Path.bin, "clangd")).catch(() => {})
+      await fs.symlink(bin, path.join(Global.Path.bin, "clangd")).catch(() => {})
+>>>>>>> upstream/dev
 
       log.info(`installed clangd`, { bin })
 
@@ -1095,7 +1121,11 @@ export namespace LSPServer {
     extensions: [".astro"],
     root: NearestRoot(["package-lock.json", "bun.lockb", "bun.lock", "pnpm-lock.yaml", "yarn.lock"]),
     async spawn(root) {
+<<<<<<< HEAD
       const tsserver = await Bun.resolve("typescript/lib/tsserver.js", Instance.directory).catch(() => { })
+=======
+      const tsserver = await Bun.resolve("typescript/lib/tsserver.js", Instance.directory).catch(() => {})
+>>>>>>> upstream/dev
       if (!tsserver) {
         log.info("typescript not found, required for Astro language server")
         return
@@ -1228,6 +1258,100 @@ export namespace LSPServer {
     },
   }
 
+<<<<<<< HEAD
+=======
+  export const KotlinLS: Info = {
+    id: "kotlin-ls",
+    extensions: [".kt", ".kts"],
+    root: async (file) => {
+      // 1) Nearest Gradle root (multi-project or included build)
+      const settingsRoot = await NearestRoot(["settings.gradle.kts", "settings.gradle"])(file)
+      if (settingsRoot) return settingsRoot
+      // 2) Gradle wrapper (strong root signal)
+      const wrapperRoot = await NearestRoot(["gradlew", "gradlew.bat"])(file)
+      if (wrapperRoot) return wrapperRoot
+      // 3) Single-project or module-level build
+      const buildRoot = await NearestRoot(["build.gradle.kts", "build.gradle"])(file)
+      if (buildRoot) return buildRoot
+      // 4) Maven fallback
+      return NearestRoot(["pom.xml"])(file)
+    },
+    async spawn(root) {
+      const distPath = path.join(Global.Path.bin, "kotlin-ls")
+      const launcherScript =
+        process.platform === "win32" ? path.join(distPath, "kotlin-lsp.cmd") : path.join(distPath, "kotlin-lsp.sh")
+      const installed = await Bun.file(launcherScript).exists()
+      if (!installed) {
+        if (Flag.OPENCODE_DISABLE_LSP_DOWNLOAD) return
+        log.info("Downloading Kotlin Language Server from GitHub.")
+
+        const releaseResponse = await fetch("https://api.github.com/repos/Kotlin/kotlin-lsp/releases/latest")
+        if (!releaseResponse.ok) {
+          log.error("Failed to fetch kotlin-lsp release info")
+          return
+        }
+
+        const release = await releaseResponse.json()
+        const version = release.name?.replace(/^v/, "")
+
+        if (!version) {
+          log.error("Could not determine Kotlin LSP version from release")
+          return
+        }
+
+        const platform = process.platform
+        const arch = process.arch
+
+        let kotlinArch: string = arch
+        if (arch === "arm64") kotlinArch = "aarch64"
+        else if (arch === "x64") kotlinArch = "x64"
+
+        let kotlinPlatform: string = platform
+        if (platform === "darwin") kotlinPlatform = "mac"
+        else if (platform === "linux") kotlinPlatform = "linux"
+        else if (platform === "win32") kotlinPlatform = "win"
+
+        const supportedCombos = ["mac-x64", "mac-aarch64", "linux-x64", "linux-aarch64", "win-x64", "win-aarch64"]
+
+        const combo = `${kotlinPlatform}-${kotlinArch}`
+
+        if (!supportedCombos.includes(combo)) {
+          log.error(`Platform ${platform}/${arch} is not supported by Kotlin LSP`)
+          return
+        }
+
+        const assetName = `kotlin-lsp-${version}-${kotlinPlatform}-${kotlinArch}.zip`
+        const releaseURL = `https://download-cdn.jetbrains.com/kotlin-lsp/${version}/${assetName}`
+
+        await fs.mkdir(distPath, { recursive: true })
+        const archivePath = path.join(distPath, "kotlin-ls.zip")
+        await $`curl -L -o '${archivePath}' '${releaseURL}'`.quiet().nothrow()
+        const ok = await Archive.extractZip(archivePath, distPath)
+          .then(() => true)
+          .catch((error) => {
+            log.error("Failed to extract Kotlin LS archive", { error })
+            return false
+          })
+        if (!ok) return
+        await fs.rm(archivePath, { force: true })
+        if (process.platform !== "win32") {
+          await $`chmod +x ${launcherScript}`.quiet().nothrow()
+        }
+        log.info("Installed Kotlin Language Server", { path: launcherScript })
+      }
+      if (!(await Bun.file(launcherScript).exists())) {
+        log.error(`Failed to locate the Kotlin LS launcher script in the installed directory: ${distPath}.`)
+        return
+      }
+      return {
+        process: spawn(launcherScript, ["--stdio"], {
+          cwd: root,
+        }),
+      }
+    },
+  }
+
+>>>>>>> upstream/dev
   export const YamlLS: Info = {
     id: "yaml-ls",
     extensions: [".yaml", ".yml"],
@@ -1396,10 +1520,20 @@ export namespace LSPServer {
           return
         }
 
+<<<<<<< HEAD
         const ok = await setExecutablePermission(bin)
         if (!ok) {
           log.error("Failed to set executable permission for lua-language-server binary")
           return
+=======
+        if (platform !== "win32") {
+          const ok = await $`chmod +x ${bin}`.quiet().catch((error) => {
+            log.error("Failed to set executable permission for lua-language-server binary", {
+              error,
+            })
+          })
+          if (!ok) return
+>>>>>>> upstream/dev
         }
 
         log.info(`installed lua-language-server`, { bin })
@@ -1614,7 +1748,13 @@ export namespace LSPServer {
           return
         }
 
+<<<<<<< HEAD
         await setExecutablePermission(bin)
+=======
+        if (platform !== "win32") {
+          await $`chmod +x ${bin}`.quiet().nothrow()
+        }
+>>>>>>> upstream/dev
 
         log.info(`installed terraform-ls`, { bin })
       }
@@ -1708,7 +1848,13 @@ export namespace LSPServer {
           return
         }
 
+<<<<<<< HEAD
         await setExecutablePermission(bin)
+=======
+        if (platform !== "win32") {
+          await $`chmod +x ${bin}`.quiet().nothrow()
+        }
+>>>>>>> upstream/dev
 
         log.info("installed texlab", { bin })
       }
@@ -1830,6 +1976,7 @@ export namespace LSPServer {
     },
   }
 
+<<<<<<< HEAD
   export const Dot: Info = {
     id: "dot",
     extensions: [".dot", ".gv"],
@@ -1877,6 +2024,8 @@ export namespace LSPServer {
     },
   }
 
+=======
+>>>>>>> upstream/dev
   export const Tinymist: Info = {
     id: "tinymist",
     extensions: [".typ", ".typc"],
@@ -1958,7 +2107,13 @@ export namespace LSPServer {
           return
         }
 
+<<<<<<< HEAD
         await setExecutablePermission(bin)
+=======
+        if (platform !== "win32") {
+          await $`chmod +x ${bin}`.quiet().nothrow()
+        }
+>>>>>>> upstream/dev
 
         log.info("installed tinymist", { bin })
       }
@@ -1986,4 +2141,8 @@ export namespace LSPServer {
       }
     },
   }
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> upstream/dev

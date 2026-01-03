@@ -3,6 +3,10 @@
   "module": "index.ts",
   "type": "module",
   "private": true,
+<<<<<<< HEAD
+=======
+  "license": "MIT",
+>>>>>>> upstream/dev
   "devDependencies": {
     "@types/bun": "catalog:"
   },

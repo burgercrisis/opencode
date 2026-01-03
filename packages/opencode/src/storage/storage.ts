@@ -158,7 +158,11 @@ export namespace Storage {
   })
 
   export async function remove(key: string[]) {
+<<<<<<< HEAD
     const dir = (await state()).dir
+=======
+    const dir = await state().then((x) => x.dir)
+>>>>>>> upstream/dev
     const target = path.join(dir, ...key) + ".json"
     return withErrorHandling(async () => {
       await fs.unlink(target).catch(() => {})
@@ -166,7 +170,11 @@ export namespace Storage {
   }
 
   export async function read<T>(key: string[]) {
+<<<<<<< HEAD
     const dir = (await state()).dir
+=======
+    const dir = await state().then((x) => x.dir)
+>>>>>>> upstream/dev
     const target = path.join(dir, ...key) + ".json"
     return withErrorHandling(async () => {
       using _ = await Lock.read(target)
@@ -176,7 +184,11 @@ export namespace Storage {
   }
 
   export async function update<T>(key: string[], fn: (draft: T) => void) {
+<<<<<<< HEAD
     const dir = (await state()).dir
+=======
+    const dir = await state().then((x) => x.dir)
+>>>>>>> upstream/dev
     const target = path.join(dir, ...key) + ".json"
     return withErrorHandling(async () => {
       using _ = await Lock.write(target)
@@ -188,7 +200,11 @@ export namespace Storage {
   }
 
   export async function write<T>(key: string[], content: T) {
+<<<<<<< HEAD
     const dir = (await state()).dir
+=======
+    const dir = await state().then((x) => x.dir)
+>>>>>>> upstream/dev
     const target = path.join(dir, ...key) + ".json"
     return withErrorHandling(async () => {
       using _ = await Lock.write(target)
@@ -209,7 +225,11 @@ export namespace Storage {
 
   const glob = new Bun.Glob("**/*")
   export async function list(prefix: string[]) {
+<<<<<<< HEAD
     const dir = (await state()).dir
+=======
+    const dir = await state().then((x) => x.dir)
+>>>>>>> upstream/dev
     try {
       const result = await Array.fromAsync(
         glob.scan({

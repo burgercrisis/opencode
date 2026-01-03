@@ -18,8 +18,16 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
     return {
       data: store,
       set: setStore,
+<<<<<<< HEAD
       get ready() {
         return store.ready
+=======
+      get status() {
+        return store.status
+      },
+      get ready() {
+        return store.status !== "loading"
+>>>>>>> upstream/dev
       },
       get project() {
         const match = Binary.search(globalSync.data.project, store.project, (p) => p.id)

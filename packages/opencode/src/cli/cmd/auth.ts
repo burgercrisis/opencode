@@ -24,19 +24,31 @@ async function handlePluginAuth(plugin: { auth: PluginAuth }, provider: string):
     const method = await prompts.select({
       message: "Login method",
       options: [
+<<<<<<< HEAD
         ...plugin.auth.methods.map((x: any, index: number) => ({
+=======
+        ...plugin.auth.methods.map((x, index) => ({
+>>>>>>> upstream/dev
           label: x.label,
           value: index.toString(),
         })),
       ],
     })
     if (prompts.isCancel(method)) throw new UI.CancelledError()
+<<<<<<< HEAD
     index = parseInt(method as string)
+=======
+    index = parseInt(method)
+>>>>>>> upstream/dev
   }
   const method = plugin.auth.methods[index]
 
   // Handle prompts for all auth types
+<<<<<<< HEAD
   await new Promise((resolve) => setTimeout(resolve, 10))
+=======
+  await Bun.sleep(10)
+>>>>>>> upstream/dev
   const inputs: Record<string, string> = {}
   if (method.prompts) {
     for (const prompt of method.prompts) {
@@ -49,7 +61,11 @@ async function handlePluginAuth(plugin: { auth: PluginAuth }, provider: string):
           options: prompt.options,
         })
         if (prompts.isCancel(value)) throw new UI.CancelledError()
+<<<<<<< HEAD
         inputs[prompt.key] = value as string
+=======
+        inputs[prompt.key] = value
+>>>>>>> upstream/dev
       } else {
         const value = await prompts.text({
           message: prompt.message,
@@ -164,7 +180,11 @@ export const AuthCommand = cmd({
   describe: "manage credentials",
   builder: (yargs) =>
     yargs.command(AuthLoginCommand).command(AuthLogoutCommand).command(AuthListCommand).demandCommand(),
+<<<<<<< HEAD
   async handler() { },
+=======
+  async handler() {},
+>>>>>>> upstream/dev
 })
 
 export const AuthListCommand = cmd({
@@ -251,7 +271,11 @@ export const AuthLoginCommand = cmd({
           prompts.outro("Done")
           return
         }
+<<<<<<< HEAD
         await ModelsDev.refresh().catch(() => { })
+=======
+        await ModelsDev.refresh().catch(() => {})
+>>>>>>> upstream/dev
 
         const config = await Config.get()
 

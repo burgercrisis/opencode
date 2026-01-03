@@ -1,6 +1,7 @@
 // @refresh reload
 import { render } from "solid-js/web"
 import { App, PlatformProvider, Platform } from "@opencode-ai/app"
+<<<<<<< HEAD
 import { Font } from "@opencode-ai/ui/font"
 import { MarkedProvider } from "@opencode-ai/ui/context"
 import { DiffComponentProvider } from "@opencode-ai/ui/context/diff"
@@ -10,19 +11,30 @@ import { Code } from "@opencode-ai/ui/code"
 import { ThemeProvider } from "@opencode-ai/ui/theme"
 import { DialogProvider } from "@opencode-ai/ui/context/dialog"
 import { DataProvider } from "@opencode-ai/ui/context"
+=======
+>>>>>>> upstream/dev
 import { open, save } from "@tauri-apps/plugin-dialog"
 import { open as shellOpen } from "@tauri-apps/plugin-shell"
 import { type as ostype } from "@tauri-apps/plugin-os"
 import { AsyncStorage } from "@solid-primitives/storage"
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http"
 import { Store } from "@tauri-apps/plugin-store"
+<<<<<<< HEAD
 import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification"
 import { invoke } from "@tauri-apps/api/core"
 import { getCurrentWindow } from "@tauri-apps/api/window"
+=======
+>>>>>>> upstream/dev
 
 import { UPDATER_ENABLED } from "./updater"
 import { createMenu } from "./menu"
 import { check, Update } from "@tauri-apps/plugin-updater"
+<<<<<<< HEAD
+=======
+import { invoke } from "@tauri-apps/api/core"
+import { getCurrentWindow } from "@tauri-apps/api/window"
+import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification"
+>>>>>>> upstream/dev
 import { relaunch } from "@tauri-apps/plugin-process"
 import pkg from "../package.json"
 
@@ -71,12 +83,21 @@ const platform: Platform = {
 
   storage: (name = "default.dat") => {
     type StoreLike = {
+<<<<<<< HEAD
       get(key: string): Promise<string | null | undefined>;
       set(key: string, value: string): Promise<unknown>;
       delete(key: string): Promise<unknown>;
       clear(): Promise<unknown>;
       keys(): Promise<string[]>;
       length(): Promise<number>;
+=======
+      get(key: string): Promise<string | null | undefined>
+      set(key: string, value: string): Promise<unknown>
+      delete(key: string): Promise<unknown>
+      clear(): Promise<unknown>
+      keys(): Promise<string[]>
+      length(): Promise<number>
+>>>>>>> upstream/dev
     }
 
     const memory = () => {
@@ -206,6 +227,7 @@ root?.addEventListener("mousewheel", (e) => {
 render(() => {
   return (
     <PlatformProvider value={platform}>
+<<<<<<< HEAD
       <Font>
         <ThemeProvider>
           <DataProvider>
@@ -224,6 +246,12 @@ render(() => {
           </DataProvider>
         </ThemeProvider>
       </Font>
+=======
+      {ostype() === "macos" && (
+        <div class="mx-px bg-background-base border-b border-border-weak-base h-8" data-tauri-drag-region />
+      )}
+      <App />
+>>>>>>> upstream/dev
     </PlatformProvider>
   )
 }, root!)

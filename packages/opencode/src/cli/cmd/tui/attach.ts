@@ -22,9 +22,17 @@ export const AttachCommand = cmd({
       }),
   handler: async (args) => {
     if (args.dir) process.chdir(args.dir)
+<<<<<<< HEAD
     await tui({
       url: args.url,
       args: { sessionID: args.session },
+=======
+    const directory = process.cwd()
+    await tui({
+      url: args.url,
+      args: { sessionID: args.session },
+      directory,
+>>>>>>> upstream/dev
     })
   },
 })

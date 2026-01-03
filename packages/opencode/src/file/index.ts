@@ -375,8 +375,12 @@ export namespace File {
     const kind = input.type ?? (input.dirs === false ? "file" : "all")
     log.info("search", { query, kind })
 
+<<<<<<< HEAD
     const stateResult = await state()
     const result = await stateResult.files()
+=======
+    const result = await state().then((x) => x.files())
+>>>>>>> upstream/dev
 
     const hidden = (item: string) => {
       const normalized = item.replaceAll("\\", "/").replace(/\/+$/, "")

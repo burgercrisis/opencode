@@ -1,7 +1,13 @@
 {
   "name": "@opencode-ai/ui",
+<<<<<<< HEAD
   "version": "1.0.218",
   "type": "module",
+=======
+  "version": "1.0.224",
+  "type": "module",
+  "license": "MIT",
+>>>>>>> upstream/dev
   "exports": {
     "./*": "./src/components/*.tsx",
     "./pierre": "./src/pierre/index.ts",
@@ -17,9 +23,13 @@
     "./icons/provider": "./src/components/provider-icons/types.ts",
     "./icons/file-type": "./src/components/file-icons/types.ts",
     "./fonts/*": "./src/assets/fonts/*",
+<<<<<<< HEAD
     "./audio/*": "./src/assets/audio/*",
     "./toast": "./src/components/toast.tsx",
     "./font": "./src/components/font.tsx"
+=======
+    "./audio/*": "./src/assets/audio/*"
+>>>>>>> upstream/dev
   },
   "scripts": {
     "typecheck": "tsgo --noEmit",
@@ -58,7 +68,13 @@
     "shiki": "catalog:",
     "solid-js": "catalog:",
     "solid-list": "catalog:",
+<<<<<<< HEAD
     "virtua": "catalog:",
     "@tanstack/solid-virtual": "^3.10.8"
   }
 }
+=======
+    "virtua": "catalog:"
+  }
+}
+>>>>>>> upstream/dev

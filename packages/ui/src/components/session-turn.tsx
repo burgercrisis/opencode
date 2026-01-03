@@ -2,7 +2,11 @@ import {
   AssistantMessage,
   Message as MessageType,
   Part as PartType,
+<<<<<<< HEAD
   type Permission,
+=======
+  type PermissionRequest,
+>>>>>>> upstream/dev
   TextPart,
   ToolPart,
 } from "@opencode-ai/sdk/v2/client"
@@ -132,7 +136,11 @@ export function SessionTurn(
   const emptyMessages: MessageType[] = []
   const emptyParts: PartType[] = []
   const emptyAssistant: AssistantMessage[] = []
+<<<<<<< HEAD
   const emptyPermissions: Permission[] = []
+=======
+  const emptyPermissions: PermissionRequest[] = []
+>>>>>>> upstream/dev
   const emptyPermissionParts: { part: ToolPart; message: AssistantMessage }[] = []
   const idle = { type: "idle" as const }
 
@@ -235,6 +243,7 @@ export function SessionTurn(
     if (props.stepsExpanded) return emptyPermissionParts
 
     const next = nextPermission()
+<<<<<<< HEAD
     if (!next) return emptyPermissionParts
 
     for (const message of assistantMessages()) {
@@ -245,6 +254,20 @@ export function SessionTurn(
         if (tool.callID === next.callID) return [{ part: tool, message }]
       }
     }
+=======
+    if (!next || !next.tool) return emptyPermissionParts
+
+    const message = assistantMessages().findLast((m) => m.id === next.tool!.messageID)
+    if (!message) return emptyPermissionParts
+
+    const parts = data.store.part[message.id] ?? emptyParts
+    for (const part of parts) {
+      if (part?.type !== "tool") continue
+      const tool = part as ToolPart
+      if (tool.callID === next.tool?.callID) return [{ part: tool, message }]
+    }
+
+>>>>>>> upstream/dev
     return emptyPermissionParts
   })
 
@@ -321,11 +344,18 @@ export function SessionTurn(
     return s
   })
 
+<<<<<<< HEAD
   const summary = createMemo(() => message()?.summary?.body)
   const response = createMemo(() => lastTextPart()?.text)
   const responsePartId = createMemo(() => lastTextPart()?.id)
   const hasDiffs = createMemo(() => message()?.summary?.diffs?.length)
   const hideResponsePart = createMemo(() => !working() && !summary() && !!responsePartId())
+=======
+  const response = createMemo(() => lastTextPart()?.text)
+  const responsePartId = createMemo(() => lastTextPart()?.id)
+  const hasDiffs = createMemo(() => message()?.summary?.diffs?.length)
+  const hideResponsePart = createMemo(() => !working() && !!responsePartId())
+>>>>>>> upstream/dev
 
   function duration() {
     const msg = message()
@@ -356,7 +386,10 @@ export function SessionTurn(
     retrySeconds: 0,
     status: rawStatus(),
     duration: duration(),
+<<<<<<< HEAD
     summaryWaitTimedOut: false,
+=======
+>>>>>>> upstream/dev
   })
 
   createEffect(() => {
@@ -397,12 +430,15 @@ export function SessionTurn(
     onCleanup(() => clearInterval(timer))
   })
 
+<<<<<<< HEAD
   createEffect(() => {
     if (working()) {
       setStore("summaryWaitTimedOut", false)
     }
   })
 
+=======
+>>>>>>> upstream/dev
   createEffect(
     on(permissionCount, (count, prev) => {
       if (!count) return
@@ -411,6 +447,7 @@ export function SessionTurn(
     }),
   )
 
+<<<<<<< HEAD
   createEffect(() => {
     if (working() || !isLastUserMessage()) return
 
@@ -447,6 +484,8 @@ export function SessionTurn(
     return !waitingForSummary()
   })
 
+=======
+>>>>>>> upstream/dev
   let lastStatusChange = Date.now()
   let statusTimeout: number | undefined
   createEffect(() => {
@@ -523,7 +562,11 @@ export function SessionTurn(
                           size="small"
                           onClick={props.onStepsExpandedToggle ?? (() => {})}
                         >
+<<<<<<< HEAD
                           <Show when={working() || waitingForSummary()}>
+=======
+                          <Show when={working()}>
+>>>>>>> upstream/dev
                             <Spinner />
                           </Show>
                           <Switch>
@@ -540,7 +583,10 @@ export function SessionTurn(
                               </span>
                               <span data-slot="session-turn-retry-attempt">(#{retry()?.attempt})</span>
                             </Match>
+<<<<<<< HEAD
                             <Match when={waitingForSummary()}>Generating summary</Match>
+=======
+>>>>>>> upstream/dev
                             <Match when={working()}>{store.status ?? "Considering next steps"}</Match>
                             <Match when={props.stepsExpanded}>Hide steps</Match>
                             <Match when={!props.stepsExpanded}>Show steps</Match>
@@ -580,6 +626,7 @@ export function SessionTurn(
                         </For>
                       </div>
                     </Show>
+<<<<<<< HEAD
                     {/* Summary */}
                     <Show when={showSummarySection()}>
                       <div data-slot="session-turn-summary-section">
@@ -610,6 +657,14 @@ export function SessionTurn(
                               )}
                             </Match>
                           </Switch>
+=======
+                    {/* Response */}
+                    <Show when={!working() && (response() || hasDiffs())}>
+                      <div data-slot="session-turn-summary-section">
+                        <div data-slot="session-turn-summary-header">
+                          <h2 data-slot="session-turn-summary-title">Response</h2>
+                          <Markdown data-slot="session-turn-markdown" data-diffs={hasDiffs()} text={response() ?? ""} />
+>>>>>>> upstream/dev
                         </div>
                         <Accordion data-slot="session-turn-accordion" multiple>
                           <For each={msg().summary?.diffs ?? []}>

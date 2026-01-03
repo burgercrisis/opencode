@@ -11,8 +11,12 @@ export function normalizeServerUrl(input: string) {
   const trimmed = input.trim()
   if (!trimmed) return
   const withProtocol = /^https?:\/\//.test(trimmed) ? trimmed : `http://${trimmed}`
+<<<<<<< HEAD
   const cleaned = withProtocol.replace(/\/+$/, "")
   return cleaned.replace(/^(https?:\/\/[^/]+).*/, "$1")
+=======
+  return withProtocol.replace(/\/+$/, "")
+>>>>>>> upstream/dev
 }
 
 export function serverDisplayName(url: string) {
@@ -100,7 +104,11 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
         const sdk = createOpencodeClient({
           baseUrl: url,
           fetch: platform.fetch,
+<<<<<<< HEAD
           signal: AbortSignal.timeout(2000),
+=======
+          signal: AbortSignal.timeout(3000),
+>>>>>>> upstream/dev
         })
         return sdk.global
           .health()

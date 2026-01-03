@@ -15,6 +15,7 @@ export namespace Bus {
     }),
   )
 
+<<<<<<< HEAD
   // Use a more robust singleton pattern that works across all contexts
   const globalKey = '__opencode_bus_global_state__'
   let moduleLevelState: { subscriptions: Map<any, Subscription[]> } | null = null
@@ -89,6 +90,30 @@ export namespace Bus {
 
     return state
   }
+=======
+  const state = Instance.state(
+    () => {
+      const subscriptions = new Map<any, Subscription[]>()
+
+      return {
+        subscriptions,
+      }
+    },
+    async (entry) => {
+      const wildcard = entry.subscriptions.get("*")
+      if (!wildcard) return
+      const event = {
+        type: InstanceDisposed.type,
+        properties: {
+          directory: Instance.directory,
+        },
+      }
+      for (const sub of [...wildcard]) {
+        sub(event)
+      }
+    },
+  )
+>>>>>>> upstream/dev
 
   export async function publish<Definition extends BusEvent.Definition>(
     def: Definition,
@@ -103,6 +128,7 @@ export namespace Bus {
     })
     const pending = []
     for (const key of [def.type, "*"]) {
+<<<<<<< HEAD
       try {
         const currentState = getGlobalState()
         if (!currentState || !currentState.subscriptions) {
@@ -115,6 +141,11 @@ export namespace Bus {
         }
       } catch (error) {
         console.error("Error in publish for key:", key, error)
+=======
+      const match = state().subscriptions.get(key)
+      for (const sub of match ?? []) {
+        pending.push(sub(payload))
+>>>>>>> upstream/dev
       }
     }
     GlobalBus.emit("event", {
@@ -139,8 +170,12 @@ export namespace Bus {
     }) => "done" | undefined,
   ) {
     const unsub = subscribe(def, (event) => {
+<<<<<<< HEAD
       const result = callback(event)
       if (result === "done" && unsub) unsub()
+=======
+      if (callback(event)) unsub()
+>>>>>>> upstream/dev
     })
   }
 
@@ -150,6 +185,7 @@ export namespace Bus {
 
   function raw(type: string, callback: (event: any) => void) {
     log.info("subscribing", { type })
+<<<<<<< HEAD
 
     // ULTRA DEFENSIVE: Handle any possible state scenario
     try {
@@ -204,6 +240,20 @@ export namespace Bus {
       return () => {
         log.info("Dummy unsubscribe called")
       }
+=======
+    const subscriptions = state().subscriptions
+    let match = subscriptions.get(type) ?? []
+    match.push(callback)
+    subscriptions.set(type, match)
+
+    return () => {
+      log.info("unsubscribing", { type })
+      const match = subscriptions.get(type)
+      if (!match) return
+      const index = match.indexOf(callback)
+      if (index === -1) return
+      match.splice(index, 1)
+>>>>>>> upstream/dev
     }
   }
 }

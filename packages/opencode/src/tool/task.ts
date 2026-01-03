@@ -10,6 +10,7 @@ import { SessionPrompt } from "../session/prompt"
 import { iife } from "@/util/iife"
 import { defer } from "@/util/defer"
 import { Config } from "../config/config"
+<<<<<<< HEAD
 import { ModelSelectionEngine } from "../model/selection-engine"
 import { TaskDetector } from "../model/task-detector"
 
@@ -17,6 +18,11 @@ export const TaskTool = Tool.define("task", async () => {
   const agents = await Agent.list().then((x) => x.filter((a) => a.mode !== "primary"))
   const modelSelector = new ModelSelectionEngine()
   const taskDetector = new TaskDetector()
+=======
+
+export const TaskTool = Tool.define("task", async () => {
+  const agents = await Agent.list().then((x) => x.filter((a) => a.mode !== "primary"))
+>>>>>>> upstream/dev
   const description = DESCRIPTION.replace(
     "{agents}",
     agents
@@ -33,17 +39,60 @@ export const TaskTool = Tool.define("task", async () => {
       command: z.string().describe("The command that triggered this task").optional(),
     }),
     async execute(params, ctx) {
+<<<<<<< HEAD
+=======
+      const config = await Config.get()
+      await ctx.ask({
+        permission: "task",
+        patterns: [params.subagent_type],
+        always: ["*"],
+        metadata: {
+          description: params.description,
+          subagent_type: params.subagent_type,
+        },
+      })
+
+>>>>>>> upstream/dev
       const agent = await Agent.get(params.subagent_type)
       if (!agent) throw new Error(`Unknown agent type: ${params.subagent_type} is not a valid agent type`)
       const session = await iife(async () => {
         if (params.session_id) {
+<<<<<<< HEAD
           const found = await Session.get(params.session_id).catch(() => { })
+=======
+          const found = await Session.get(params.session_id).catch(() => {})
+>>>>>>> upstream/dev
           if (found) return found
         }
 
         return await Session.create({
           parentID: ctx.sessionID,
           title: params.description + ` (@${agent.name} subagent)`,
+<<<<<<< HEAD
+=======
+          permission: [
+            {
+              permission: "todowrite",
+              pattern: "*",
+              action: "deny",
+            },
+            {
+              permission: "todoread",
+              pattern: "*",
+              action: "deny",
+            },
+            {
+              permission: "task",
+              pattern: "*",
+              action: "deny",
+            },
+            ...(config.experimental?.primary_tools?.map((t) => ({
+              pattern: "*",
+              action: "allow" as const,
+              permission: t,
+            })) ?? []),
+          ],
+>>>>>>> upstream/dev
         })
       })
       const msg = await MessageV2.get({ sessionID: ctx.sessionID, messageID: ctx.messageID })
@@ -80,6 +129,7 @@ export const TaskTool = Tool.define("task", async () => {
         })
       })
 
+<<<<<<< HEAD
       // Try intelligent model selection if enabled
       let model
       const config = await Config.get()
@@ -148,6 +198,11 @@ export const TaskTool = Tool.define("task", async () => {
             providerID: msg.info.providerID,
           }
         }
+=======
+      const model = agent.model ?? {
+        modelID: msg.info.modelID,
+        providerID: msg.info.providerID,
+>>>>>>> upstream/dev
       }
 
       function cancel() {
@@ -157,13 +212,21 @@ export const TaskTool = Tool.define("task", async () => {
       using _ = defer(() => ctx.abort.removeEventListener("abort", cancel))
       const promptParts = await SessionPrompt.resolvePromptParts(params.prompt)
 
+<<<<<<< HEAD
       const sessionConfig = await Config.get()
+=======
+>>>>>>> upstream/dev
       const result = await SessionPrompt.prompt({
         messageID,
         sessionID: session.id,
         model: {
+<<<<<<< HEAD
           modelID: (model as any).model?.model || (model as any).modelID || '',
           providerID: (model as any).model?.providerID || (model as any).providerID || '',
+=======
+          modelID: model.modelID,
+          providerID: model.providerID,
+>>>>>>> upstream/dev
         },
         agent: agent.name,
         tools: {
@@ -171,7 +234,10 @@ export const TaskTool = Tool.define("task", async () => {
           todoread: false,
           task: false,
           ...Object.fromEntries((config.experimental?.primary_tools ?? []).map((t) => [t, false])),
+<<<<<<< HEAD
           ...agent.tools,
+=======
+>>>>>>> upstream/dev
         },
         parts: promptParts,
       })

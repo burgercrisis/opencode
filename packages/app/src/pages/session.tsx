@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 import {
   For,
   onCleanup,
@@ -22,12 +23,26 @@ import { FileIcon } from "@opencode-ai/ui/file-icon"
 import { IconButton } from "@opencode-ai/ui/icon-button"
 import { Icon } from "@opencode-ai/ui/icon"
 import { Tooltip } from "@opencode-ai/ui/tooltip"
+=======
+import { For, onCleanup, Show, Match, Switch, createMemo, createEffect, on, createRenderEffect, batch } from "solid-js"
+import { createMediaQuery } from "@solid-primitives/media"
+import { Dynamic } from "solid-js/web"
+import { useLocal } from "@/context/local"
+import { selectionFromLines, useFile, type SelectedLineRange } from "@/context/file"
+import { createStore } from "solid-js/store"
+import { PromptInput } from "@/components/prompt-input"
+import { SessionContextUsage } from "@/components/session-context-usage"
+import { IconButton } from "@opencode-ai/ui/icon-button"
+import { Icon } from "@opencode-ai/ui/icon"
+import { Tooltip, TooltipKeybind } from "@opencode-ai/ui/tooltip"
+>>>>>>> upstream/dev
 import { DiffChanges } from "@opencode-ai/ui/diff-changes"
 import { ResizeHandle } from "@opencode-ai/ui/resize-handle"
 import { Tabs } from "@opencode-ai/ui/tabs"
 import { useCodeComponent } from "@opencode-ai/ui/context/code"
 import { SessionTurn } from "@opencode-ai/ui/session-turn"
 import { createAutoScroll } from "@opencode-ai/ui/hooks"
+<<<<<<< HEAD
 import { SessionMessageRail } from "@opencode-ai/ui/session-message-rail"
 import { SessionReview } from "@opencode-ai/ui/session-review"
 import {
@@ -44,6 +59,16 @@ import { useSync } from "@/context/sync"
 import { useTerminal, type LocalPTY } from "@/context/terminal"
 import { useLayout } from "@/context/layout"
 import { getDirectory, getFilename } from "@opencode-ai/util/path"
+=======
+import { SessionReview } from "@opencode-ai/ui/session-review"
+import { SessionMessageRail } from "@opencode-ai/ui/session-message-rail"
+
+import { DragDropProvider, DragDropSensors, DragOverlay, SortableProvider, closestCenter } from "@thisbeyond/solid-dnd"
+import type { DragEvent } from "@thisbeyond/solid-dnd"
+import { useSync } from "@/context/sync"
+import { useTerminal, type LocalPTY } from "@/context/terminal"
+import { useLayout } from "@/context/layout"
+>>>>>>> upstream/dev
 import { Terminal } from "@/components/terminal"
 import { checksum } from "@opencode-ai/util/encode"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
@@ -53,15 +78,32 @@ import { DialogSelectMcp } from "@/components/dialog-select-mcp"
 import { useCommand } from "@/context/command"
 import { useNavigate, useParams } from "@solidjs/router"
 import { UserMessage } from "@opencode-ai/sdk/v2"
+<<<<<<< HEAD
+=======
+import type { FileDiff } from "@opencode-ai/sdk/v2/client"
+>>>>>>> upstream/dev
 import { useSDK } from "@/context/sdk"
 import { usePrompt } from "@/context/prompt"
 import { extractPromptFromParts } from "@/utils/prompt"
 import { ConstrainDragYAxis, getDraggableId } from "@/utils/solid-dnd"
+<<<<<<< HEAD
 import { StatusBar } from "@/components/status-bar"
 import { SessionMcpIndicator } from "@/components/session-mcp-indicator"
 import { SessionLspIndicator } from "@/components/session-lsp-indicator"
 import { usePermission } from "@/context/permission"
 import { showToast } from "@opencode-ai/ui/toast"
+=======
+import { usePermission } from "@/context/permission"
+import { showToast } from "@opencode-ai/ui/toast"
+import {
+  SessionHeader,
+  SessionContextTab,
+  SortableTab,
+  FileVisual,
+  SortableTerminalTab,
+  NewSessionView,
+} from "@/components/session"
+>>>>>>> upstream/dev
 
 function same<T>(a: readonly T[], b: readonly T[]) {
   if (a === b) return true
@@ -69,9 +111,100 @@ function same<T>(a: readonly T[], b: readonly T[]) {
   return a.every((x, i) => x === b[i])
 }
 
+<<<<<<< HEAD
 export default function Page() {
   const layout = useLayout()
   const local = useLocal()
+=======
+type DiffStyle = "unified" | "split"
+
+interface SessionReviewTabProps {
+  diffs: () => FileDiff[]
+  view: () => ReturnType<ReturnType<typeof useLayout>["view"]>
+  diffStyle: DiffStyle
+  onDiffStyleChange?: (style: DiffStyle) => void
+  classes?: {
+    root?: string
+    header?: string
+    container?: string
+  }
+}
+
+function SessionReviewTab(props: SessionReviewTabProps) {
+  let scroll: HTMLDivElement | undefined
+  let frame: number | undefined
+  let pending: { x: number; y: number } | undefined
+
+  const restoreScroll = () => {
+    const el = scroll
+    if (!el) return
+
+    const s = props.view().scroll("review")
+    if (!s) return
+
+    if (el.scrollTop !== s.y) el.scrollTop = s.y
+    if (el.scrollLeft !== s.x) el.scrollLeft = s.x
+  }
+
+  const handleScroll = (event: Event & { currentTarget: HTMLDivElement }) => {
+    pending = {
+      x: event.currentTarget.scrollLeft,
+      y: event.currentTarget.scrollTop,
+    }
+    if (frame !== undefined) return
+
+    frame = requestAnimationFrame(() => {
+      frame = undefined
+
+      const next = pending
+      pending = undefined
+      if (!next) return
+
+      props.view().setScroll("review", next)
+    })
+  }
+
+  createEffect(
+    on(
+      () => props.diffs().length,
+      () => {
+        requestAnimationFrame(restoreScroll)
+      },
+      { defer: true },
+    ),
+  )
+
+  onCleanup(() => {
+    if (frame === undefined) return
+    cancelAnimationFrame(frame)
+  })
+
+  return (
+    <SessionReview
+      scrollRef={(el) => {
+        scroll = el
+        restoreScroll()
+      }}
+      onScroll={handleScroll}
+      open={props.view().review.open()}
+      onOpenChange={props.view().review.setOpen}
+      classes={{
+        root: props.classes?.root ?? "pb-40",
+        header: props.classes?.header ?? "px-6",
+        container: props.classes?.container ?? "px-6",
+      }}
+      diffs={props.diffs()}
+      diffStyle={props.diffStyle}
+      onDiffStyleChange={props.onDiffStyleChange}
+    />
+  )
+}
+
+export default function Page() {
+  const layout = useLayout()
+  const local = useLocal()
+  const file = useFile()
+>>>>>>> upstream/dev
   const sync = useSync()
   const terminal = useTerminal()
   const dialog = useDialog()
@@ -81,6 +214,7 @@ export default function Page() {
   const navigate = useNavigate()
   const sdk = useSDK()
   const prompt = usePrompt()
+<<<<<<< HEAD
 
   const permission = usePermission()
   const sessionKey = createMemo(() => `${params.dir}${params.id ? "/" + params.id : ""}`)
@@ -103,6 +237,81 @@ export default function Page() {
     emptyUserMessages,
     { equals: same },
   )
+=======
+  const permission = usePermission()
+  const sessionKey = createMemo(() => `${params.dir}${params.id ? "/" + params.id : ""}`)
+  const tabs = createMemo(() => layout.tabs(sessionKey()))
+  const view = createMemo(() => layout.view(sessionKey()))
+
+  const isDesktop = createMediaQuery("(min-width: 768px)")
+
+  function normalizeTab(tab: string) {
+    if (!tab.startsWith("file://")) return tab
+    return file.tab(tab)
+  }
+
+  function normalizeTabs(list: string[]) {
+    const seen = new Set<string>()
+    const next: string[] = []
+    for (const item of list) {
+      const value = normalizeTab(item)
+      if (seen.has(value)) continue
+      seen.add(value)
+      next.push(value)
+    }
+    return next
+  }
+
+  const openTab = (value: string) => {
+    const next = normalizeTab(value)
+    tabs().open(next)
+
+    const path = file.pathFromTab(next)
+    if (path) file.load(path)
+  }
+
+  createEffect(() => {
+    const active = tabs().active()
+    if (!active) return
+
+    const path = file.pathFromTab(active)
+    if (path) file.load(path)
+  })
+
+  createEffect(() => {
+    const current = tabs().all()
+    if (current.length === 0) return
+
+    const next = normalizeTabs(current)
+    if (same(current, next)) return
+
+    tabs().setAll(next)
+
+    const active = tabs().active()
+    if (!active) return
+    if (!active.startsWith("file://")) return
+
+    const normalized = normalizeTab(active)
+    if (active === normalized) return
+    tabs().setActive(normalized)
+  })
+
+  const info = createMemo(() => (params.id ? sync.session.get(params.id) : undefined))
+  const revertMessageID = createMemo(() => info()?.revert?.messageID)
+  const messages = createMemo(() => (params.id ? (sync.data.message[params.id] ?? []) : []))
+  const messagesReady = createMemo(() => {
+    const id = params.id
+    if (!id) return true
+    return sync.data.message[id] !== undefined
+  })
+  const emptyUserMessages: UserMessage[] = []
+  const userMessages = createMemo(() => messages().filter((m) => m.role === "user") as UserMessage[], emptyUserMessages)
+  const visibleUserMessages = createMemo(() => {
+    const revert = revertMessageID()
+    if (!revert) return userMessages()
+    return userMessages().filter((m) => m.id < revert)
+  }, emptyUserMessages)
+>>>>>>> upstream/dev
   const lastUserMessage = createMemo(() => visibleUserMessages().at(-1))
 
   createEffect(
@@ -118,18 +327,31 @@ export default function Page() {
   )
 
   const [store, setStore] = createStore({
+<<<<<<< HEAD
     clickTimer: undefined as number | undefined,
+=======
+>>>>>>> upstream/dev
     activeDraggable: undefined as string | undefined,
     activeTerminalDraggable: undefined as string | undefined,
     userInteracted: false,
     stepsExpanded: true,
     mobileStepsExpanded: {} as Record<string, boolean>,
     messageId: undefined as string | undefined,
+<<<<<<< HEAD
+=======
+    mobileTab: "session" as "session" | "review",
+    ignoreScrollSpy: false,
+    initialScrollDone: !params.id,
+    newSessionWorktree: "main",
+>>>>>>> upstream/dev
   })
 
   const activeMessage = createMemo(() => {
     if (!store.messageId) return lastUserMessage()
+<<<<<<< HEAD
     // If the stored message is no longer visible (e.g., was reverted), fall back to last visible
+=======
+>>>>>>> upstream/dev
     const found = visibleUserMessages()?.find((m) => m.id === store.messageId)
     return found ?? lastUserMessage()
   })
@@ -153,11 +375,19 @@ export default function Page() {
 
     if (targetIndex < 0 || targetIndex >= msgs.length) return
 
+<<<<<<< HEAD
     setActiveMessage(msgs[targetIndex])
+=======
+    scrollToMessage(msgs[targetIndex], "auto")
+>>>>>>> upstream/dev
   }
 
   const diffs = createMemo(() => (params.id ? (sync.data.session_diff[params.id] ?? []) : []))
 
+<<<<<<< HEAD
+=======
+  const idle = { type: "idle" as const }
+>>>>>>> upstream/dev
   let inputRef!: HTMLDivElement
 
   createEffect(() => {
@@ -185,8 +415,11 @@ export default function Page() {
     ),
   )
 
+<<<<<<< HEAD
   const idle = { type: "idle" as const }
 
+=======
+>>>>>>> upstream/dev
   createEffect(
     on(
       () => params.id,
@@ -248,6 +481,7 @@ export default function Page() {
       slash: "open",
       onSelect: () => dialog.show(() => <DialogSelectFile />),
     },
+<<<<<<< HEAD
     // {
     //   id: "theme.toggle",
     //   title: "Toggle theme",
@@ -263,6 +497,8 @@ export default function Page() {
     //     document.documentElement.setAttribute("data-theme", nextTheme)
     //   },
     // },
+=======
+>>>>>>> upstream/dev
     {
       id: "terminal.toggle",
       title: "Toggle terminal",
@@ -352,6 +588,7 @@ export default function Page() {
       onSelect: () => local.agent.move(-1),
     },
     {
+<<<<<<< HEAD
       id: "permissions.autoaccept",
       title: params.id && permission.isAutoAccepting(params.id) ? "Stop auto-accepting edits" : "Auto-accept edits",
       category: "Permissions",
@@ -360,6 +597,30 @@ export default function Page() {
         const sessionID = params.id
         if (!sessionID) return
 
+=======
+      id: "model.variant.cycle",
+      title: "Cycle thinking effort",
+      description: "Switch to the next effort level",
+      category: "Model",
+      keybind: "shift+mod+t",
+      onSelect: () => {
+        local.model.variant.cycle()
+        showToast({
+          title: "Thinking effort changed",
+          description: "The thinking effort has been changed to " + (local.model.variant.current() ?? "Default"),
+        })
+      },
+    },
+    {
+      id: "permissions.autoaccept",
+      title: params.id && permission.isAutoAccepting(params.id) ? "Stop auto-accepting edits" : "Auto-accept edits",
+      category: "Permissions",
+      keybind: "mod+shift+a",
+      disabled: !params.id || !permission.permissionsEnabled(),
+      onSelect: () => {
+        const sessionID = params.id
+        if (!sessionID) return
+>>>>>>> upstream/dev
         permission.toggleAutoAccept(sessionID, sdk.directory)
         showToast({
           title: permission.isAutoAccepting(sessionID) ? "Auto-accepting edits" : "Stopped auto-accepting edits",
@@ -427,6 +688,34 @@ export default function Page() {
         setActiveMessage(priorMsg)
       },
     },
+<<<<<<< HEAD
+=======
+    {
+      id: "session.compact",
+      title: "Compact session",
+      description: "Summarize the session to reduce context size",
+      category: "Session",
+      slash: "compact",
+      disabled: !params.id || visibleUserMessages().length === 0,
+      onSelect: async () => {
+        const sessionID = params.id
+        if (!sessionID) return
+        const model = local.model.current()
+        if (!model) {
+          showToast({
+            title: "No model selected",
+            description: "Connect a provider to summarize this session",
+          })
+          return
+        }
+        await sdk.client.session.summarize({
+          sessionID,
+          modelID: model.id,
+          providerID: model.provider.id,
+        })
+      },
+    },
+>>>>>>> upstream/dev
   ])
 
   const handleKeyDown = (event: KeyboardEvent) => {
@@ -448,6 +737,7 @@ export default function Page() {
     }
   }
 
+<<<<<<< HEAD
   onMount(() => {
     document.addEventListener("keydown", handleKeyDown)
   })
@@ -480,6 +770,8 @@ export default function Page() {
     }
   }
 
+=======
+>>>>>>> upstream/dev
   const handleDragStart = (event: unknown) => {
     const id = getDraggableId(event)
     if (!id) return
@@ -524,6 +816,7 @@ export default function Page() {
     setStore("activeTerminalDraggable", undefined)
   }
 
+<<<<<<< HEAD
   const SortableTerminalTab = (props: { terminal: LocalPTY }): JSX.Element => {
     const sortable = createSortable(props.terminal.id)
     return (
@@ -784,16 +1077,414 @@ export default function Page() {
               classList={{
                 "w-full px-6": true,
                 "max-w-200": !showTabs(),
+=======
+  const contextOpen = createMemo(() => tabs().active() === "context" || tabs().all().includes("context"))
+  const openedTabs = createMemo(() =>
+    tabs()
+      .all()
+      .filter((tab) => tab !== "context"),
+  )
+
+  const reviewTab = createMemo(() => diffs().length > 0 || tabs().active() === "review")
+  const mobileReview = createMemo(() => !isDesktop() && diffs().length > 0 && store.mobileTab === "review")
+
+  const showTabs = createMemo(
+    () => layout.review.opened() && (diffs().length > 0 || tabs().all().length > 0 || contextOpen()),
+  )
+
+  const activeTab = createMemo(() => {
+    const active = tabs().active()
+    if (active) return active
+    if (reviewTab()) return "review"
+
+    const first = openedTabs()[0]
+    if (first) return first
+    if (contextOpen()) return "context"
+    return "review"
+  })
+
+  createEffect(() => {
+    if (!layout.ready()) return
+    if (tabs().active()) return
+    if (diffs().length === 0 && openedTabs().length === 0 && !contextOpen()) return
+    tabs().setActive(activeTab())
+  })
+
+  const isWorking = createMemo(() => status().type !== "idle")
+  const autoScroll = createAutoScroll({
+    working: isWorking,
+    onUserInteracted: () => setStore("userInteracted", true),
+  })
+
+  let scrollContainer: HTMLDivElement | undefined
+  let initialScrollFrame: number | undefined
+  let initialScrollTarget: string | undefined
+
+  const cancelInitialScroll = () => {
+    if (initialScrollFrame === undefined) return
+    cancelAnimationFrame(initialScrollFrame)
+    initialScrollFrame = undefined
+  }
+
+  const ensureInitialScroll = () => {
+    cancelInitialScroll()
+    initialScrollFrame = requestAnimationFrame(() => {
+      initialScrollFrame = undefined
+      if (!params.id) {
+        initialScrollTarget = undefined
+        setStore("initialScrollDone", true)
+        return
+      }
+      const msgs = visibleUserMessages()
+      if (msgs.length === 0) {
+        if (!messagesReady()) {
+          ensureInitialScroll()
+          return
+        }
+        initialScrollTarget = undefined
+        setStore("initialScrollDone", true)
+        return
+      }
+      const last = msgs[msgs.length - 1]
+      const el = messageRefs.get(last.id)
+      if (!el || !scrollContainer) {
+        ensureInitialScroll()
+        return
+      }
+      scrollToMessage(last, "auto")
+      initialScrollTarget = last.id
+      setStore("initialScrollDone", true)
+    })
+  }
+
+  const setScrollRef = (el: HTMLDivElement | undefined) => {
+    scrollContainer = el
+    autoScroll.scrollRef(el)
+  }
+
+  const messageRefs = new Map<string, HTMLDivElement>()
+  let scrollTimer: number | undefined
+
+  createEffect(() => {
+    const msgs = visibleUserMessages()
+    if (msgs.length === 0) {
+      messageRefs.clear()
+      return
+    }
+    const ids = new Set(msgs.map((m) => m.id))
+    for (const id of messageRefs.keys()) {
+      if (ids.has(id)) continue
+      messageRefs.delete(id)
+    }
+  })
+
+  let scrollSpyIndex = 0
+
+  const scrollToMessage = (message: UserMessage, behavior: ScrollBehavior = "smooth") => {
+    setStore("ignoreScrollSpy", true)
+    setActiveMessage(message)
+
+    const msgs = visibleUserMessages()
+    const idx = msgs.findIndex((m) => m.id === message.id)
+    if (idx >= 0) scrollSpyIndex = idx
+
+    const el = messageRefs.get(message.id)
+    if (el) {
+      el.scrollIntoView({ behavior, block: "start" })
+    }
+
+    if (scrollTimer !== undefined) window.clearTimeout(scrollTimer)
+    scrollTimer = window.setTimeout(() => setStore("ignoreScrollSpy", false), 1000)
+  }
+
+  let scrollSpyFrame: number | undefined
+  let scrollSpyTarget: HTMLDivElement | undefined
+
+  const scheduleScrollSpy = (container: HTMLDivElement) => {
+    if (store.ignoreScrollSpy) return
+    scrollSpyTarget = container
+    if (scrollSpyFrame !== undefined) return
+
+    scrollSpyFrame = requestAnimationFrame(() => {
+      scrollSpyFrame = undefined
+      const target = scrollSpyTarget
+      scrollSpyTarget = undefined
+      if (!target) return
+      if (store.ignoreScrollSpy) return
+
+      const msgs = visibleUserMessages()
+      const scrollTop = target.scrollTop
+      const threshold = 100
+      const cutoff = scrollTop + threshold
+
+      if (msgs.length === 0) return
+
+      if (scrollSpyIndex >= msgs.length) scrollSpyIndex = msgs.length - 1
+      if (scrollSpyIndex < 0) scrollSpyIndex = 0
+
+      while (scrollSpyIndex + 1 < msgs.length) {
+        const next = msgs[scrollSpyIndex + 1]
+        if (!next) break
+
+        const el = messageRefs.get(next.id)
+        if (!el) break
+        if (el.offsetTop <= cutoff) {
+          scrollSpyIndex += 1
+          continue
+        }
+        break
+      }
+
+      while (scrollSpyIndex > 0) {
+        const cur = msgs[scrollSpyIndex]
+        if (!cur) break
+
+        const el = messageRefs.get(cur.id)
+        if (!el) break
+        if (el.offsetTop > cutoff) {
+          scrollSpyIndex -= 1
+          continue
+        }
+        break
+      }
+
+      const msg = msgs[scrollSpyIndex]
+      if (!msg) return
+      if (msg.id === activeMessage()?.id) return
+
+      setActiveMessage(msg)
+    })
+  }
+
+  createEffect(
+    on(
+      () => params.id,
+      (id) => {
+        cancelInitialScroll()
+        if (scrollTimer !== undefined) window.clearTimeout(scrollTimer)
+        scrollTimer = undefined
+        if (scrollSpyFrame !== undefined) cancelAnimationFrame(scrollSpyFrame)
+        scrollSpyFrame = undefined
+        scrollSpyTarget = undefined
+        messageRefs.clear()
+        scrollSpyIndex = 0
+        initialScrollTarget = undefined
+        setStore("initialScrollDone", !id)
+      },
+      { defer: true },
+    ),
+  )
+
+  createEffect(() => {
+    const msgs = visibleUserMessages()
+    const target = msgs.at(-1)?.id
+    const ready = messagesReady()
+
+    if (!params.id) {
+      setStore("initialScrollDone", true)
+      initialScrollTarget = undefined
+      return
+    }
+
+    if (!ready) {
+      setStore("initialScrollDone", false)
+      ensureInitialScroll()
+      return
+    }
+
+    if (!store.initialScrollDone) {
+      ensureInitialScroll()
+      return
+    }
+
+    if (!initialScrollTarget && target) {
+      setStore("initialScrollDone", false)
+      ensureInitialScroll()
+    }
+  })
+
+  createEffect(() => {
+    const msgs = visibleUserMessages()
+    if (msgs.length === 0) return
+    requestAnimationFrame(() => {
+      if (!scrollContainer) return
+      if (!isDesktop()) return
+      // Manually trigger spy once to set initial active message based on scroll position
+      scheduleScrollSpy(scrollContainer)
+    })
+  })
+
+  createEffect(() => {
+    document.addEventListener("keydown", handleKeyDown)
+  })
+
+  onCleanup(() => {
+    document.removeEventListener("keydown", handleKeyDown)
+    cancelInitialScroll()
+    if (scrollTimer !== undefined) window.clearTimeout(scrollTimer)
+    if (scrollSpyFrame !== undefined) cancelAnimationFrame(scrollSpyFrame)
+  })
+
+  return (
+    <div class="relative bg-background-base size-full overflow-hidden flex flex-col">
+      <SessionHeader />
+      <div class="flex-1 min-h-0 flex flex-col md:flex-row">
+        {/* Mobile tab bar - only shown on mobile when there are diffs */}
+        <Show when={!isDesktop() && diffs().length > 0}>
+          <Tabs class="h-auto">
+            <Tabs.List>
+              <Tabs.Trigger
+                value="session"
+                class="w-1/2"
+                classes={{ button: "w-full" }}
+                onClick={() => setStore("mobileTab", "session")}
+              >
+                Session
+              </Tabs.Trigger>
+              <Tabs.Trigger
+                value="review"
+                class="w-1/2 !border-r-0"
+                classes={{ button: "w-full" }}
+                onClick={() => setStore("mobileTab", "review")}
+              >
+                {diffs().length} Files Changed
+              </Tabs.Trigger>
+            </Tabs.List>
+          </Tabs>
+        </Show>
+
+        {/* Session panel */}
+        <div
+          classList={{
+            "@container relative shrink-0 flex flex-col min-h-0 h-full bg-background-stronger": true,
+            "flex-1 md:flex-none py-6 md:py-3": true,
+          }}
+          style={{ width: isDesktop() && showTabs() ? `${layout.session.width()}px` : "100%" }}
+        >
+          <div class="flex-1 min-h-0 overflow-hidden">
+            <Switch>
+              <Match when={params.id}>
+                <Show when={activeMessage()}>
+                  <Show
+                    when={!mobileReview()}
+                    fallback={
+                      <div class="relative h-full overflow-hidden">
+                        <SessionReviewTab
+                          diffs={diffs}
+                          view={view}
+                          diffStyle="unified"
+                          classes={{
+                            root: "pb-32",
+                            header: "px-4",
+                            container: "px-4",
+                          }}
+                        />
+                      </div>
+                    }
+                  >
+                    <div class="relative w-full h-full min-w-0">
+                      <Show when={isDesktop()}>
+                        <div class="absolute inset-0 pointer-events-none z-10">
+                          <SessionMessageRail
+                            messages={visibleUserMessages()}
+                            current={activeMessage()}
+                            onMessageSelect={scrollToMessage}
+                            wide={!showTabs()}
+                            class="pointer-events-auto"
+                          />
+                        </div>
+                      </Show>
+                      <div
+                        ref={setScrollRef}
+                        onScroll={(e) => {
+                          autoScroll.handleScroll()
+                          if (isDesktop()) scheduleScrollSpy(e.currentTarget)
+                        }}
+                        onClick={autoScroll.handleInteraction}
+                        class="relative min-w-0 w-full h-full overflow-y-auto no-scrollbar"
+                        classList={{
+                          "opacity-0 pointer-events-none": !store.initialScrollDone,
+                        }}
+                      >
+                        <div
+                          ref={autoScroll.contentRef}
+                          class="flex flex-col gap-45 items-start justify-start pb-32 md:pb-40 transition-[margin]"
+                          classList={{
+                            "mt-0.5": !showTabs(),
+                            "mt-0": showTabs(),
+                          }}
+                        >
+                          <For each={visibleUserMessages()}>
+                            {(message) => (
+                              <div
+                                ref={(el) => messageRefs.set(message.id, el)}
+                                class="min-w-0 w-full max-w-full last:min-h-[80vh]"
+                              >
+                                <SessionTurn
+                                  sessionID={params.id!}
+                                  messageID={message.id}
+                                  lastUserMessageID={lastUserMessage()?.id}
+                                  stepsExpanded={store.mobileStepsExpanded[message.id] ?? false}
+                                  onStepsExpandedToggle={() => setStore("mobileStepsExpanded", message.id, (x) => !x)}
+                                  onUserInteracted={() => setStore("userInteracted", true)}
+                                  classes={{
+                                    root: "min-w-0 w-full relative",
+                                    content:
+                                      "flex flex-col justify-between !overflow-visible [&_[data-slot=session-turn-message-header]]:top-[-32px]",
+                                    container:
+                                      "px-4 md:px-6 " +
+                                      (!showTabs()
+                                        ? "md:max-w-200 md:mx-auto"
+                                        : visibleUserMessages().length > 1
+                                          ? "md:pr-6 md:pl-18"
+                                          : ""),
+                                  }}
+                                />
+                              </div>
+                            )}
+                          </For>
+                        </div>
+                      </div>
+                    </div>
+                  </Show>
+                </Show>
+              </Match>
+              <Match when={true}>
+                <NewSessionView
+                  worktree={store.newSessionWorktree}
+                  onWorktreeChange={(value) => setStore("newSessionWorktree", value)}
+                />
+              </Match>
+            </Switch>
+          </div>
+
+          {/* Prompt input */}
+          <div class="absolute inset-x-0 bottom-0 pt-12 pb-4 md:pb-8 flex flex-col justify-center items-center z-50 px-4 md:px-0 bg-gradient-to-t from-background-stronger via-background-stronger to-transparent pointer-events-none">
+            <div
+              classList={{
+                "w-full md:px-6 pointer-events-auto": true,
+                "md:max-w-200": !showTabs(),
+>>>>>>> upstream/dev
               }}
             >
               <PromptInput
                 ref={(el) => {
                   inputRef = el
                 }}
+<<<<<<< HEAD
               />
             </div>
           </div>
           <Show when={showTabs()}>
+=======
+                newSessionWorktree={store.newSessionWorktree}
+                onNewSessionWorktreeReset={() => setStore("newSessionWorktree", "main")}
+              />
+            </div>
+          </div>
+
+          <Show when={isDesktop() && showTabs()}>
+>>>>>>> upstream/dev
             <ResizeHandle
               direction="horizontal"
               size={layout.session.width()}
@@ -804,7 +1495,12 @@ export default function Page() {
           </Show>
         </div>
 
+<<<<<<< HEAD
         <Show when={showTabs()}>
+=======
+        {/* Desktop tabs panel (Review + Context + Files) - hidden on mobile */}
+        <Show when={isDesktop() && showTabs()}>
+>>>>>>> upstream/dev
           <div class="relative flex-1 min-w-0 h-full border-l border-border-weak-base">
             <DragDropProvider
               onDragStart={handleDragStart}
@@ -814,10 +1510,17 @@ export default function Page() {
             >
               <DragDropSensors />
               <ConstrainDragYAxis />
+<<<<<<< HEAD
               <Tabs value={tabs().active() ?? "review"} onChange={tabs().open}>
                 <div class="sticky top-0 shrink-0 flex">
                   <Tabs.List>
                     <Show when={diffs().length}>
+=======
+              <Tabs value={activeTab()} onChange={openTab}>
+                <div class="sticky top-0 shrink-0 flex">
+                  <Tabs.List>
+                    <Show when={reviewTab()}>
+>>>>>>> upstream/dev
                       <Tabs.Trigger value="review">
                         <div class="flex items-center gap-3">
                           <Show when={diffs()}>
@@ -834,6 +1537,7 @@ export default function Page() {
                         </div>
                       </Tabs.Trigger>
                     </Show>
+<<<<<<< HEAD
                     <SortableProvider ids={tabs().all() ?? []}>
                       <For each={tabs().all() ?? []}>
                         {(tab) => <SortableTab tab={tab} onTabClick={handleTabClick} onTabClose={tabs().close} />}
@@ -847,6 +1551,31 @@ export default function Page() {
                             <span class="text-icon-base text-12-medium">{command.keybind("file.open")}</span>
                           </div>
                         }
+=======
+                    <Show when={contextOpen()}>
+                      <Tabs.Trigger
+                        value="context"
+                        closeButton={
+                          <Tooltip value="Close tab" placement="bottom">
+                            <IconButton icon="close" variant="ghost" onClick={() => tabs().close("context")} />
+                          </Tooltip>
+                        }
+                        hideCloseButton
+                      >
+                        <div class="flex items-center gap-2">
+                          <SessionContextUsage variant="indicator" />
+                          <div>Context</div>
+                        </div>
+                      </Tabs.Trigger>
+                    </Show>
+                    <SortableProvider ids={openedTabs()}>
+                      <For each={openedTabs()}>{(tab) => <SortableTab tab={tab} onTabClose={tabs().close} />}</For>
+                    </SortableProvider>
+                    <div class="bg-background-base h-full flex items-center justify-center border-b border-border-weak-base px-3">
+                      <TooltipKeybind
+                        title="Open file"
+                        keybind={command.keybind("file.open")}
+>>>>>>> upstream/dev
                         class="flex items-center"
                       >
                         <IconButton
@@ -855,6 +1584,7 @@ export default function Page() {
                           iconSize="large"
                           onClick={() => dialog.show(() => <DialogSelectFile />)}
                         />
+<<<<<<< HEAD
                       </Tooltip>
                     </div>
                   </Tabs.List>
@@ -870,10 +1600,25 @@ export default function Page() {
                         }}
                         diffs={diffs()}
                         split
+=======
+                      </TooltipKeybind>
+                    </div>
+                  </Tabs.List>
+                </div>
+                <Show when={reviewTab()}>
+                  <Tabs.Content value="review" class="flex flex-col h-full overflow-hidden contain-strict">
+                    <div class="relative pt-2 flex-1 min-h-0 overflow-hidden">
+                      <SessionReviewTab
+                        diffs={diffs}
+                        view={view}
+                        diffStyle={layout.review.diffStyle()}
+                        onDiffStyleChange={layout.review.setDiffStyle}
+>>>>>>> upstream/dev
                       />
                     </div>
                   </Tabs.Content>
                 </Show>
+<<<<<<< HEAD
                 <For each={tabs().all()}>
                   {(tab) => {
                     const [file] = createResource(
@@ -901,6 +1646,174 @@ export default function Page() {
                                 class="select-text pb-40"
                               />
                             )}
+=======
+                <Show when={contextOpen()}>
+                  <Tabs.Content value="context" class="flex flex-col h-full overflow-hidden contain-strict">
+                    <div class="relative pt-2 flex-1 min-h-0 overflow-hidden">
+                      <SessionContextTab
+                        messages={messages}
+                        visibleUserMessages={visibleUserMessages}
+                        view={view}
+                        info={info}
+                      />
+                    </div>
+                  </Tabs.Content>
+                </Show>
+                <For each={openedTabs()}>
+                  {(tab) => {
+                    let scroll: HTMLDivElement | undefined
+                    let scrollFrame: number | undefined
+                    let pending: { x: number; y: number } | undefined
+
+                    const path = createMemo(() => file.pathFromTab(tab))
+                    const state = createMemo(() => {
+                      const p = path()
+                      if (!p) return
+                      return file.get(p)
+                    })
+                    const contents = createMemo(() => state()?.content?.content ?? "")
+                    const cacheKey = createMemo(() => checksum(contents()))
+                    const isImage = createMemo(() => {
+                      const c = state()?.content
+                      return c?.encoding === "base64" && c?.mimeType?.startsWith("image/")
+                    })
+                    const imageDataUrl = createMemo(() => {
+                      if (!isImage()) return
+                      const c = state()?.content
+                      return `data:${c?.mimeType};base64,${c?.content}`
+                    })
+                    const selectedLines = createMemo(() => {
+                      const p = path()
+                      if (!p) return null
+                      return file.selectedLines(p) ?? null
+                    })
+                    const selection = createMemo(() => {
+                      const range = selectedLines()
+                      if (!range) return
+                      return selectionFromLines(range)
+                    })
+                    const selectionLabel = createMemo(() => {
+                      const sel = selection()
+                      if (!sel) return
+                      if (sel.startLine === sel.endLine) return `L${sel.startLine}`
+                      return `L${sel.startLine}-${sel.endLine}`
+                    })
+
+                    const restoreScroll = () => {
+                      const el = scroll
+                      if (!el) return
+
+                      const s = view()?.scroll(tab)
+                      if (!s) return
+
+                      if (el.scrollTop !== s.y) el.scrollTop = s.y
+                      if (el.scrollLeft !== s.x) el.scrollLeft = s.x
+                    }
+
+                    const handleScroll = (event: Event & { currentTarget: HTMLDivElement }) => {
+                      pending = {
+                        x: event.currentTarget.scrollLeft,
+                        y: event.currentTarget.scrollTop,
+                      }
+                      if (scrollFrame !== undefined) return
+
+                      scrollFrame = requestAnimationFrame(() => {
+                        scrollFrame = undefined
+
+                        const next = pending
+                        pending = undefined
+                        if (!next) return
+
+                        view().setScroll(tab, next)
+                      })
+                    }
+
+                    createEffect(
+                      on(
+                        () => state()?.loaded,
+                        (loaded) => {
+                          if (!loaded) return
+                          requestAnimationFrame(restoreScroll)
+                        },
+                        { defer: true },
+                      ),
+                    )
+
+                    createEffect(
+                      on(
+                        () => file.ready(),
+                        (ready) => {
+                          if (!ready) return
+                          requestAnimationFrame(restoreScroll)
+                        },
+                        { defer: true },
+                      ),
+                    )
+
+                    onCleanup(() => {
+                      if (scrollFrame === undefined) return
+                      cancelAnimationFrame(scrollFrame)
+                    })
+
+                    return (
+                      <Tabs.Content
+                        value={tab}
+                        class="mt-3"
+                        ref={(el: HTMLDivElement) => {
+                          scroll = el
+                          restoreScroll()
+                        }}
+                        onScroll={handleScroll}
+                      >
+                        <Show when={selection()}>
+                          {(sel) => (
+                            <div class="hidden sticky top-0 z-10 px-6 py-2 _flex justify-end bg-background-base border-b border-border-weak-base">
+                              <button
+                                type="button"
+                                class="flex items-center gap-2 px-2 py-1 rounded-md bg-surface-base border border-border-base text-12-regular text-text-strong hover:bg-surface-raised-base-hover"
+                                onClick={() => {
+                                  const p = path()
+                                  if (!p) return
+                                  prompt.context.add({ type: "file", path: p, selection: sel() })
+                                }}
+                              >
+                                <Icon name="plus-small" size="small" />
+                                <span>Add {selectionLabel()} to context</span>
+                              </button>
+                            </div>
+                          )}
+                        </Show>
+                        <Switch>
+                          <Match when={state()?.loaded && isImage()}>
+                            <div class="px-6 py-4 pb-40">
+                              <img src={imageDataUrl()} alt={path()} class="max-w-full" />
+                            </div>
+                          </Match>
+                          <Match when={state()?.loaded}>
+                            <Dynamic
+                              component={codeComponent}
+                              file={{
+                                name: path() ?? "",
+                                contents: contents(),
+                                cacheKey: cacheKey(),
+                              }}
+                              enableLineSelection
+                              selectedLines={selectedLines()}
+                              onLineSelected={(range: SelectedLineRange | null) => {
+                                const p = path()
+                                if (!p) return
+                                file.setSelectedLines(p, range)
+                              }}
+                              overflow="scroll"
+                              class="select-text pb-40"
+                            />
+                          </Match>
+                          <Match when={state()?.loading}>
+                            <div class="px-6 py-4 text-text-weak">Loading...</div>
+                          </Match>
+                          <Match when={state()?.error}>
+                            {(err) => <div class="px-6 py-4 text-text-weak">{err()}</div>}
+>>>>>>> upstream/dev
                           </Match>
                         </Switch>
                       </Tabs.Content>
@@ -910,6 +1823,7 @@ export default function Page() {
               </Tabs>
               <DragOverlay>
                 <Show when={store.activeDraggable}>
+<<<<<<< HEAD
                   {(draggedFile) => {
                     const [file] = createResource(
                       () => draggedFile(),
@@ -923,6 +1837,13 @@ export default function Page() {
                     return (
                       <div class="relative px-6 h-12 flex items-center bg-background-stronger border-x border-border-weak-base border-b border-b-transparent">
                         <Show when={file()}>{(f) => <FileVisual active file={f()} />}</Show>
+=======
+                  {(tab) => {
+                    const path = createMemo(() => file.pathFromTab(tab()))
+                    return (
+                      <div class="relative px-6 h-12 flex items-center bg-background-stronger border-x border-border-weak-base border-b border-b-transparent">
+                        <Show when={path()}>{(p) => <FileVisual active path={p()} />}</Show>
+>>>>>>> upstream/dev
                       </div>
                     )
                   }}
@@ -933,9 +1854,15 @@ export default function Page() {
         </Show>
       </div>
 
+<<<<<<< HEAD
       <Show when={layout.terminal.opened()}>
         <div
           class="hidden md:flex relative w-full flex-col shrink-0 border-t border-border-weak-base"
+=======
+      <Show when={isDesktop() && layout.terminal.opened()}>
+        <div
+          class="relative w-full flex-col shrink-0 border-t border-border-weak-base"
+>>>>>>> upstream/dev
           style={{ height: `${layout.terminal.height()}px` }}
         >
           <ResizeHandle
@@ -961,6 +1888,7 @@ export default function Page() {
                   <For each={terminal.all()}>{(pty) => <SortableTerminalTab terminal={pty} />}</For>
                 </SortableProvider>
                 <div class="h-full flex items-center justify-center">
+<<<<<<< HEAD
                   <Tooltip
                     value={
                       <div class="flex items-center gap-2">
@@ -972,6 +1900,15 @@ export default function Page() {
                   >
                     <IconButton icon="plus-small" variant="ghost" iconSize="large" onClick={terminal.new} />
                   </Tooltip>
+=======
+                  <TooltipKeybind
+                    title="New terminal"
+                    keybind={command.keybind("terminal.new")}
+                    class="flex items-center"
+                  >
+                    <IconButton icon="plus-small" variant="ghost" iconSize="large" onClick={terminal.new} />
+                  </TooltipKeybind>
+>>>>>>> upstream/dev
                 </div>
               </Tabs.List>
               <For each={terminal.all()}>
@@ -1001,10 +1938,13 @@ export default function Page() {
           </DragDropProvider>
         </div>
       </Show>
+<<<<<<< HEAD
       <StatusBar>
         <SessionLspIndicator />
         <SessionMcpIndicator />
       </StatusBar>
+=======
+>>>>>>> upstream/dev
     </div>
   )
 }

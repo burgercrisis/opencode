@@ -63,7 +63,11 @@ Or you can set it up manually.
              fetch-depth: 1
 
          - name: Run OpenCode
+<<<<<<< HEAD
            uses: sst/opencode/github@latest
+=======
+           uses: anomalyco/opencode/github@latest
+>>>>>>> upstream/dev
            env:
              ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
            with:
@@ -137,7 +141,11 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Run OpenCode
+<<<<<<< HEAD
         uses: sst/opencode/github@latest
+=======
+        uses: anomalyco/opencode/github@latest
+>>>>>>> upstream/dev
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         with:
@@ -172,7 +180,11 @@ jobs:
       issues: read
     steps:
       - uses: actions/checkout@v4
+<<<<<<< HEAD
       - uses: sst/opencode/github@latest
+=======
+      - uses: anomalyco/opencode/github@latest
+>>>>>>> upstream/dev
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         with:
@@ -224,7 +236,11 @@ jobs:
       - uses: actions/checkout@v4
         if: steps.check.outputs.result == 'true'
 
+<<<<<<< HEAD
       - uses: sst/opencode/github@latest
+=======
+      - uses: anomalyco/opencode/github@latest
+>>>>>>> upstream/dev
         if: steps.check.outputs.result == 'true'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -246,7 +262,11 @@ For `issues` events, the `prompt` input is **required** since there's no comment
 Override the default prompt to customize OpenCode's behavior for your workflow.
 
 ```yaml title=".github/workflows/opencode.yml"
+<<<<<<< HEAD
 - uses: sst/opencode/github@latest
+=======
+- uses: anomalyco/opencode/github@latest
+>>>>>>> upstream/dev
   with:
     model: anthropic/claude-sonnet-4-5
     prompt: |

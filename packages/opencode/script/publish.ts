@@ -39,7 +39,10 @@ await Bun.file(`./dist/${pkg.name}/package.json`).write(
 const tags = [Script.channel]
 
 const tasks = Object.entries(binaries).map(async ([name]) => {
+<<<<<<< HEAD
   // Windows compatibility: chmod skipped on Windows as it's not supported
+=======
+>>>>>>> upstream/dev
   if (process.platform !== "win32") {
     await $`chmod -R 755 .`.cwd(`./dist/${name}`)
   }
@@ -53,7 +56,11 @@ for (const tag of tags) {
   await $`cd ./dist/${pkg.name} && bun pm pack && npm publish *.tgz --access public --tag ${tag}`
 }
 
+<<<<<<< HEAD
 if (Script.channel === "dev") {
+=======
+if (!Script.preview) {
+>>>>>>> upstream/dev
   // Create archives for GitHub release
   for (const key of Object.keys(binaries)) {
     if (key.includes("linux")) {
@@ -63,9 +70,17 @@ if (Script.channel === "dev") {
     }
   }
 
+<<<<<<< HEAD
   const image = "ghcr.io/sst/opencode"
+=======
+  const image = "ghcr.io/anomalyco/opencode"
+>>>>>>> upstream/dev
   const platforms = "linux/amd64,linux/arm64"
   const tags = [`${image}:${Script.version}`, `${image}:latest`]
   const tagFlags = tags.flatMap((t) => ["-t", t])
   await $`docker buildx build --platform ${platforms} ${tagFlags} --push .`
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> upstream/dev

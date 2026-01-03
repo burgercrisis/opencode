@@ -1,6 +1,9 @@
 import { $ } from "bun"
 import * as path from "node:path"
+<<<<<<< HEAD
 import fs from "fs"
+=======
+>>>>>>> upstream/dev
 
 import { RUST_TARGET } from "./utils"
 
@@ -9,6 +12,7 @@ if (!RUST_TARGET) throw new Error("RUST_TARGET not defined")
 const BUNDLE_DIR = `src-tauri/target/${RUST_TARGET}/release/bundle`
 const BUNDLES_OUT_DIR = path.join(process.cwd(), `src-tauri/target/bundles`)
 
+<<<<<<< HEAD
 // Cross-platform directory creation
 await fs.promises.mkdir(BUNDLES_OUT_DIR, { recursive: true });
 
@@ -35,3 +39,7 @@ for (const item of bundleItems) {
     await copyRecursive(sourceDir, destDir);
   }
 }
+=======
+await $`mkdir -p ${BUNDLES_OUT_DIR}`
+await $`cp -r ${BUNDLE_DIR}/*/OpenCode* ${BUNDLES_OUT_DIR}`
+>>>>>>> upstream/dev

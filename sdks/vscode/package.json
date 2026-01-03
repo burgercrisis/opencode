@@ -2,11 +2,19 @@
   "name": "opencode",
   "displayName": "opencode",
   "description": "opencode for VS Code",
+<<<<<<< HEAD
   "version": "1.0.218",
   "publisher": "sst-dev",
   "repository": {
     "type": "git",
     "url": "https://github.com/sst/opencode"
+=======
+  "version": "1.0.224",
+  "publisher": "sst-dev",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/anomalyco/opencode"
+>>>>>>> upstream/dev
   },
   "license": "MIT",
   "icon": "images/icon.png",

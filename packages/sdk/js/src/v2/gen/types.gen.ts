@@ -32,6 +32,10 @@ export type Project = {
     updated: number
     initialized?: number
   }
+<<<<<<< HEAD
+=======
+  sandboxes?: Array<string>
+>>>>>>> upstream/dev
 }
 
 export type EventProjectUpdated = {
@@ -451,6 +455,7 @@ export type EventMessagePartRemoved = {
   }
 }
 
+<<<<<<< HEAD
 export type Permission = {
   id: string
   type: string
@@ -470,12 +475,33 @@ export type Permission = {
 export type EventPermissionUpdated = {
   type: "permission.updated"
   properties: Permission
+=======
+export type PermissionRequest = {
+  id: string
+  sessionID: string
+  permission: string
+  patterns: Array<string>
+  metadata: {
+    [key: string]: unknown
+  }
+  always: Array<string>
+  tool?: {
+    messageID: string
+    callID: string
+  }
+}
+
+export type EventPermissionAsked = {
+  type: "permission.asked"
+  properties: PermissionRequest
+>>>>>>> upstream/dev
 }
 
 export type EventPermissionReplied = {
   type: "permission.replied"
   properties: {
     sessionID: string
+<<<<<<< HEAD
     permissionID: string
     response: string
   }
@@ -512,6 +538,10 @@ export type EventTodoUpdated = {
   properties: {
     sessionID: string
     todos: Array<Todo>
+=======
+    requestID: string
+    reply: "once" | "always" | "reject"
+>>>>>>> upstream/dev
   }
 }
 
@@ -551,6 +581,43 @@ export type EventSessionCompacted = {
   }
 }
 
+<<<<<<< HEAD
+=======
+export type EventFileEdited = {
+  type: "file.edited"
+  properties: {
+    file: string
+  }
+}
+
+export type Todo = {
+  /**
+   * Brief description of the task
+   */
+  content: string
+  /**
+   * Current status of the task: pending, in_progress, completed, cancelled
+   */
+  status: string
+  /**
+   * Priority level of the task: high, medium, low
+   */
+  priority: string
+  /**
+   * Unique identifier for the todo item
+   */
+  id: string
+}
+
+export type EventTodoUpdated = {
+  type: "todo.updated"
+  properties: {
+    sessionID: string
+    todos: Array<Todo>
+  }
+}
+
+>>>>>>> upstream/dev
 export type EventTuiPromptAppend = {
   type: "tui.prompt.append"
   properties: {
@@ -593,6 +660,19 @@ export type EventTuiToastShow = {
   }
 }
 
+<<<<<<< HEAD
+=======
+export type EventTuiSessionSelect = {
+  type: "tui.session.select"
+  properties: {
+    /**
+     * Session ID to navigate to
+     */
+    sessionID: string
+  }
+}
+
+>>>>>>> upstream/dev
 export type EventMcpToolsChanged = {
   type: "mcp.tools.changed"
   properties: {
@@ -610,6 +690,19 @@ export type EventCommandExecuted = {
   }
 }
 
+<<<<<<< HEAD
+=======
+export type PermissionAction = "allow" | "deny" | "ask"
+
+export type PermissionRule = {
+  permission: string
+  pattern: string
+  action: PermissionAction
+}
+
+export type PermissionRuleset = Array<PermissionRule>
+
+>>>>>>> upstream/dev
 export type Session = {
   id: string
   projectID: string
@@ -632,6 +725,10 @@ export type Session = {
     compacting?: number
     archived?: number
   }
+<<<<<<< HEAD
+=======
+  permission?: PermissionRuleset
+>>>>>>> upstream/dev
   revert?: {
     messageID: string
     partID?: string
@@ -756,6 +853,7 @@ export type Event =
   | EventMessageRemoved
   | EventMessagePartUpdated
   | EventMessagePartRemoved
+<<<<<<< HEAD
   | EventPermissionUpdated
   | EventPermissionReplied
   | EventFileEdited
@@ -766,6 +864,19 @@ export type Event =
   | EventTuiPromptAppend
   | EventTuiCommandExecute
   | EventTuiToastShow
+=======
+  | EventPermissionAsked
+  | EventPermissionReplied
+  | EventSessionStatus
+  | EventSessionIdle
+  | EventSessionCompacted
+  | EventFileEdited
+  | EventTodoUpdated
+  | EventTuiPromptAppend
+  | EventTuiCommandExecute
+  | EventTuiToastShow
+  | EventTuiSessionSelect
+>>>>>>> upstream/dev
   | EventMcpToolsChanged
   | EventCommandExecuted
   | EventSessionCreated
@@ -1183,11 +1294,49 @@ export type ServerConfig = {
   cors?: Array<string>
 }
 
+<<<<<<< HEAD
+=======
+export type PermissionActionConfig = "ask" | "allow" | "deny"
+
+export type PermissionObjectConfig = {
+  [key: string]: PermissionActionConfig
+}
+
+export type PermissionRuleConfig = PermissionActionConfig | PermissionObjectConfig
+
+export type PermissionConfig =
+  | {
+      read?: PermissionRuleConfig
+      edit?: PermissionRuleConfig
+      glob?: PermissionRuleConfig
+      grep?: PermissionRuleConfig
+      list?: PermissionRuleConfig
+      bash?: PermissionRuleConfig
+      task?: PermissionRuleConfig
+      external_directory?: PermissionRuleConfig
+      todowrite?: PermissionActionConfig
+      todoread?: PermissionActionConfig
+      webfetch?: PermissionActionConfig
+      websearch?: PermissionActionConfig
+      codesearch?: PermissionActionConfig
+      lsp?: PermissionRuleConfig
+      doom_loop?: PermissionActionConfig
+      [key: string]: PermissionRuleConfig | PermissionActionConfig | undefined
+    }
+  | PermissionActionConfig
+
+>>>>>>> upstream/dev
 export type AgentConfig = {
   model?: string
   temperature?: number
   top_p?: number
   prompt?: string
+<<<<<<< HEAD
+=======
+  /**
+   * @deprecated Use 'permission' field instead
+   */
+>>>>>>> upstream/dev
   tools?: {
     [key: string]: boolean
   }
@@ -1197,6 +1346,12 @@ export type AgentConfig = {
    */
   description?: string
   mode?: "subagent" | "primary" | "all"
+<<<<<<< HEAD
+=======
+  options?: {
+    [key: string]: unknown
+  }
+>>>>>>> upstream/dev
   /**
    * Hex color code for the agent (e.g., #FF5733)
    */
@@ -1204,6 +1359,7 @@ export type AgentConfig = {
   /**
    * Maximum number of agentic iterations before forcing text-only response
    */
+<<<<<<< HEAD
   maxSteps?: number
   permission?: {
     edit?: "ask" | "allow" | "deny"
@@ -1225,6 +1381,14 @@ export type AgentConfig = {
     doom_loop?: "ask" | "allow" | "deny"
     external_directory?: "ask" | "allow" | "deny"
   }
+=======
+  steps?: number
+  /**
+   * @deprecated Use 'steps' field instead.
+   */
+  maxSteps?: number
+  permission?: PermissionConfig
+>>>>>>> upstream/dev
   [key: string]:
     | unknown
     | string
@@ -1236,6 +1400,7 @@ export type AgentConfig = {
     | "subagent"
     | "primary"
     | "all"
+<<<<<<< HEAD
     | string
     | number
     | {
@@ -1258,6 +1423,14 @@ export type AgentConfig = {
         doom_loop?: "ask" | "allow" | "deny"
         external_directory?: "ask" | "allow" | "deny"
       }
+=======
+    | {
+        [key: string]: unknown
+      }
+    | string
+    | number
+    | PermissionConfig
+>>>>>>> upstream/dev
     | undefined
 }
 
@@ -1540,7 +1713,16 @@ export type Config = {
    * MCP (Model Context Protocol) server configurations
    */
   mcp?: {
+<<<<<<< HEAD
     [key: string]: McpLocalConfig | McpRemoteConfig
+=======
+    [key: string]:
+      | McpLocalConfig
+      | McpRemoteConfig
+      | {
+          enabled: boolean
+        }
+>>>>>>> upstream/dev
   }
   formatter?:
     | false
@@ -1578,6 +1760,7 @@ export type Config = {
    */
   instructions?: Array<string>
   layout?: LayoutConfig
+<<<<<<< HEAD
   permission?: {
     edit?: "ask" | "allow" | "deny"
     bash?:
@@ -1598,6 +1781,9 @@ export type Config = {
     doom_loop?: "ask" | "allow" | "deny"
     external_directory?: "ask" | "allow" | "deny"
   }
+=======
+  permission?: PermissionConfig
+>>>>>>> upstream/dev
   tools?: {
     [key: string]: boolean
   }
@@ -1680,6 +1866,20 @@ export type Path = {
   directory: string
 }
 
+<<<<<<< HEAD
+=======
+export type Worktree = {
+  name: string
+  branch: string
+  directory: string
+}
+
+export type WorktreeCreateInput = {
+  name?: string
+  startCommand?: string
+}
+
+>>>>>>> upstream/dev
 export type VcsInfo = {
   branch: string
 }
@@ -1886,6 +2086,7 @@ export type Agent = {
   mode: "subagent" | "primary" | "all"
   native?: boolean
   hidden?: boolean
+<<<<<<< HEAD
   default?: boolean
   topP?: number
   temperature?: number
@@ -1902,11 +2103,18 @@ export type Agent = {
     doom_loop?: "ask" | "allow" | "deny"
     external_directory?: "ask" | "allow" | "deny"
   }
+=======
+  topP?: number
+  temperature?: number
+  color?: string
+  permission: PermissionRuleset
+>>>>>>> upstream/dev
   model?: {
     modelID: string
     providerID: string
   }
   prompt?: string
+<<<<<<< HEAD
   tools: {
     [key: string]: boolean
   }
@@ -1914,6 +2122,12 @@ export type Agent = {
     [key: string]: unknown
   }
   maxSteps?: number
+=======
+  options: {
+    [key: string]: unknown
+  }
+  steps?: number
+>>>>>>> upstream/dev
 }
 
 export type McpStatusConnected = {
@@ -2417,6 +2631,54 @@ export type PathGetResponses = {
 
 export type PathGetResponse = PathGetResponses[keyof PathGetResponses]
 
+<<<<<<< HEAD
+=======
+export type WorktreeListData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+  }
+  url: "/experimental/worktree"
+}
+
+export type WorktreeListResponses = {
+  /**
+   * List of worktree directories
+   */
+  200: Array<string>
+}
+
+export type WorktreeListResponse = WorktreeListResponses[keyof WorktreeListResponses]
+
+export type WorktreeCreateData = {
+  body?: WorktreeCreateInput
+  path?: never
+  query?: {
+    directory?: string
+  }
+  url: "/experimental/worktree"
+}
+
+export type WorktreeCreateErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type WorktreeCreateError = WorktreeCreateErrors[keyof WorktreeCreateErrors]
+
+export type WorktreeCreateResponses = {
+  /**
+   * Worktree created
+   */
+  200: Worktree
+}
+
+export type WorktreeCreateResponse = WorktreeCreateResponses[keyof WorktreeCreateResponses]
+
+>>>>>>> upstream/dev
 export type VcsGetData = {
   body?: never
   path?: never
@@ -2457,6 +2719,10 @@ export type SessionCreateData = {
   body?: {
     parentID?: string
     title?: string
+<<<<<<< HEAD
+=======
+    permission?: PermissionRuleset
+>>>>>>> upstream/dev
   }
   path?: never
   query?: {
@@ -2972,6 +3238,12 @@ export type SessionPromptData = {
     }
     agent?: string
     noReply?: boolean
+<<<<<<< HEAD
+=======
+    /**
+     * @deprecated tools and permissions have been merged, you can set permissions on the session itself now
+     */
+>>>>>>> upstream/dev
     tools?: {
       [key: string]: boolean
     }
@@ -3156,6 +3428,12 @@ export type SessionPromptAsyncData = {
     }
     agent?: string
     noReply?: boolean
+<<<<<<< HEAD
+=======
+    /**
+     * @deprecated tools and permissions have been merged, you can set permissions on the session itself now
+     */
+>>>>>>> upstream/dev
     tools?: {
       [key: string]: boolean
     }
@@ -3355,6 +3633,7 @@ export type SessionUnrevertResponses = {
 
 export type SessionUnrevertResponse = SessionUnrevertResponses[keyof SessionUnrevertResponses]
 
+<<<<<<< HEAD
 export type SessionRevertFilesData = {
   body?: {
     messageID: string
@@ -3392,6 +3671,8 @@ export type SessionRevertFilesResponses = {
 
 export type SessionRevertFilesResponse = SessionRevertFilesResponses[keyof SessionRevertFilesResponses]
 
+=======
+>>>>>>> upstream/dev
 export type PermissionRespondData = {
   body?: {
     response: "once" | "always" | "reject"
@@ -3428,6 +3709,45 @@ export type PermissionRespondResponses = {
 
 export type PermissionRespondResponse = PermissionRespondResponses[keyof PermissionRespondResponses]
 
+<<<<<<< HEAD
+=======
+export type PermissionReplyData = {
+  body?: {
+    reply: "once" | "always" | "reject"
+    message?: string
+  }
+  path: {
+    requestID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/permission/{requestID}/reply"
+}
+
+export type PermissionReplyErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type PermissionReplyError = PermissionReplyErrors[keyof PermissionReplyErrors]
+
+export type PermissionReplyResponses = {
+  /**
+   * Permission processed successfully
+   */
+  200: boolean
+}
+
+export type PermissionReplyResponse = PermissionReplyResponses[keyof PermissionReplyResponses]
+
+>>>>>>> upstream/dev
 export type PermissionListData = {
   body?: never
   path?: never
@@ -3441,7 +3761,11 @@ export type PermissionListResponses = {
   /**
    * List of pending permissions
    */
+<<<<<<< HEAD
   200: Array<Permission>
+=======
+  200: Array<PermissionRequest>
+>>>>>>> upstream/dev
 }
 
 export type PermissionListResponse = PermissionListResponses[keyof PermissionListResponses]
@@ -4325,7 +4649,11 @@ export type TuiShowToastResponses = {
 export type TuiShowToastResponse = TuiShowToastResponses[keyof TuiShowToastResponses]
 
 export type TuiPublishData = {
+<<<<<<< HEAD
   body?: EventTuiPromptAppend | EventTuiCommandExecute | EventTuiToastShow
+=======
+  body?: EventTuiPromptAppend | EventTuiCommandExecute | EventTuiToastShow | EventTuiSessionSelect
+>>>>>>> upstream/dev
   path?: never
   query?: {
     directory?: string
@@ -4351,6 +4679,45 @@ export type TuiPublishResponses = {
 
 export type TuiPublishResponse = TuiPublishResponses[keyof TuiPublishResponses]
 
+<<<<<<< HEAD
+=======
+export type TuiSelectSessionData = {
+  body?: {
+    /**
+     * Session ID to navigate to
+     */
+    sessionID: string
+  }
+  path?: never
+  query?: {
+    directory?: string
+  }
+  url: "/tui/select-session"
+}
+
+export type TuiSelectSessionErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type TuiSelectSessionError = TuiSelectSessionErrors[keyof TuiSelectSessionErrors]
+
+export type TuiSelectSessionResponses = {
+  /**
+   * Session selected successfully
+   */
+  200: boolean
+}
+
+export type TuiSelectSessionResponse = TuiSelectSessionResponses[keyof TuiSelectSessionResponses]
+
+>>>>>>> upstream/dev
 export type TuiControlNextData = {
   body?: never
   path?: never

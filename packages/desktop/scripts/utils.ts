@@ -1,6 +1,9 @@
 import { $ } from "bun"
+<<<<<<< HEAD
 import fs from "fs"
 import path from "path"
+=======
+>>>>>>> upstream/dev
 
 export const SIDECAR_BINARIES: Array<{ rustTarget: string; ocBinary: string; assetExt: string }> = [
   {
@@ -42,6 +45,7 @@ export function getCurrentSidecar(target = RUST_TARGET) {
 }
 
 export async function copyBinaryToSidecarFolder(source: string, target = RUST_TARGET) {
+<<<<<<< HEAD
   // Cross-platform directory creation
   const sidecarDir = "src-tauri/sidecars";
   await fs.promises.mkdir(sidecarDir, { recursive: true });
@@ -49,6 +53,11 @@ export async function copyBinaryToSidecarFolder(source: string, target = RUST_TA
   const dest = `src-tauri/sidecars/opencode-cli-${target}${process.platform === "win32" ? ".exe" : ""}`
   // Cross-platform file copy
   await fs.promises.copyFile(source, dest);
+=======
+  await $`mkdir -p src-tauri/sidecars`
+  const dest = `src-tauri/sidecars/opencode-cli-${target}${process.platform === "win32" ? ".exe" : ""}`
+  await $`cp ${source} ${dest}`
+>>>>>>> upstream/dev
 
   console.log(`Copied ${source} to ${dest}`)
 }

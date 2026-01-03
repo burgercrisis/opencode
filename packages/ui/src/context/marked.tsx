@@ -1,5 +1,9 @@
 import { marked } from "marked"
+<<<<<<< HEAD
 // import { markedKatex } from "marked-katex-extension"
+=======
+import markedKatex from "marked-katex-extension"
+>>>>>>> upstream/dev
 import markedShiki from "marked-shiki"
 import { bundledLanguages, type BundledLanguage } from "shiki"
 import { createSimpleContext } from "./helper"
@@ -379,9 +383,15 @@ export const { use: useMarked, provider: MarkedProvider } = createSimpleContext(
   name: "Marked",
   init: () => {
     return marked.use(
+<<<<<<< HEAD
       // markedKatex({
       //   throwOnError: false,
       // }),
+=======
+      markedKatex({
+        throwOnError: false,
+      }),
+>>>>>>> upstream/dev
       markedShiki({
         async highlight(code, lang) {
           const highlighter = await getSharedHighlighter({ themes: ["OpenCode"], langs: [] })

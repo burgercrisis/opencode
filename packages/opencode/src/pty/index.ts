@@ -7,14 +7,18 @@ import { Log } from "../util/log"
 import type { WSContext } from "hono/ws"
 import { Instance } from "../project/instance"
 import { lazy } from "@opencode-ai/util/lazy"
+<<<<<<< HEAD
 import {} from "process"
 import { Installation } from "@/installation"
+=======
+>>>>>>> upstream/dev
 import { Shell } from "@/shell/shell"
 
 export namespace Pty {
   const log = Log.create({ service: "pty" })
 
   const pty = lazy(async () => {
+<<<<<<< HEAD
     if (!Installation.isLocal()) {
       const path = require(
         `bun-pty/rust-pty/target/release/${
@@ -33,6 +37,8 @@ export namespace Pty {
       )
       process.env.BUN_PTY_LIB = path
     }
+=======
+>>>>>>> upstream/dev
     const { spawn } = await import("bun-pty")
     return spawn
   })
@@ -128,6 +134,10 @@ export namespace Pty {
       cwd,
       env,
     })
+<<<<<<< HEAD
+=======
+
+>>>>>>> upstream/dev
     const info = {
       id,
       title: input.title || `Terminal ${id.slice(-4)}`,

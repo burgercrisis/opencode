@@ -33,7 +33,11 @@ const ClientOnlyCode = clientOnly(() => import("@opencode-ai/ui/code").then((m) 
 const ClientOnlyWorkerPoolProvider = clientOnly(() =>
   import("@opencode-ai/ui/pierre/worker").then((m) => ({
     default: (props: { children: any }) => (
+<<<<<<< HEAD
       <WorkerPoolProvider pool={m.workerPool}>{props.children}</WorkerPoolProvider>
+=======
+      <WorkerPoolProvider pools={m.getWorkerPools()}>{props.children}</WorkerPoolProvider>
+>>>>>>> upstream/dev
     ),
   })),
 )
@@ -162,12 +166,20 @@ export default function () {
 
   return (
     <ErrorBoundary
+<<<<<<< HEAD
       fallback={(error: any) => {
+=======
+      fallback={(error) => {
+>>>>>>> upstream/dev
         if (SessionDataMissingError.isInstance(error)) {
           return <NotFound />
         }
         console.error(error)
+<<<<<<< HEAD
         const details = (error as any) instanceof Error ? ((error as any).stack ?? (error as any).message) : String(error)
+=======
+        const details = error instanceof Error ? (error.stack ?? error.message) : String(error)
+>>>>>>> upstream/dev
         return (
           <div class="min-h-screen w-full bg-background-base text-text-base flex flex-col items-center justify-center gap-4 p-6 text-center">
             <p class="text-16-medium">Unable to render this share.</p>
@@ -328,7 +340,11 @@ export default function () {
                               <div class="flex gap-3 items-center">
                                 <IconButton
                                   as={"a"}
+<<<<<<< HEAD
                                   href="https://github.com/sst/opencode"
+=======
+                                  href="https://github.com/anomalyco/opencode"
+>>>>>>> upstream/dev
                                   target="_blank"
                                   icon="github"
                                   variant="ghost"

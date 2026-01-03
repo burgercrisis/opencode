@@ -2,8 +2,11 @@ import z from "zod"
 import { Tool } from "./tool"
 import TurndownService from "turndown"
 import DESCRIPTION from "./webfetch.txt"
+<<<<<<< HEAD
 import { Config } from "../config/config"
 import { Permission } from "../permission"
+=======
+>>>>>>> upstream/dev
 
 const MAX_RESPONSE_SIZE = 5 * 1024 * 1024 // 5MB
 const DEFAULT_TIMEOUT = 30 * 1000 // 30 seconds
@@ -25,6 +28,7 @@ export const WebFetchTool = Tool.define("webfetch", {
       throw new Error("URL must start with http:// or https://")
     }
 
+<<<<<<< HEAD
     const cfg = await Config.get()
     if (cfg.permission?.webfetch === "ask")
       await Permission.ask({
@@ -39,6 +43,18 @@ export const WebFetchTool = Tool.define("webfetch", {
           timeout: params.timeout,
         },
       })
+=======
+    await ctx.ask({
+      permission: "webfetch",
+      patterns: [params.url],
+      always: ["*"],
+      metadata: {
+        url: params.url,
+        format: params.format,
+        timeout: params.timeout,
+      },
+    })
+>>>>>>> upstream/dev
 
     const timeout = Math.min((params.timeout ?? DEFAULT_TIMEOUT / 1000) * 1000, MAX_TIMEOUT)
 

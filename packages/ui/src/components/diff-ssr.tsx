@@ -13,7 +13,11 @@ export function Diff<T>(props: SSRDiffProps<T>) {
   let container!: HTMLDivElement
   let fileDiffRef!: HTMLElement
   const [local, others] = splitProps(props, ["before", "after", "class", "classList", "annotations"])
+<<<<<<< HEAD
   const workerPool = useWorkerPool()
+=======
+  const workerPool = useWorkerPool(props.diffStyle)
+>>>>>>> upstream/dev
 
   let fileDiffInstance: FileDiff<T> | undefined
   const cleanupFunctions: Array<() => void> = []

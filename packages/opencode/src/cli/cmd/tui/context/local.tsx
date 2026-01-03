@@ -38,7 +38,11 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       const [agentStore, setAgentStore] = createStore<{
         current: string
       }>({
+<<<<<<< HEAD
         current: agents().find((x) => x.default)?.name ?? agents()[0].name,
+=======
+        current: agents()[0].name,
+>>>>>>> upstream/dev
       })
       const { theme } = useTheme()
       const colors = createMemo(() => [
@@ -253,7 +257,11 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           const next = favorites[index]
           if (!next) return
           setModelStore("model", agent.current().name, { ...next })
+<<<<<<< HEAD
           const uniq = uniqueBy([next, ...modelStore.recent], (x) => x.providerID + x.modelID)
+=======
+          const uniq = uniqueBy([next, ...modelStore.recent], (x) => `${x.providerID}/${x.modelID}`)
+>>>>>>> upstream/dev
           if (uniq.length > 10) uniq.pop()
           setModelStore(
             "recent",
@@ -273,7 +281,11 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
             }
             setModelStore("model", agent.current().name, model)
             if (options?.recent) {
+<<<<<<< HEAD
               const uniq = uniqueBy([model, ...modelStore.recent], (x) => x.providerID + x.modelID)
+=======
+              const uniq = uniqueBy([model, ...modelStore.recent], (x) => `${x.providerID}/${x.modelID}`)
+>>>>>>> upstream/dev
               if (uniq.length > 10) uniq.pop()
               setModelStore(
                 "recent",

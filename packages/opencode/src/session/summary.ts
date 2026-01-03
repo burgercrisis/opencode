@@ -35,7 +35,22 @@ export namespace SessionSummary {
   )
 
   async function summarizeSession(input: { sessionID: string; messages: MessageV2.WithParts[] }) {
+<<<<<<< HEAD
     const diffs = await computeDiff({ messages: input.messages })
+=======
+    const files = new Set(
+      input.messages
+        .flatMap((x) => x.parts)
+        .filter((x) => x.type === "patch")
+        .flatMap((x) => x.files)
+        .map((x) => path.relative(Instance.worktree, x)),
+    )
+    const diffs = await computeDiff({ messages: input.messages }).then((x) =>
+      x.filter((x) => {
+        return files.has(x.file)
+      }),
+    )
+>>>>>>> upstream/dev
     await Session.update(input.sessionID, (draft) => {
       draft.summary = {
         additions: diffs.reduce((sum, x) => sum + x.additions, 0),

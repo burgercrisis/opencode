@@ -18,7 +18,11 @@ export const team = [
 ]
 
 export async function getLatestRelease() {
+<<<<<<< HEAD
   return fetch("https://api.github.com/repos/sst/opencode/releases/latest")
+=======
+  return fetch("https://api.github.com/repos/anomalyco/opencode/releases/latest")
+>>>>>>> upstream/dev
     .then((res) => {
       if (!res.ok) throw new Error(res.statusText)
       return res.json()
@@ -39,7 +43,11 @@ export async function getCommits(from: string, to: string): Promise<Commit[]> {
 
   // Get commit data with GitHub usernames from the API
   const compare =
+<<<<<<< HEAD
     await $`gh api "/repos/sst/opencode/compare/${fromRef}...${toRef}" --jq '.commits[] | {sha: .sha, login: .author.login, message: .commit.message}'`.text()
+=======
+    await $`gh api "/repos/anomalyco/opencode/compare/${fromRef}...${toRef}" --jq '.commits[] | {sha: .sha, login: .author.login, message: .commit.message}'`.text()
+>>>>>>> upstream/dev
 
   const commitData = new Map<string, { login: string | null; message: string }>()
   for (const line of compare.split("\n").filter(Boolean)) {
@@ -195,7 +203,11 @@ export async function getContributors(from: string, to: string) {
   const fromRef = from.startsWith("v") ? from : `v${from}`
   const toRef = to === "HEAD" ? to : to.startsWith("v") ? to : `v${to}`
   const compare =
+<<<<<<< HEAD
     await $`gh api "/repos/sst/opencode/compare/${fromRef}...${toRef}" --jq '.commits[] | {login: .author.login, message: .commit.message}'`.text()
+=======
+    await $`gh api "/repos/anomalyco/opencode/compare/${fromRef}...${toRef}" --jq '.commits[] | {login: .author.login, message: .commit.message}'`.text()
+>>>>>>> upstream/dev
   const contributors = new Map<string, string[]>()
 
   for (const line of compare.split("\n").filter(Boolean)) {

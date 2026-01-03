@@ -160,6 +160,7 @@ export namespace LSP {
   export type Status = z.infer<typeof Status>
 
   export async function status() {
+<<<<<<< HEAD
     const x = await state()
     const result: Status[] = []
     for (const client of x.clients) {
@@ -171,6 +172,20 @@ export namespace LSP {
       })
     }
     return result
+=======
+    return state().then((x) => {
+      const result: Status[] = []
+      for (const client of x.clients) {
+        result.push({
+          id: client.serverID,
+          name: x.servers[client.serverID].id,
+          root: path.relative(Instance.directory, client.root),
+          status: "connected",
+        })
+      }
+      return result
+    })
+>>>>>>> upstream/dev
   }
 
   async function getClients(file: string) {
@@ -454,7 +469,11 @@ export namespace LSP {
   }
 
   async function runAll<T>(input: (client: LSPClient.Info) => Promise<T>): Promise<T[]> {
+<<<<<<< HEAD
     const clients = (await state()).clients
+=======
+    const clients = await state().then((x) => x.clients)
+>>>>>>> upstream/dev
     const tasks = clients.map((x) => input(x))
     return Promise.all(tasks)
   }

@@ -112,6 +112,12 @@
       pointer-events: none;
     }
     [data-slot="select-select-item-indicator"] {
+<<<<<<< HEAD
+=======
+      display: flex;
+      align-items: center;
+      justify-content: center;
+>>>>>>> upstream/dev
       margin-left: auto;
       width: 16px;
       height: 16px;

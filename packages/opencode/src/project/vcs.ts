@@ -71,6 +71,10 @@ export namespace Vcs {
   }
 
   export async function branch() {
+<<<<<<< HEAD
     return (await state()).branch()
+=======
+    return await state().then((s) => s.branch())
+>>>>>>> upstream/dev
   }
 }

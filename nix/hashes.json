@@ -1,3 +1,7 @@
 {
+<<<<<<< HEAD
   "nodeModules": "sha256-7zMUWgMCnoe2As8WdEKazkKiGEcUIk5rP4zFvX9USgA="
+=======
+  "nodeModules": "sha256-2K+uwNPfgptAdZ8YVCCI+SJl84QHKosuQ07/OLGDPAA="
+>>>>>>> upstream/dev
 }

@@ -230,10 +230,17 @@ export const iconNames = [
   "Pkl",
   "Pipeline",
   "Pinejs",
+<<<<<<< HEAD
   "Php_elephant_pink",
   "Php_elephant",
   "Phpunit",
   "Phpstan",
+=======
+  "Phpunit",
+  "Phpstan",
+  "Php_elephant_pink",
+  "Php_elephant",
+>>>>>>> upstream/dev
   "Php",
   "PhpCsFixer",
   "Perl",
@@ -399,9 +406,15 @@ export const iconNames = [
   "Grain",
   "GrafanaAlloy",
   "Gradle",
+<<<<<<< HEAD
   "Go_gopher",
   "Godot",
   "GodotAssets",
+=======
+  "Godot",
+  "GodotAssets",
+  "Go_gopher",
+>>>>>>> upstream/dev
   "Go",
   "GoMod",
   "Gnuplot",
@@ -1055,9 +1068,15 @@ export const iconNames = [
   "Babel",
   "Azure",
   "AzurePipelines",
+<<<<<<< HEAD
   "Auto_light",
   "Autoit",
   "Autohotkey",
+=======
+  "Autoit",
+  "Autohotkey",
+  "Auto_light",
+>>>>>>> upstream/dev
   "Auto",
   "Authors",
   "Aurelia",

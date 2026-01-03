@@ -1,4 +1,5 @@
 import { FileDiff } from "@pierre/diffs"
+<<<<<<< HEAD
 import { createEffect, createMemo, onCleanup, splitProps, createSignal } from "solid-js"
 import { createDefaultOptions, type DiffProps, styleVariables } from "../pierre"
 import { workerPool } from "../pierre/worker"
@@ -8,11 +9,25 @@ import { Show } from "solid-js"
 // Performance threshold for showing warnings
 const LARGE_FILE_THRESHOLD = 10000
 const CRITICAL_FILE_THRESHOLD = 50000
+=======
+import { createEffect, createMemo, onCleanup, splitProps } from "solid-js"
+import { createDefaultOptions, type DiffProps, styleVariables } from "../pierre"
+import { getWorkerPool } from "../pierre/worker"
+
+// interface ThreadMetadata {
+//   threadId: string
+// }
+//
+//
+>>>>>>> upstream/dev
 
 export function Diff<T>(props: DiffProps<T>) {
   let container!: HTMLDivElement
   const [local, others] = splitProps(props, ["before", "after", "class", "classList", "annotations"])
+<<<<<<< HEAD
   const [isRendering, setIsRendering] = createSignal(false)
+=======
+>>>>>>> upstream/dev
 
   const fileDiff = createMemo(
     () =>
@@ -21,6 +36,7 @@ export function Diff<T>(props: DiffProps<T>) {
           ...createDefaultOptions(props.diffStyle),
           ...others,
         },
+<<<<<<< HEAD
         workerPool,
       ),
   )
@@ -60,4 +76,26 @@ export function Diff<T>(props: DiffProps<T>) {
       <div ref={container} />
     </div>
   )
+=======
+        getWorkerPool(props.diffStyle),
+      ),
+  )
+
+  createEffect(() => {
+    const diff = fileDiff()
+    container.innerHTML = ""
+    diff.render({
+      oldFile: local.before,
+      newFile: local.after,
+      lineAnnotations: local.annotations,
+      containerWrapper: container,
+    })
+
+    onCleanup(() => {
+      diff.cleanUp()
+    })
+  })
+
+  return <div data-component="diff" style={styleVariables} ref={container} />
+>>>>>>> upstream/dev
 }

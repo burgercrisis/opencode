@@ -16,8 +16,11 @@
         "x86_64-linux"
         "aarch64-darwin"
         "x86_64-darwin"
+<<<<<<< HEAD
         "aarch64-windows"
         "x86_64-windows"
+=======
+>>>>>>> upstream/dev
       ];
       inherit (nixpkgs) lib;
       forEachSystem = lib.genAttrs systems;
@@ -28,8 +31,11 @@
         "x86_64-linux" = "bun-linux-x64";
         "aarch64-darwin" = "bun-darwin-arm64";
         "x86_64-darwin" = "bun-darwin-x64";
+<<<<<<< HEAD
         "aarch64-windows" = "bun-windows-arm64";
         "x86_64-windows" = "bun-windows-x64";
+=======
+>>>>>>> upstream/dev
       };
       defaultNodeModules = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
       hashesFile = "${./nix}/hashes.json";
@@ -58,6 +64,7 @@
               pkg-config
               openssl
               git
+<<<<<<< HEAD
             ] ++ lib.optionals stdenv.isWindows [
               # Windows-specific packages
               msys2
@@ -70,6 +77,8 @@
               # macOS-specific packages
               darwin.apple_sdk.frameworks.Security
               darwin.apple_sdk.frameworks.CoreFoundation
+=======
+>>>>>>> upstream/dev
             ];
           };
         }

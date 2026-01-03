@@ -12,6 +12,7 @@
     "isolatedModules": true,
     "module": "ESNext",
     "moduleResolution": "bundler",
+<<<<<<< HEAD
     "composite": true,
     "outDir": "dist",
     "declaration": true,
@@ -39,3 +40,12 @@
     "dist"
   ]
 }
+=======
+    "noEmit": true,
+    "lib": ["es2023", "dom", "dom.iterable"],
+    // Type Checking & Safety
+    "strict": true,
+    "types": ["vite/client", "bun"]
+  }
+}
+>>>>>>> upstream/dev

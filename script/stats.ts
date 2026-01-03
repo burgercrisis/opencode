@@ -73,7 +73,11 @@ async function fetchReleases(): Promise<Release[]> {
   const per = 100
 
   while (true) {
+<<<<<<< HEAD
     const url = `https://api.github.com/repos/sst/opencode/releases?page=${page}&per_page=${per}`
+=======
+    const url = `https://api.github.com/repos/anomalyco/opencode/releases?page=${page}&per_page=${per}`
+>>>>>>> upstream/dev
 
     const response = await fetch(url)
     if (!response.ok) {
@@ -188,7 +192,11 @@ async function save(githubTotal: number, npmDownloads: number) {
   )
 }
 
+<<<<<<< HEAD
 console.log("Fetching GitHub releases for sst/opencode...\n")
+=======
+console.log("Fetching GitHub releases for anomalyco/opencode...\n")
+>>>>>>> upstream/dev
 
 const releases = await fetchReleases()
 console.log(`\nFetched ${releases.length} releases total\n`)

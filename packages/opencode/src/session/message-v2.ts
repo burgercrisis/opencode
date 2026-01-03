@@ -167,11 +167,15 @@ export namespace MessageV2 {
   export const RetryPart = PartBase.extend({
     type: z.literal("retry"),
     attempt: z.number(),
+<<<<<<< HEAD
     error: z.object({
       name: z.literal("APIError"),
       message: z.string(),
       data: z.any(),
     }),
+=======
+    error: APIError.Schema,
+>>>>>>> upstream/dev
     time: z.object({
       created: z.number(),
     }),
@@ -344,6 +348,7 @@ export namespace MessageV2 {
     }),
     error: z
       .discriminatedUnion("name", [
+<<<<<<< HEAD
         z.object({
           name: z.literal("ProviderAuthError"),
           message: z.string(),
@@ -379,6 +384,13 @@ export namespace MessageV2 {
             metadata: z.record(z.string(), z.string()).optional(),
           }),
         }),
+=======
+        AuthError.Schema,
+        NamedError.Unknown.Schema,
+        OutputLengthError.Schema,
+        AbortedError.Schema,
+        APIError.Schema,
+>>>>>>> upstream/dev
       ])
       .optional(),
     parentID: z.string(),
@@ -510,7 +522,10 @@ export namespace MessageV2 {
           role: "assistant",
           parts: [],
         }
+<<<<<<< HEAD
         result.push(assistantMessage)
+=======
+>>>>>>> upstream/dev
         for (const part of msg.parts) {
           if (part.type === "text")
             assistantMessage.parts.push({
@@ -569,6 +584,12 @@ export namespace MessageV2 {
             })
           }
         }
+<<<<<<< HEAD
+=======
+        if (assistantMessage.parts.length > 0) {
+          result.push(assistantMessage)
+        }
+>>>>>>> upstream/dev
       }
     }
 
@@ -625,6 +646,7 @@ export namespace MessageV2 {
     return result
   }
 
+<<<<<<< HEAD
   export function fromError(e: any, ctx: { providerID: string }) {
     switch (true) {
       case e instanceof DOMException && e.name === "AbortError":
@@ -642,11 +664,34 @@ export namespace MessageV2 {
         ).toObject()
       case (e as SystemError)?.code === "ECONNRESET":
         const sysErr = e as SystemError
+=======
+  export function fromError(e: unknown, ctx: { providerID: string }) {
+    switch (true) {
+      case e instanceof DOMException && e.name === "AbortError":
+        return new MessageV2.AbortedError(
+          { message: e.message },
+          {
+            cause: e,
+          },
+        ).toObject()
+      case MessageV2.OutputLengthError.isInstance(e):
+        return e
+      case LoadAPIKeyError.isInstance(e):
+        return new MessageV2.AuthError(
+          {
+            providerID: ctx.providerID,
+            message: e.message,
+          },
+          { cause: e },
+        ).toObject()
+      case (e as SystemError)?.code === "ECONNRESET":
+>>>>>>> upstream/dev
         return new MessageV2.APIError(
           {
             message: "Connection reset by server",
             isRetryable: true,
             metadata: {
+<<<<<<< HEAD
               code: sysErr.code ?? "",
               syscall: sysErr.syscall ?? "",
               message: sysErr.message ?? "",
@@ -671,11 +716,40 @@ export namespace MessageV2 {
             return transformed
           }
           if (!err.responseBody || (err.statusCode && msg !== STATUS_CODES[err.statusCode])) {
+=======
+              code: (e as SystemError).code ?? "",
+              syscall: (e as SystemError).syscall ?? "",
+              message: (e as SystemError).message ?? "",
+            },
+          },
+          { cause: e },
+        ).toObject()
+      case APICallError.isInstance(e):
+        const message = iife(() => {
+          let msg = e.message
+          if (msg === "") {
+            if (e.responseBody) return e.responseBody
+            if (e.statusCode) {
+              const err = STATUS_CODES[e.statusCode]
+              if (err) return err
+            }
+            return "Unknown error"
+          }
+          const transformed = ProviderTransform.error(ctx.providerID, e)
+          if (transformed !== msg) {
+            return transformed
+          }
+          if (!e.responseBody || (e.statusCode && msg !== STATUS_CODES[e.statusCode])) {
+>>>>>>> upstream/dev
             return msg
           }
 
           try {
+<<<<<<< HEAD
             const body = JSON.parse(err.responseBody)
+=======
+            const body = JSON.parse(e.responseBody)
+>>>>>>> upstream/dev
             // try to extract common error message fields
             const errMsg = body.message || body.error || body.error?.message
             if (errMsg && typeof errMsg === "string") {
@@ -683,12 +757,17 @@ export namespace MessageV2 {
             }
           } catch {}
 
+<<<<<<< HEAD
           return `${msg}: ${err.responseBody}`
+=======
+          return `${msg}: ${e.responseBody}`
+>>>>>>> upstream/dev
         }).trim()
 
         return new MessageV2.APIError(
           {
             message,
+<<<<<<< HEAD
             statusCode: err.statusCode,
             isRetryable: err.isRetryable,
             responseHeaders: err.responseHeaders,
@@ -701,6 +780,19 @@ export namespace MessageV2 {
         return new NamedError.Unknown({ message: error.toString() }).toObject()
       default:
         return new NamedError.Unknown({ message: JSON.stringify(e) }).toObject()
+=======
+            statusCode: e.statusCode,
+            isRetryable: e.isRetryable,
+            responseHeaders: e.responseHeaders,
+            responseBody: e.responseBody,
+          },
+          { cause: e },
+        ).toObject()
+      case e instanceof Error:
+        return new NamedError.Unknown({ message: e.toString() }, { cause: e }).toObject()
+      default:
+        return new NamedError.Unknown({ message: JSON.stringify(e) }, { cause: e })
+>>>>>>> upstream/dev
     }
   }
 }

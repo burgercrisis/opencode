@@ -1,5 +1,9 @@
 import { Accordion } from "./accordion"
 import { Button } from "./button"
+<<<<<<< HEAD
+=======
+import { RadioGroup } from "./radio-group"
+>>>>>>> upstream/dev
 import { DiffChanges } from "./diff-changes"
 import { FileIcon } from "./file-icon"
 import { Icon } from "./icon"
@@ -13,15 +17,31 @@ import { PreloadMultiFileDiffResult } from "@pierre/diffs/ssr"
 import { Dynamic } from "solid-js/web"
 import { checksum } from "@opencode-ai/util/encode"
 
+<<<<<<< HEAD
 export interface SessionReviewProps {
   split?: boolean
+=======
+export type SessionReviewDiffStyle = "unified" | "split"
+
+export interface SessionReviewProps {
+  split?: boolean
+  diffStyle?: SessionReviewDiffStyle
+  onDiffStyleChange?: (diffStyle: SessionReviewDiffStyle) => void
+  open?: string[]
+  onOpenChange?: (open: string[]) => void
+  scrollRef?: (el: HTMLDivElement) => void
+  onScroll?: JSX.EventHandlerUnion<HTMLDivElement, Event>
+>>>>>>> upstream/dev
   class?: string
   classList?: Record<string, boolean | undefined>
   classes?: { root?: string; header?: string; container?: string }
   actions?: JSX.Element
   diffs: (FileDiff & { preloaded?: PreloadMultiFileDiffResult<any> })[]
+<<<<<<< HEAD
   onRevertFile?: (filePath: string) => Promise<void>
   sessionID?: string
+=======
+>>>>>>> upstream/dev
 }
 
 export const SessionReview = (props: SessionReviewProps) => {
@@ -30,11 +50,21 @@ export const SessionReview = (props: SessionReviewProps) => {
     open: props.diffs.length > 10 ? [] : props.diffs.map((d) => d.file),
   })
 
+<<<<<<< HEAD
   const handleChange = (open: string[]) => {
+=======
+  const open = () => props.open ?? store.open
+  const diffStyle = () => props.diffStyle ?? (props.split ? "split" : "unified")
+
+  const handleChange = (open: string[]) => {
+    props.onOpenChange?.(open)
+    if (props.open !== undefined) return
+>>>>>>> upstream/dev
     setStore("open", open)
   }
 
   const handleExpandOrCollapseAll = () => {
+<<<<<<< HEAD
     if (store.open.length > 0) {
       setStore("open", [])
     } else {
@@ -56,11 +86,20 @@ export const SessionReview = (props: SessionReviewProps) => {
     } catch (error) {
       alert(`Failed to revert ${filePath}: ${error instanceof Error ? error.message : 'Unknown error'}`)
     }
+=======
+    const next = open().length > 0 ? [] : props.diffs.map((d) => d.file)
+    handleChange(next)
+>>>>>>> upstream/dev
   }
 
   return (
     <div
       data-component="session-review"
+<<<<<<< HEAD
+=======
+      ref={props.scrollRef}
+      onScroll={props.onScroll}
+>>>>>>> upstream/dev
       classList={{
         ...(props.classList ?? {}),
         [props.classes?.root ?? ""]: !!props.classes?.root,
@@ -75,9 +114,24 @@ export const SessionReview = (props: SessionReviewProps) => {
       >
         <div data-slot="session-review-title">Session changes</div>
         <div data-slot="session-review-actions">
+<<<<<<< HEAD
           <Button size="normal" icon="chevron-grabber-vertical" onClick={handleExpandOrCollapseAll}>
             <Switch>
               <Match when={store.open.length > 0}>Collapse all</Match>
+=======
+          <Show when={props.onDiffStyleChange}>
+            <RadioGroup
+              options={["unified", "split"] as const}
+              current={diffStyle()}
+              value={(style) => style}
+              label={(style) => (style === "unified" ? "Unified" : "Split")}
+              onSelect={(style) => style && props.onDiffStyleChange?.(style)}
+            />
+          </Show>
+          <Button size="normal" icon="chevron-grabber-vertical" onClick={handleExpandOrCollapseAll}>
+            <Switch>
+              <Match when={open().length > 0}>Collapse all</Match>
+>>>>>>> upstream/dev
               <Match when={true}>Expand all</Match>
             </Switch>
           </Button>
@@ -90,7 +144,11 @@ export const SessionReview = (props: SessionReviewProps) => {
           [props.classes?.container ?? ""]: !!props.classes?.container,
         }}
       >
+<<<<<<< HEAD
         <Accordion multiple value={store.open} onChange={handleChange}>
+=======
+        <Accordion multiple value={open()} onChange={handleChange}>
+>>>>>>> upstream/dev
           <For each={props.diffs}>
             {(diff) => (
               <Accordion.Item value={diff.file} data-slot="session-review-accordion-item">
@@ -107,6 +165,7 @@ export const SessionReview = (props: SessionReviewProps) => {
                         </div>
                       </div>
                       <div data-slot="session-review-trigger-actions">
+<<<<<<< HEAD
                         <Show when={props.onRevertFile}>
                           <Button
                             size="small"
@@ -116,6 +175,8 @@ export const SessionReview = (props: SessionReviewProps) => {
                             title="Revert this file"
                           />
                         </Show>
+=======
+>>>>>>> upstream/dev
                         <DiffChanges changes={diff} />
                         <Icon name="chevron-grabber-vertical" size="small" />
                       </div>
@@ -126,7 +187,11 @@ export const SessionReview = (props: SessionReviewProps) => {
                   <Dynamic
                     component={diffComponent}
                     preloadedDiff={diff.preloaded}
+<<<<<<< HEAD
                     diffStyle={props.split ? "split" : "unified"}
+=======
+                    diffStyle={diffStyle()}
+>>>>>>> upstream/dev
                     before={{
                       name: diff.file!,
                       contents: diff.before!,

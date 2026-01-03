@@ -74,7 +74,11 @@ export namespace Format {
   }
 
   async function getFormatter(ext: string) {
+<<<<<<< HEAD
     const formatters = (await state()).formatters
+=======
+    const formatters = await state().then((x) => x.formatters)
+>>>>>>> upstream/dev
     const result = []
     for (const item of Object.values(formatters)) {
       log.info("checking", { name: item.name, ext })

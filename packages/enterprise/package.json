@@ -1,8 +1,15 @@
 {
   "name": "@opencode-ai/enterprise",
+<<<<<<< HEAD
   "version": "1.0.218",
   "private": true,
   "type": "module",
+=======
+  "version": "1.0.224",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+>>>>>>> upstream/dev
   "scripts": {
     "typecheck": "tsgo --noEmit",
     "dev": "vite dev",

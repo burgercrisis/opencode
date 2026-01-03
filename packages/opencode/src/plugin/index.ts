@@ -11,6 +11,11 @@ import { Flag } from "../flag/flag"
 export namespace Plugin {
   const log = Log.create({ service: "plugin" })
 
+<<<<<<< HEAD
+=======
+  const BUILTIN = ["opencode-copilot-auth@0.0.9", "opencode-anthropic-auth@0.0.5"]
+
+>>>>>>> upstream/dev
   const state = Instance.state(async () => {
     const client = createOpencodeClient({
       baseUrl: "http://localhost:4096",
@@ -24,13 +29,21 @@ export namespace Plugin {
       project: Instance.project,
       worktree: Instance.worktree,
       directory: Instance.directory,
+<<<<<<< HEAD
       serverUrl: Server.url().toString(),
+=======
+      serverUrl: Server.url(),
+>>>>>>> upstream/dev
       $: Bun.$,
     }
     const plugins = [...(config.plugin ?? [])]
     if (!Flag.OPENCODE_DISABLE_DEFAULT_PLUGINS) {
+<<<<<<< HEAD
       plugins.push("opencode-copilot-auth@0.0.9")
       plugins.push("opencode-anthropic-auth@0.0.5")
+=======
+      plugins.push(...BUILTIN)
+>>>>>>> upstream/dev
     }
     for (let plugin of plugins) {
       log.info("loading plugin", { path: plugin })
@@ -38,7 +51,16 @@ export namespace Plugin {
         const lastAtIndex = plugin.lastIndexOf("@")
         const pkg = lastAtIndex > 0 ? plugin.substring(0, lastAtIndex) : plugin
         const version = lastAtIndex > 0 ? plugin.substring(lastAtIndex + 1) : "latest"
+<<<<<<< HEAD
         plugin = await BunProc.install(pkg, version)
+=======
+        const builtin = BUILTIN.some((x) => x.startsWith(pkg + "@"))
+        plugin = await BunProc.install(pkg, version).catch((err) => {
+          if (builtin) return ""
+          throw err
+        })
+        if (!plugin) continue
+>>>>>>> upstream/dev
       }
       const mod = await import(plugin)
       for (const [_name, fn] of Object.entries<PluginInstance>(mod)) {
@@ -59,10 +81,18 @@ export namespace Plugin {
     Output = Parameters<Required<Hooks>[Name]>[1],
   >(name: Name, input: Input, output: Output): Promise<Output> {
     if (!name) return output
+<<<<<<< HEAD
     for (const hook of (await state()).hooks) {
       const fn = hook[name]
       if (!fn) continue
       // TODO: Fix the typing, make sure to bump the try-counter if you give up.
+=======
+    for (const hook of await state().then((x) => x.hooks)) {
+      const fn = hook[name]
+      if (!fn) continue
+      // @ts-expect-error if you feel adventurous, please fix the typing, make sure to bump the try-counter if you
+      // give up.
+>>>>>>> upstream/dev
       // try-counter: 2
       await fn(input, output)
     }
@@ -70,6 +100,7 @@ export namespace Plugin {
   }
 
   export async function list() {
+<<<<<<< HEAD
     return (await state()).hooks
   }
 
@@ -81,6 +112,20 @@ export namespace Plugin {
     }
     Bus.subscribeAll(async (input) => {
       const hooks = (await state()).hooks
+=======
+    return state().then((x) => x.hooks)
+  }
+
+  export async function init() {
+    const hooks = await state().then((x) => x.hooks)
+    const config = await Config.get()
+    for (const hook of hooks) {
+      // @ts-expect-error this is because we haven't moved plugin to sdk v2
+      await hook.config?.(config)
+    }
+    Bus.subscribeAll(async (input) => {
+      const hooks = await state().then((x) => x.hooks)
+>>>>>>> upstream/dev
       for (const hook of hooks) {
         hook["event"]?.({
           event: input,

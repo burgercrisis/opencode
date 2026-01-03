@@ -118,6 +118,15 @@ export async function aggregateSessionStats(days?: number, projectFilter?: strin
     return Date.now() - days * MS_IN_DAY
   })()
 
+<<<<<<< HEAD
+=======
+  const windowDays = (() => {
+    if (days === undefined) return
+    if (days === 0) return 1
+    return days
+  })()
+
+>>>>>>> upstream/dev
   let filteredSessions = cutoffTime > 0 ? sessions.filter((session) => session.time.updated >= cutoffTime) : sessions
 
   if (projectFilter !== undefined) {
@@ -159,6 +168,10 @@ export async function aggregateSessionStats(days?: number, projectFilter?: strin
   }
 
   if (filteredSessions.length === 0) {
+<<<<<<< HEAD
+=======
+    stats.days = windowDays ?? 0
+>>>>>>> upstream/dev
     return stats
   }
 
@@ -231,7 +244,11 @@ export async function aggregateSessionStats(days?: number, projectFilter?: strin
         sessionTotalTokens: sessionTokens.input + sessionTokens.output + sessionTokens.reasoning,
         sessionToolUsage,
         sessionModelUsage,
+<<<<<<< HEAD
         earliestTime: session.time.created,
+=======
+        earliestTime: cutoffTime > 0 ? session.time.updated : session.time.created,
+>>>>>>> upstream/dev
         latestTime: session.time.updated,
       }
     })
@@ -271,13 +288,23 @@ export async function aggregateSessionStats(days?: number, projectFilter?: strin
     }
   }
 
+<<<<<<< HEAD
   const actualDays = Math.max(1, Math.ceil((latestTime - earliestTime) / MS_IN_DAY))
+=======
+  const rangeDays = Math.max(1, Math.ceil((latestTime - earliestTime) / MS_IN_DAY))
+  const effectiveDays = windowDays ?? rangeDays
+>>>>>>> upstream/dev
   stats.dateRange = {
     earliest: earliestTime,
     latest: latestTime,
   }
+<<<<<<< HEAD
   stats.days = actualDays
   stats.costPerDay = stats.totalCost / actualDays
+=======
+  stats.days = effectiveDays
+  stats.costPerDay = stats.totalCost / effectiveDays
+>>>>>>> upstream/dev
   const totalTokens = stats.totalTokens.input + stats.totalTokens.output + stats.totalTokens.reasoning
   stats.tokensPerSession = filteredSessions.length > 0 ? totalTokens / filteredSessions.length : 0
   sessionTotalTokens.sort((a, b) => a - b)

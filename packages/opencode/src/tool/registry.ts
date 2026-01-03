@@ -2,7 +2,10 @@ import { BashTool } from "./bash"
 import { EditTool } from "./edit"
 import { GlobTool } from "./glob"
 import { GrepTool } from "./grep"
+<<<<<<< HEAD
 import { ListTool } from "./ls"
+=======
+>>>>>>> upstream/dev
 import { BatchTool } from "./batch"
 import { ReadTool } from "./read"
 import { TaskTool } from "./task"
@@ -41,7 +44,11 @@ export namespace ToolRegistry {
       })) {
         const namespace = path.basename(match, path.extname(match))
         const mod = await import(match)
+<<<<<<< HEAD
         for (const [id, def] of Object.entries<any>(mod)) {
+=======
+        for (const [id, def] of Object.entries<ToolDefinition>(mod)) {
+>>>>>>> upstream/dev
           custom.push(fromPlugin(id === "default" ? namespace : `${namespace}_${id}`, def))
         }
       }
@@ -57,11 +64,19 @@ export namespace ToolRegistry {
     return { custom }
   })
 
+<<<<<<< HEAD
   function fromPlugin(id: string, def: any): Tool.Info {
     return {
       id,
       init: async () => ({
         parameters: def.parameters || z.object(def.args),
+=======
+  function fromPlugin(id: string, def: ToolDefinition): Tool.Info {
+    return {
+      id,
+      init: async () => ({
+        parameters: z.object(def.args),
+>>>>>>> upstream/dev
         description: def.description,
         execute: async (args, ctx) => {
           const result = await def.execute(args as any, ctx)
@@ -86,7 +101,11 @@ export namespace ToolRegistry {
   }
 
   async function all(): Promise<Tool.Info[]> {
+<<<<<<< HEAD
     const custom = (await state()).custom
+=======
+    const custom = await state().then((x) => x.custom)
+>>>>>>> upstream/dev
     const config = await Config.get()
 
     return [
@@ -135,6 +154,7 @@ export namespace ToolRegistry {
     )
     return result
   }
+<<<<<<< HEAD
 
   export async function enabled(agent: Agent.Info): Promise<Record<string, boolean>> {
     const result: Record<string, boolean> = {}
@@ -158,4 +178,6 @@ export namespace ToolRegistry {
 
     return result
   }
+=======
+>>>>>>> upstream/dev
 }

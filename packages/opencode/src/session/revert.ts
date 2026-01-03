@@ -8,8 +8,11 @@ import { splitWhen } from "remeda"
 import { Storage } from "../storage/storage"
 import { Bus } from "../bus"
 import { SessionPrompt } from "./prompt"
+<<<<<<< HEAD
 import { Instance } from "../project/instance"
 import path from "path"
+=======
+>>>>>>> upstream/dev
 
 export namespace SessionRevert {
   const log = Log.create({ service: "session.revert" })
@@ -21,6 +24,7 @@ export namespace SessionRevert {
   })
   export type RevertInput = z.infer<typeof RevertInput>
 
+<<<<<<< HEAD
   export const FileRevertInput = z.object({
     sessionID: Identifier.schema("session"),
     messageID: Identifier.schema("message"),
@@ -29,6 +33,8 @@ export namespace SessionRevert {
   })
   export type FileRevertInput = z.infer<typeof FileRevertInput>
 
+=======
+>>>>>>> upstream/dev
   export async function revert(input: RevertInput) {
     SessionPrompt.assertNotBusy(input.sessionID)
     const all = await Session.messages({ sessionID: input.sessionID })
@@ -86,6 +92,7 @@ export namespace SessionRevert {
     return next
   }
 
+<<<<<<< HEAD
   export async function revertFiles(input: FileRevertInput) {
     SessionPrompt.assertNotBusy(input.sessionID)
     const all = await Session.messages({ sessionID: input.sessionID })
@@ -151,6 +158,8 @@ export namespace SessionRevert {
     return session
   }
 
+=======
+>>>>>>> upstream/dev
   export async function cleanup(session: Session.Info) {
     if (!session.revert) return
     const sessionID = session.id

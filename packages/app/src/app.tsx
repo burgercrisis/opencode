@@ -3,7 +3,11 @@ import { ErrorBoundary, Show, type ParentProps } from "solid-js"
 import { Router, Route, Navigate } from "@solidjs/router"
 import { MetaProvider } from "@solidjs/meta"
 import { Font } from "@opencode-ai/ui/font"
+<<<<<<< HEAD
 import { MarkedProvider } from "@opencode-ai/ui/context"
+=======
+import { MarkedProvider } from "@opencode-ai/ui/context/marked"
+>>>>>>> upstream/dev
 import { DiffComponentProvider } from "@opencode-ai/ui/context/diff"
 import { CodeComponentProvider } from "@opencode-ai/ui/context/code"
 import { Diff } from "@opencode-ai/ui/diff"
@@ -16,6 +20,10 @@ import { GlobalSDKProvider } from "@/context/global-sdk"
 import { ServerProvider, useServer } from "@/context/server"
 import { TerminalProvider } from "@/context/terminal"
 import { PromptProvider } from "@/context/prompt"
+<<<<<<< HEAD
+=======
+import { FileProvider } from "@/context/file"
+>>>>>>> upstream/dev
 import { NotificationProvider } from "@/context/notification"
 import { DialogProvider } from "@opencode-ai/ui/context/dialog"
 import { CommandProvider } from "@/context/command"
@@ -67,6 +75,7 @@ export function App() {
                     <ServerKey>
                       <GlobalSDKProvider>
                         <GlobalSyncProvider>
+<<<<<<< HEAD
                           <PermissionProvider>
                             <LayoutProvider>
                               <NotificationProvider>
@@ -97,6 +106,40 @@ export function App() {
                               </NotificationProvider>
                             </LayoutProvider>
                           </PermissionProvider>
+=======
+                          <Router
+                            root={(props) => (
+                              <PermissionProvider>
+                                <LayoutProvider>
+                                  <NotificationProvider>
+                                    <CommandProvider>
+                                      <Layout>{props.children}</Layout>
+                                    </CommandProvider>
+                                  </NotificationProvider>
+                                </LayoutProvider>
+                              </PermissionProvider>
+                            )}
+                          >
+                            <Route path="/" component={Home} />
+                            <Route path="/:dir" component={DirectoryLayout}>
+                              <Route path="/" component={() => <Navigate href="session" />} />
+                              <Route
+                                path="/session/:id?"
+                                component={(p) => (
+                                  <Show when={p.params.id ?? "new"} keyed>
+                                    <TerminalProvider>
+                                      <FileProvider>
+                                        <PromptProvider>
+                                          <Session />
+                                        </PromptProvider>
+                                      </FileProvider>
+                                    </TerminalProvider>
+                                  </Show>
+                                )}
+                              />
+                            </Route>
+                          </Router>
+>>>>>>> upstream/dev
                         </GlobalSyncProvider>
                       </GlobalSDKProvider>
                     </ServerKey>

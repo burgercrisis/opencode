@@ -31,7 +31,10 @@ export const iconNames = [
   "ollama-cloud",
   "nvidia",
   "nebius",
+<<<<<<< HEAD
   "nano-gpt",
+=======
+>>>>>>> upstream/dev
   "morph",
   "moonshotai",
   "moonshotai-cn",
@@ -55,7 +58,10 @@ export const iconNames = [
   "google-vertex-anthropic",
   "github-models",
   "github-copilot",
+<<<<<<< HEAD
   "friendli",
+=======
+>>>>>>> upstream/dev
   "fireworks-ai",
   "fastrouter",
   "deepseek",
@@ -75,7 +81,10 @@ export const iconNames = [
   "alibaba",
   "alibaba-cn",
   "aihubmix",
+<<<<<<< HEAD
   "abacus",
+=======
+>>>>>>> upstream/dev
 ] as const
 
 export type IconName = (typeof iconNames)[number]

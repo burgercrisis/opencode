@@ -15,7 +15,11 @@ This extension requires the [opencode CLI](https://opencode.ai) to be installed 
 
 ## Support
 
+<<<<<<< HEAD
 This is an early release. If you encounter issues or have feedback, please create an issue at https://github.com/sst/opencode/issues.
+=======
+This is an early release. If you encounter issues or have feedback, please create an issue at https://github.com/anomalyco/opencode/issues.
+>>>>>>> upstream/dev
 
 ## Development
 

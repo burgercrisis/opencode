@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Agent Guidelines for @opencode/app
 
 ## Build/Test Commands
@@ -26,3 +27,18 @@
 - Custom theme system with CSS variables
 
 No special rules files found.
+=======
+## Debugging
+
+- To test the opencode app, use the playwrite mcp server, the app is already
+  running at http://localhost:3000
+- NEVER try to restart the app, or the server process, EVER.
+
+## SolidJS
+
+- Always prefer `createStore` over multiple `createSignal` calls
+
+## Tool Calling
+
+- ALWAYS USE PARALLEL TOOLS WHEN APPLICABLE.
+>>>>>>> upstream/dev

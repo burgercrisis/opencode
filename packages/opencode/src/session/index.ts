@@ -18,6 +18,10 @@ import { Command } from "../command"
 import { Snapshot } from "@/snapshot"
 
 import type { Provider } from "@/provider/provider"
+<<<<<<< HEAD
+=======
+import { PermissionNext } from "@/permission/next"
+>>>>>>> upstream/dev
 
 export namespace Session {
   const log = Log.create({ service: "session" })
@@ -62,7 +66,12 @@ export namespace Session {
         compacting: z.number().optional(),
         archived: z.number().optional(),
       }),
+<<<<<<< HEAD
 revert: z
+=======
+      permission: PermissionNext.Ruleset.optional(),
+      revert: z
+>>>>>>> upstream/dev
         .object({
           messageID: z.string(),
           partID: z.string().optional(),
@@ -70,6 +79,7 @@ revert: z
           diff: z.string().optional(),
         })
         .optional(),
+<<<<<<< HEAD
       fileReverts: z
         .array(
           z.object({
@@ -80,6 +90,8 @@ revert: z
           })
         )
         .optional(),
+=======
+>>>>>>> upstream/dev
     })
     .meta({
       ref: "Session",
@@ -136,6 +148,10 @@ revert: z
       .object({
         parentID: Identifier.schema("session").optional(),
         title: z.string().optional(),
+<<<<<<< HEAD
+=======
+        permission: Info.shape.permission,
+>>>>>>> upstream/dev
       })
       .optional(),
     async (input) => {
@@ -143,6 +159,10 @@ revert: z
         parentID: input?.parentID,
         directory: Instance.directory,
         title: input?.title,
+<<<<<<< HEAD
+=======
+        permission: input?.permission,
+>>>>>>> upstream/dev
       })
     },
   )
@@ -184,7 +204,17 @@ revert: z
     })
   })
 
+<<<<<<< HEAD
   export async function createNext(input: { id?: string; title?: string; parentID?: string; directory: string }) {
+=======
+  export async function createNext(input: {
+    id?: string
+    title?: string
+    parentID?: string
+    directory: string
+    permission?: PermissionNext.Ruleset
+  }) {
+>>>>>>> upstream/dev
     const result: Info = {
       id: Identifier.descending("session", input.id),
       version: Installation.VERSION,
@@ -192,6 +222,10 @@ revert: z
       directory: input.directory,
       parentID: input.parentID,
       title: input.title ?? createDefaultTitle(!!input.parentID),
+<<<<<<< HEAD
+=======
+      permission: input.permission,
+>>>>>>> upstream/dev
       time: {
         created: Date.now(),
         updated: Date.now(),

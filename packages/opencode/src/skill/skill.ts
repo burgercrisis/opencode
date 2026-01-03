@@ -108,10 +108,18 @@ export namespace Skill {
   })
 
   export async function get(name: string) {
+<<<<<<< HEAD
     return (await state())[name]
   }
 
   export async function all() {
     return Object.values(await state())
+=======
+    return state().then((x) => x[name])
+  }
+
+  export async function all() {
+    return state().then((x) => Object.values(x))
+>>>>>>> upstream/dev
   }
 }

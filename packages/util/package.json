@@ -1,5 +1,6 @@
 {
   "name": "@opencode-ai/util",
+<<<<<<< HEAD
   "version": "1.0.0",
   "type": "module",
   "main": "index.ts",
@@ -17,5 +18,23 @@
     "./iife": "./iife.ts",
     "./retry": "./retry.ts",
     "./identifier": "./identifier.ts"
+=======
+  "version": "1.0.224",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "typescript": "catalog:",
+    "@types/bun": "catalog:"
+>>>>>>> upstream/dev
   }
 }

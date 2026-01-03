@@ -9,7 +9,19 @@ export type DialogExportOptionsProps = {
   defaultFilename: string
   defaultThinking: boolean
   defaultToolDetails: boolean
+<<<<<<< HEAD
   onConfirm?: (options: { filename: string; thinking: boolean; toolDetails: boolean }) => void
+=======
+  defaultAssistantMetadata: boolean
+  defaultOpenWithoutSaving: boolean
+  onConfirm?: (options: {
+    filename: string
+    thinking: boolean
+    toolDetails: boolean
+    assistantMetadata: boolean
+    openWithoutSaving: boolean
+  }) => void
+>>>>>>> upstream/dev
   onCancel?: () => void
 }
 
@@ -20,7 +32,13 @@ export function DialogExportOptions(props: DialogExportOptionsProps) {
   const [store, setStore] = createStore({
     thinking: props.defaultThinking,
     toolDetails: props.defaultToolDetails,
+<<<<<<< HEAD
     active: "filename" as "filename" | "thinking" | "toolDetails",
+=======
+    assistantMetadata: props.defaultAssistantMetadata,
+    openWithoutSaving: props.defaultOpenWithoutSaving,
+    active: "filename" as "filename" | "thinking" | "toolDetails" | "assistantMetadata" | "openWithoutSaving",
+>>>>>>> upstream/dev
   })
 
   useKeyboard((evt) => {
@@ -29,10 +47,25 @@ export function DialogExportOptions(props: DialogExportOptionsProps) {
         filename: textarea.plainText,
         thinking: store.thinking,
         toolDetails: store.toolDetails,
+<<<<<<< HEAD
       })
     }
     if (evt.name === "tab") {
       const order: Array<"filename" | "thinking" | "toolDetails"> = ["filename", "thinking", "toolDetails"]
+=======
+        assistantMetadata: store.assistantMetadata,
+        openWithoutSaving: store.openWithoutSaving,
+      })
+    }
+    if (evt.name === "tab") {
+      const order: Array<"filename" | "thinking" | "toolDetails" | "assistantMetadata" | "openWithoutSaving"> = [
+        "filename",
+        "thinking",
+        "toolDetails",
+        "assistantMetadata",
+        "openWithoutSaving",
+      ]
+>>>>>>> upstream/dev
       const currentIndex = order.indexOf(store.active)
       const nextIndex = (currentIndex + 1) % order.length
       setStore("active", order[nextIndex])
@@ -41,6 +74,11 @@ export function DialogExportOptions(props: DialogExportOptionsProps) {
     if (evt.name === "space") {
       if (store.active === "thinking") setStore("thinking", !store.thinking)
       if (store.active === "toolDetails") setStore("toolDetails", !store.toolDetails)
+<<<<<<< HEAD
+=======
+      if (store.active === "assistantMetadata") setStore("assistantMetadata", !store.assistantMetadata)
+      if (store.active === "openWithoutSaving") setStore("openWithoutSaving", !store.openWithoutSaving)
+>>>>>>> upstream/dev
       evt.preventDefault()
     }
   })
@@ -71,6 +109,11 @@ export function DialogExportOptions(props: DialogExportOptionsProps) {
               filename: textarea.plainText,
               thinking: store.thinking,
               toolDetails: store.toolDetails,
+<<<<<<< HEAD
+=======
+              assistantMetadata: store.assistantMetadata,
+              openWithoutSaving: store.openWithoutSaving,
+>>>>>>> upstream/dev
             })
           }}
           height={3}
@@ -108,6 +151,33 @@ export function DialogExportOptions(props: DialogExportOptionsProps) {
           </text>
           <text fg={store.active === "toolDetails" ? theme.primary : theme.text}>Include tool details</text>
         </box>
+<<<<<<< HEAD
+=======
+        <box
+          flexDirection="row"
+          gap={2}
+          paddingLeft={1}
+          backgroundColor={store.active === "assistantMetadata" ? theme.backgroundElement : undefined}
+          onMouseUp={() => setStore("active", "assistantMetadata")}
+        >
+          <text fg={store.active === "assistantMetadata" ? theme.primary : theme.textMuted}>
+            {store.assistantMetadata ? "[x]" : "[ ]"}
+          </text>
+          <text fg={store.active === "assistantMetadata" ? theme.primary : theme.text}>Include assistant metadata</text>
+        </box>
+        <box
+          flexDirection="row"
+          gap={2}
+          paddingLeft={1}
+          backgroundColor={store.active === "openWithoutSaving" ? theme.backgroundElement : undefined}
+          onMouseUp={() => setStore("active", "openWithoutSaving")}
+        >
+          <text fg={store.active === "openWithoutSaving" ? theme.primary : theme.textMuted}>
+            {store.openWithoutSaving ? "[x]" : "[ ]"}
+          </text>
+          <text fg={store.active === "openWithoutSaving" ? theme.primary : theme.text}>Open without saving</text>
+        </box>
+>>>>>>> upstream/dev
       </box>
       <Show when={store.active !== "filename"}>
         <text fg={theme.textMuted} paddingBottom={1}>
@@ -130,14 +200,32 @@ DialogExportOptions.show = (
   defaultFilename: string,
   defaultThinking: boolean,
   defaultToolDetails: boolean,
+<<<<<<< HEAD
 ) => {
   return new Promise<{ filename: string; thinking: boolean; toolDetails: boolean } | null>((resolve) => {
+=======
+  defaultAssistantMetadata: boolean,
+  defaultOpenWithoutSaving: boolean,
+) => {
+  return new Promise<{
+    filename: string
+    thinking: boolean
+    toolDetails: boolean
+    assistantMetadata: boolean
+    openWithoutSaving: boolean
+  } | null>((resolve) => {
+>>>>>>> upstream/dev
     dialog.replace(
       () => (
         <DialogExportOptions
           defaultFilename={defaultFilename}
           defaultThinking={defaultThinking}
           defaultToolDetails={defaultToolDetails}
+<<<<<<< HEAD
+=======
+          defaultAssistantMetadata={defaultAssistantMetadata}
+          defaultOpenWithoutSaving={defaultOpenWithoutSaving}
+>>>>>>> upstream/dev
           onConfirm={(options) => resolve(options)}
           onCancel={() => resolve(null)}
         />

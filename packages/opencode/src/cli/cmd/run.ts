@@ -7,7 +7,11 @@ import { bootstrap } from "../bootstrap"
 import { Command } from "../../command"
 import { EOL } from "os"
 import { select } from "@clack/prompts"
+<<<<<<< HEAD
 import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk"
+=======
+import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk/v2"
+>>>>>>> upstream/dev
 import { Server } from "../../server/server"
 import { Provider } from "../../provider/provider"
 import { Agent } from "../../agent/agent"
@@ -100,7 +104,11 @@ export const RunCommand = cmd({
       for (const filePath of files) {
         const resolvedPath = path.resolve(process.cwd(), filePath)
         const file = Bun.file(resolvedPath)
+<<<<<<< HEAD
         const stats = await file.stat().catch(() => { })
+=======
+        const stats = await file.stat().catch(() => {})
+>>>>>>> upstream/dev
         if (!stats) {
           UI.error(`File not found: ${filePath}`)
           process.exit(1)
@@ -202,6 +210,7 @@ export const RunCommand = cmd({
             break
           }
 
+<<<<<<< HEAD
           if (event.type === "permission.updated") {
             const permission = event.properties
             if (permission.sessionID !== sessionID) continue
@@ -210,6 +219,16 @@ export const RunCommand = cmd({
               options: [
                 { value: "once", label: "Allow once" },
                 { value: "always", label: "Always allow" },
+=======
+          if (event.type === "permission.asked") {
+            const permission = event.properties
+            if (permission.sessionID !== sessionID) continue
+            const result = await select({
+              message: `Permission required: ${permission.permission} (${permission.patterns.join(", ")})`,
+              options: [
+                { value: "once", label: "Allow once" },
+                { value: "always", label: "Always allow: " + permission.always.join(", ") },
+>>>>>>> upstream/dev
                 { value: "reject", label: "Reject" },
               ],
               initialValue: "once",

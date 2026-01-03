@@ -45,6 +45,11 @@ export const LANGUAGE_EXTENSIONS: Record<string, string> = {
   ".ini": "ini",
   ".java": "java",
   ".js": "javascript",
+<<<<<<< HEAD
+=======
+  ".kt": "kotlin",
+  ".kts": "kotlin",
+>>>>>>> upstream/dev
   ".jsx": "javascriptreact",
   ".json": "json",
   ".tex": "latex",

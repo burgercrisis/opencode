@@ -694,10 +694,17 @@ describe("ProviderTransform.variants", () => {
 
     test("standard azure models return custom efforts with reasoningSummary", () => {
       const model = createMockModel({
+<<<<<<< HEAD
         id: "azure/gpt-4o",
         providerID: "azure",
         api: {
           id: "gpt-4o",
+=======
+        id: "o1",
+        providerID: "azure",
+        api: {
+          id: "o1",
+>>>>>>> upstream/dev
           url: "https://azure.com",
           npm: "@ai-sdk/azure",
         },
@@ -713,7 +720,11 @@ describe("ProviderTransform.variants", () => {
 
     test("gpt-5 adds minimal effort", () => {
       const model = createMockModel({
+<<<<<<< HEAD
         id: "azure/gpt-5",
+=======
+        id: "gpt-5",
+>>>>>>> upstream/dev
         providerID: "azure",
         api: {
           id: "gpt-5",
@@ -743,10 +754,17 @@ describe("ProviderTransform.variants", () => {
 
     test("standard openai models return custom efforts with reasoningSummary", () => {
       const model = createMockModel({
+<<<<<<< HEAD
         id: "openai/gpt-4o",
         providerID: "openai",
         api: {
           id: "gpt-4o",
+=======
+        id: "gpt-5",
+        providerID: "openai",
+        api: {
+          id: "gpt-5",
+>>>>>>> upstream/dev
           url: "https://api.openai.com",
           npm: "@ai-sdk/openai",
         },
@@ -763,10 +781,17 @@ describe("ProviderTransform.variants", () => {
 
     test("models after 2025-11-13 include 'none' effort", () => {
       const model = createMockModel({
+<<<<<<< HEAD
         id: "openai/gpt-4.5",
         providerID: "openai",
         api: {
           id: "gpt-4.5",
+=======
+        id: "gpt-5-nano",
+        providerID: "openai",
+        api: {
+          id: "gpt-5-nano",
+>>>>>>> upstream/dev
           url: "https://api.openai.com",
           npm: "@ai-sdk/openai",
         },

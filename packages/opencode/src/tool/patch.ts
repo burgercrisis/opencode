@@ -3,11 +3,17 @@ import * as path from "path"
 import * as fs from "fs/promises"
 import { Tool } from "./tool"
 import { FileTime } from "../file/time"
+<<<<<<< HEAD
 import { Permission } from "../permission"
 import { Bus } from "../bus"
 import { FileWatcher } from "../file/watcher"
 import { Instance } from "../project/instance"
 import { Agent } from "../agent/agent"
+=======
+import { Bus } from "../bus"
+import { FileWatcher } from "../file/watcher"
+import { Instance } from "../project/instance"
+>>>>>>> upstream/dev
 import { Patch } from "../patch"
 import { Filesystem } from "../util/filesystem"
 import { createTwoFilesPatch } from "diff"
@@ -39,7 +45,10 @@ export const PatchTool = Tool.define("patch", {
     }
 
     // Validate file paths and check permissions
+<<<<<<< HEAD
     const agent = await Agent.get(ctx.agent)
+=======
+>>>>>>> upstream/dev
     const fileChanges: Array<{
       filePath: string
       oldContent: string
@@ -55,6 +64,7 @@ export const PatchTool = Tool.define("patch", {
 
       if (!Filesystem.contains(Instance.directory, filePath)) {
         const parentDir = path.dirname(filePath)
+<<<<<<< HEAD
         if (agent.permission.external_directory === "ask") {
           await Permission.ask({
             type: "external_directory",
@@ -80,6 +90,17 @@ export const PatchTool = Tool.define("patch", {
             `File ${filePath} is not in the current working directory`,
           )
         }
+=======
+        await ctx.ask({
+          permission: "external_directory",
+          patterns: [parentDir, path.join(parentDir, "*")],
+          always: [parentDir + "/*"],
+          metadata: {
+            filepath: filePath,
+            parentDir,
+          },
+        })
+>>>>>>> upstream/dev
       }
 
       switch (hunk.type) {
@@ -152,6 +173,7 @@ export const PatchTool = Tool.define("patch", {
     }
 
     // Check permissions if needed
+<<<<<<< HEAD
     if (agent.permission.edit === "ask") {
       await Permission.ask({
         type: "edit",
@@ -164,6 +186,16 @@ export const PatchTool = Tool.define("patch", {
         },
       })
     }
+=======
+    await ctx.ask({
+      permission: "edit",
+      patterns: fileChanges.map((c) => path.relative(Instance.worktree, c.filePath)),
+      always: ["*"],
+      metadata: {
+        diff: totalDiff,
+      },
+    })
+>>>>>>> upstream/dev
 
     // Apply the changes
     const changedFiles: string[] = []

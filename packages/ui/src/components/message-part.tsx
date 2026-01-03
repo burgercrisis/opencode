@@ -12,6 +12,10 @@ import {
 } from "solid-js"
 import { Dynamic } from "solid-js/web"
 import {
+<<<<<<< HEAD
+=======
+  AgentPart,
+>>>>>>> upstream/dev
   AssistantMessage,
   FilePart,
   Message as MessageType,
@@ -142,7 +146,11 @@ function relativizeProjectPaths(text: string, directory?: string) {
 
 function getDirectory(path: string | undefined) {
   const data = useData()
+<<<<<<< HEAD
   return relativizeProjectPaths(_getDirectory(path || "") || "", data.directory)
+=======
+  return relativizeProjectPaths(_getDirectory(path), data.directory)
+>>>>>>> upstream/dev
 }
 
 export function getSessionToolParts(store: ReturnType<typeof useData>["store"], sessionId: string): ToolPart[] {
@@ -300,6 +308,11 @@ export function UserMessageDisplay(props: { message: UserMessage; parts: PartTyp
     }),
   )
 
+<<<<<<< HEAD
+=======
+  const agents = createMemo(() => (props.parts?.filter((p) => p.type === "agent") as AgentPart[]) ?? [])
+
+>>>>>>> upstream/dev
   const openImagePreview = (url: string, alt?: string) => {
     dialog.show(() => <ImagePreview src={url} alt={alt} />)
   }
@@ -337,13 +350,18 @@ export function UserMessageDisplay(props: { message: UserMessage; parts: PartTyp
       </Show>
       <Show when={text()}>
         <div data-slot="user-message-text">
+<<<<<<< HEAD
           <HighlightedText text={text()} references={inlineFiles()} />
+=======
+          <HighlightedText text={text()} references={inlineFiles()} agents={agents()} />
+>>>>>>> upstream/dev
         </div>
       </Show>
     </div>
   )
 }
 
+<<<<<<< HEAD
 function HighlightedText(props: { text: string; references: FilePart[] }) {
   const segments = createMemo(() => {
     const text = props.text
@@ -364,6 +382,35 @@ function HighlightedText(props: { text: string; references: FilePart[] }) {
 
       result.push({ text: text.slice(start, end), highlight: true })
       lastIndex = end
+=======
+type HighlightSegment = { text: string; type?: "file" | "agent" }
+
+function HighlightedText(props: { text: string; references: FilePart[]; agents: AgentPart[] }) {
+  const segments = createMemo(() => {
+    const text = props.text
+
+    const allRefs: { start: number; end: number; type: "file" | "agent" }[] = [
+      ...props.references
+        .filter((r) => r.source?.text?.start !== undefined && r.source?.text?.end !== undefined)
+        .map((r) => ({ start: r.source!.text!.start, end: r.source!.text!.end, type: "file" as const })),
+      ...props.agents
+        .filter((a) => a.source?.start !== undefined && a.source?.end !== undefined)
+        .map((a) => ({ start: a.source!.start, end: a.source!.end, type: "agent" as const })),
+    ].sort((a, b) => a.start - b.start)
+
+    const result: HighlightSegment[] = []
+    let lastIndex = 0
+
+    for (const ref of allRefs) {
+      if (ref.start < lastIndex) continue
+
+      if (ref.start > lastIndex) {
+        result.push({ text: text.slice(lastIndex, ref.start) })
+      }
+
+      result.push({ text: text.slice(ref.start, ref.end), type: ref.type })
+      lastIndex = ref.end
+>>>>>>> upstream/dev
     }
 
     if (lastIndex < text.length) {
@@ -375,7 +422,20 @@ function HighlightedText(props: { text: string; references: FilePart[] }) {
 
   return (
     <For each={segments()}>
+<<<<<<< HEAD
       {(segment) => <span classList={{ "text-text-strong font-medium": segment.highlight }}>{segment.text}</span>}
+=======
+      {(segment) => (
+        <span
+          classList={{
+            "text-syntax-property": segment.type === "file",
+            "text-syntax-type": segment.type === "agent",
+          }}
+        >
+          {segment.text}
+        </span>
+      )}
+>>>>>>> upstream/dev
     </For>
   )
 }
@@ -436,8 +496,13 @@ PART_MAPPING["tool"] = function ToolPartDisplay(props) {
 
   const permission = createMemo(() => {
     const next = data.store.permission?.[props.message.sessionID]?.[0]
+<<<<<<< HEAD
     if (!next) return undefined
     if (next.callID !== part.callID) return undefined
+=======
+    if (!next || !next.tool) return undefined
+    if (next.tool!.callID !== part.callID) return undefined
+>>>>>>> upstream/dev
     return next
   })
 
@@ -713,11 +778,16 @@ ToolRegistry.register({
 
     const childToolPart = createMemo(() => {
       const perm = childPermission()
+<<<<<<< HEAD
       if (!perm) return undefined
+=======
+      if (!perm || !perm.tool) return undefined
+>>>>>>> upstream/dev
       const sessionId = childSessionId()
       if (!sessionId) return undefined
       // Find the tool part that matches the permission's callID
       const messages = data.store.message[sessionId] ?? []
+<<<<<<< HEAD
       for (const msg of messages) {
         const parts = data.store.part[msg.id] ?? []
         for (const part of parts) {
@@ -726,6 +796,17 @@ ToolRegistry.register({
           }
         }
       }
+=======
+      const message = messages.findLast((m) => m.id === perm.tool!.messageID)
+      if (!message) return undefined
+      const parts = data.store.part[message.id] ?? []
+      for (const part of parts) {
+        if (part.type === "tool" && (part as ToolPart).callID === perm.tool!.callID) {
+          return { part: part as ToolPart, message }
+        }
+      }
+
+>>>>>>> upstream/dev
       return undefined
     })
 

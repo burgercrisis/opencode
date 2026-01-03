@@ -1,9 +1,12 @@
 import { EOL } from "os"
 import { basename } from "path"
 import { Agent } from "../../../agent/agent"
+<<<<<<< HEAD
 import { Provider } from "../../../provider/provider"
 import { ToolRegistry } from "../../../tool/registry"
 import { Wildcard } from "../../../util/wildcard"
+=======
+>>>>>>> upstream/dev
 import { bootstrap } from "../../bootstrap"
 import { cmd } from "../cmd"
 
@@ -25,6 +28,7 @@ export const AgentCommand = cmd({
         )
         process.exit(1)
       }
+<<<<<<< HEAD
       const resolvedTools = await resolveTools(agent)
       const output = {
         ...agent,
@@ -49,3 +53,9 @@ async function resolveTools(agent: Agent.Info) {
   }
   return resolved
 }
+=======
+      process.stdout.write(JSON.stringify(agent, null, 2) + EOL)
+    })
+  },
+})
+>>>>>>> upstream/dev

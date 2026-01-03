@@ -1,6 +1,10 @@
 {
   "name": "@opencode-ai/console-mail",
+<<<<<<< HEAD
   "version": "1.0.218",
+=======
+  "version": "1.0.224",
+>>>>>>> upstream/dev
   "dependencies": {
     "@jsx-email/all": "2.2.3",
     "@jsx-email/cli": "1.4.3",
@@ -17,5 +21,10 @@
   "scripts": {
     "dev": "email preview emails/templates"
   },
+<<<<<<< HEAD
   "type": "module"
+=======
+  "type": "module",
+  "license": "MIT"
+>>>>>>> upstream/dev
 }

@@ -850,6 +850,97 @@
         ]
       }
     },
+<<<<<<< HEAD
+=======
+    "/experimental/worktree": {
+      "post": {
+        "operationId": "worktree.create",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "summary": "Create worktree",
+        "description": "Create a new git worktree for the current project.",
+        "responses": {
+          "200": {
+            "description": "Worktree created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Worktree"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorktreeCreateInput"
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.worktree.create({\n  ...\n})"
+          }
+        ]
+      },
+      "get": {
+        "operationId": "worktree.list",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "summary": "List worktrees",
+        "description": "List all sandbox worktrees for the current project.",
+        "responses": {
+          "200": {
+            "description": "List of worktree directories",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.worktree.list({\n  ...\n})"
+          }
+        ]
+      }
+    },
+>>>>>>> upstream/dev
     "/vcs": {
       "get": {
         "operationId": "vcs.get",
@@ -967,6 +1058,12 @@
                   },
                   "title": {
                     "type": "string"
+<<<<<<< HEAD
+=======
+                  },
+                  "permission": {
+                    "$ref": "#/components/schemas/PermissionRuleset"
+>>>>>>> upstream/dev
                   }
                 }
               }
@@ -2037,6 +2134,10 @@
                     "type": "boolean"
                   },
                   "tools": {
+<<<<<<< HEAD
+=======
+                    "description": "@deprecated tools and permissions have been merged, you can set permissions on the session itself now",
+>>>>>>> upstream/dev
                     "type": "object",
                     "propertyNames": {
                       "type": "string"
@@ -2412,6 +2513,10 @@
                     "type": "boolean"
                   },
                   "tools": {
+<<<<<<< HEAD
+=======
+                    "description": "@deprecated tools and permissions have been merged, you can set permissions on the session itself now",
+>>>>>>> upstream/dev
                     "type": "object",
                     "propertyNames": {
                       "type": "string"
@@ -2831,6 +2936,10 @@
           }
         ],
         "summary": "Respond to permission",
+<<<<<<< HEAD
+=======
+        "deprecated": true,
+>>>>>>> upstream/dev
         "description": "Approve or deny a permission request from the AI assistant.",
         "responses": {
           "200": {
@@ -2888,6 +2997,90 @@
         ]
       }
     },
+<<<<<<< HEAD
+=======
+    "/permission/{requestID}/reply": {
+      "post": {
+        "operationId": "permission.reply",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "requestID",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "summary": "Respond to permission request",
+        "description": "Approve or deny a permission request from the AI assistant.",
+        "responses": {
+          "200": {
+            "description": "Permission processed successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "boolean"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "reply": {
+                    "type": "string",
+                    "enum": ["once", "always", "reject"]
+                  },
+                  "message": {
+                    "type": "string"
+                  }
+                },
+                "required": ["reply"]
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.permission.reply({\n  ...\n})"
+          }
+        ]
+      }
+    },
+>>>>>>> upstream/dev
     "/permission": {
       "get": {
         "operationId": "permission.list",
@@ -2910,7 +3103,11 @@
                 "schema": {
                   "type": "array",
                   "items": {
+<<<<<<< HEAD
                     "$ref": "#/components/schemas/Permission"
+=======
+                    "$ref": "#/components/schemas/PermissionRequest"
+>>>>>>> upstream/dev
                   }
                 }
               }
@@ -4872,6 +5069,12 @@
                   },
                   {
                     "$ref": "#/components/schemas/Event.tui.toast.show"
+<<<<<<< HEAD
+=======
+                  },
+                  {
+                    "$ref": "#/components/schemas/Event.tui.session.select"
+>>>>>>> upstream/dev
                   }
                 ]
               }
@@ -4886,6 +5089,80 @@
         ]
       }
     },
+<<<<<<< HEAD
+=======
+    "/tui/select-session": {
+      "post": {
+        "operationId": "tui.selectSession",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "summary": "Select session",
+        "description": "Navigate the TUI to display the specified session.",
+        "responses": {
+          "200": {
+            "description": "Session selected successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "boolean"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "sessionID": {
+                    "description": "Session ID to navigate to",
+                    "type": "string",
+                    "pattern": "^ses"
+                  }
+                },
+                "required": ["sessionID"]
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.tui.selectSession({\n  ...\n})"
+          }
+        ]
+      }
+    },
+>>>>>>> upstream/dev
     "/tui/control/next": {
       "get": {
         "operationId": "tui.control.next",
@@ -5145,6 +5422,15 @@
               }
             },
             "required": ["created", "updated"]
+<<<<<<< HEAD
+=======
+          },
+          "sandboxes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+>>>>>>> upstream/dev
           }
         },
         "required": ["id", "worktree", "time"]
@@ -6362,6 +6648,7 @@
         },
         "required": ["type", "properties"]
       },
+<<<<<<< HEAD
       "Permission": {
         "type": "object",
         "properties": {
@@ -6395,6 +6682,27 @@
           },
           "title": {
             "type": "string"
+=======
+      "PermissionRequest": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^per.*"
+          },
+          "sessionID": {
+            "type": "string",
+            "pattern": "^ses.*"
+          },
+          "permission": {
+            "type": "string"
+          },
+          "patterns": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+>>>>>>> upstream/dev
           },
           "metadata": {
             "type": "object",
@@ -6403,6 +6711,7 @@
             },
             "additionalProperties": {}
           },
+<<<<<<< HEAD
           "time": {
             "type": "object",
             "properties": {
@@ -6416,14 +6725,45 @@
         "required": ["id", "type", "sessionID", "messageID", "title", "metadata", "time"]
       },
       "Event.permission.updated": {
+=======
+          "always": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "tool": {
+            "type": "object",
+            "properties": {
+              "messageID": {
+                "type": "string"
+              },
+              "callID": {
+                "type": "string"
+              }
+            },
+            "required": ["messageID", "callID"]
+          }
+        },
+        "required": ["id", "sessionID", "permission", "patterns", "metadata", "always"]
+      },
+      "Event.permission.asked": {
+>>>>>>> upstream/dev
         "type": "object",
         "properties": {
           "type": {
             "type": "string",
+<<<<<<< HEAD
             "const": "permission.updated"
           },
           "properties": {
             "$ref": "#/components/schemas/Permission"
+=======
+            "const": "permission.asked"
+          },
+          "properties": {
+            "$ref": "#/components/schemas/PermissionRequest"
+>>>>>>> upstream/dev
           }
         },
         "required": ["type", "properties"]
@@ -6441,6 +6781,7 @@
               "sessionID": {
                 "type": "string"
               },
+<<<<<<< HEAD
               "permissionID": {
                 "type": "string"
               },
@@ -6515,6 +6856,17 @@
               }
             },
             "required": ["sessionID", "todos"]
+=======
+              "requestID": {
+                "type": "string"
+              },
+              "reply": {
+                "type": "string",
+                "enum": ["once", "always", "reject"]
+              }
+            },
+            "required": ["sessionID", "requestID", "reply"]
+>>>>>>> upstream/dev
           }
         },
         "required": ["type", "properties"]
@@ -6622,6 +6974,75 @@
         },
         "required": ["type", "properties"]
       },
+<<<<<<< HEAD
+=======
+      "Event.file.edited": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "file.edited"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "file": {
+                "type": "string"
+              }
+            },
+            "required": ["file"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Todo": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "description": "Brief description of the task",
+            "type": "string"
+          },
+          "status": {
+            "description": "Current status of the task: pending, in_progress, completed, cancelled",
+            "type": "string"
+          },
+          "priority": {
+            "description": "Priority level of the task: high, medium, low",
+            "type": "string"
+          },
+          "id": {
+            "description": "Unique identifier for the todo item",
+            "type": "string"
+          }
+        },
+        "required": ["content", "status", "priority", "id"]
+      },
+      "Event.todo.updated": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "todo.updated"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string"
+              },
+              "todos": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Todo"
+                }
+              }
+            },
+            "required": ["sessionID", "todos"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+>>>>>>> upstream/dev
       "Event.tui.prompt.append": {
         "type": "object",
         "properties": {
@@ -6714,6 +7135,30 @@
         },
         "required": ["type", "properties"]
       },
+<<<<<<< HEAD
+=======
+      "Event.tui.session.select": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "tui.session.select"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "description": "Session ID to navigate to",
+                "type": "string",
+                "pattern": "^ses"
+              }
+            },
+            "required": ["sessionID"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+>>>>>>> upstream/dev
       "Event.mcp.tools.changed": {
         "type": "object",
         "properties": {
@@ -6763,6 +7208,34 @@
         },
         "required": ["type", "properties"]
       },
+<<<<<<< HEAD
+=======
+      "PermissionAction": {
+        "type": "string",
+        "enum": ["allow", "deny", "ask"]
+      },
+      "PermissionRule": {
+        "type": "object",
+        "properties": {
+          "permission": {
+            "type": "string"
+          },
+          "pattern": {
+            "type": "string"
+          },
+          "action": {
+            "$ref": "#/components/schemas/PermissionAction"
+          }
+        },
+        "required": ["permission", "pattern", "action"]
+      },
+      "PermissionRuleset": {
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/PermissionRule"
+        }
+      },
+>>>>>>> upstream/dev
       "Session": {
         "type": "object",
         "properties": {
@@ -6834,6 +7307,12 @@
             },
             "required": ["created", "updated"]
           },
+<<<<<<< HEAD
+=======
+          "permission": {
+            "$ref": "#/components/schemas/PermissionRuleset"
+          },
+>>>>>>> upstream/dev
           "revert": {
             "type": "object",
             "properties": {
@@ -7201,18 +7680,25 @@
             "$ref": "#/components/schemas/Event.message.part.removed"
           },
           {
+<<<<<<< HEAD
             "$ref": "#/components/schemas/Event.permission.updated"
+=======
+            "$ref": "#/components/schemas/Event.permission.asked"
+>>>>>>> upstream/dev
           },
           {
             "$ref": "#/components/schemas/Event.permission.replied"
           },
           {
+<<<<<<< HEAD
             "$ref": "#/components/schemas/Event.file.edited"
           },
           {
             "$ref": "#/components/schemas/Event.todo.updated"
           },
           {
+=======
+>>>>>>> upstream/dev
             "$ref": "#/components/schemas/Event.session.status"
           },
           {
@@ -7222,6 +7708,15 @@
             "$ref": "#/components/schemas/Event.session.compacted"
           },
           {
+<<<<<<< HEAD
+=======
+            "$ref": "#/components/schemas/Event.file.edited"
+          },
+          {
+            "$ref": "#/components/schemas/Event.todo.updated"
+          },
+          {
+>>>>>>> upstream/dev
             "$ref": "#/components/schemas/Event.tui.prompt.append"
           },
           {
@@ -7231,6 +7726,12 @@
             "$ref": "#/components/schemas/Event.tui.toast.show"
           },
           {
+<<<<<<< HEAD
+=======
+            "$ref": "#/components/schemas/Event.tui.session.select"
+          },
+          {
+>>>>>>> upstream/dev
             "$ref": "#/components/schemas/Event.mcp.tools.changed"
           },
           {
@@ -7804,6 +8305,92 @@
         },
         "additionalProperties": false
       },
+<<<<<<< HEAD
+=======
+      "PermissionActionConfig": {
+        "type": "string",
+        "enum": ["ask", "allow", "deny"]
+      },
+      "PermissionObjectConfig": {
+        "type": "object",
+        "propertyNames": {
+          "type": "string"
+        },
+        "additionalProperties": {
+          "$ref": "#/components/schemas/PermissionActionConfig"
+        }
+      },
+      "PermissionRuleConfig": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/PermissionActionConfig"
+          },
+          {
+            "$ref": "#/components/schemas/PermissionObjectConfig"
+          }
+        ]
+      },
+      "PermissionConfig": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "read": {
+                "$ref": "#/components/schemas/PermissionRuleConfig"
+              },
+              "edit": {
+                "$ref": "#/components/schemas/PermissionRuleConfig"
+              },
+              "glob": {
+                "$ref": "#/components/schemas/PermissionRuleConfig"
+              },
+              "grep": {
+                "$ref": "#/components/schemas/PermissionRuleConfig"
+              },
+              "list": {
+                "$ref": "#/components/schemas/PermissionRuleConfig"
+              },
+              "bash": {
+                "$ref": "#/components/schemas/PermissionRuleConfig"
+              },
+              "task": {
+                "$ref": "#/components/schemas/PermissionRuleConfig"
+              },
+              "external_directory": {
+                "$ref": "#/components/schemas/PermissionRuleConfig"
+              },
+              "todowrite": {
+                "$ref": "#/components/schemas/PermissionActionConfig"
+              },
+              "todoread": {
+                "$ref": "#/components/schemas/PermissionActionConfig"
+              },
+              "webfetch": {
+                "$ref": "#/components/schemas/PermissionActionConfig"
+              },
+              "websearch": {
+                "$ref": "#/components/schemas/PermissionActionConfig"
+              },
+              "codesearch": {
+                "$ref": "#/components/schemas/PermissionActionConfig"
+              },
+              "lsp": {
+                "$ref": "#/components/schemas/PermissionRuleConfig"
+              },
+              "doom_loop": {
+                "$ref": "#/components/schemas/PermissionActionConfig"
+              }
+            },
+            "additionalProperties": {
+              "$ref": "#/components/schemas/PermissionRuleConfig"
+            }
+          },
+          {
+            "$ref": "#/components/schemas/PermissionActionConfig"
+          }
+        ]
+      },
+>>>>>>> upstream/dev
       "AgentConfig": {
         "type": "object",
         "properties": {
@@ -7820,6 +8407,10 @@
             "type": "string"
           },
           "tools": {
+<<<<<<< HEAD
+=======
+            "description": "@deprecated Use 'permission' field instead",
+>>>>>>> upstream/dev
             "type": "object",
             "propertyNames": {
               "type": "string"
@@ -7839,17 +8430,32 @@
             "type": "string",
             "enum": ["subagent", "primary", "all"]
           },
+<<<<<<< HEAD
+=======
+          "options": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          },
+>>>>>>> upstream/dev
           "color": {
             "description": "Hex color code for the agent (e.g., #FF5733)",
             "type": "string",
             "pattern": "^#[0-9a-fA-F]{6}$"
           },
+<<<<<<< HEAD
           "maxSteps": {
+=======
+          "steps": {
+>>>>>>> upstream/dev
             "description": "Maximum number of agentic iterations before forcing text-only response",
             "type": "integer",
             "exclusiveMinimum": 0,
             "maximum": 9007199254740991
           },
+<<<<<<< HEAD
           "permission": {
             "type": "object",
             "properties": {
@@ -7906,6 +8512,16 @@
                 "enum": ["ask", "allow", "deny"]
               }
             }
+=======
+          "maxSteps": {
+            "description": "@deprecated Use 'steps' field instead.",
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "permission": {
+            "$ref": "#/components/schemas/PermissionConfig"
+>>>>>>> upstream/dev
           }
         },
         "additionalProperties": {}
@@ -8473,10 +9089,31 @@
             "additionalProperties": {
               "anyOf": [
                 {
+<<<<<<< HEAD
                   "$ref": "#/components/schemas/McpLocalConfig"
                 },
                 {
                   "$ref": "#/components/schemas/McpRemoteConfig"
+=======
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/McpLocalConfig"
+                    },
+                    {
+                      "$ref": "#/components/schemas/McpRemoteConfig"
+                    }
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": ["enabled"],
+                  "additionalProperties": false
+>>>>>>> upstream/dev
                 }
               ]
             }
@@ -8600,6 +9237,7 @@
             "$ref": "#/components/schemas/LayoutConfig"
           },
           "permission": {
+<<<<<<< HEAD
             "type": "object",
             "properties": {
               "edit": {
@@ -8655,6 +9293,9 @@
                 "enum": ["ask", "allow", "deny"]
               }
             }
+=======
+            "$ref": "#/components/schemas/PermissionConfig"
+>>>>>>> upstream/dev
           },
           "tools": {
             "type": "object",
@@ -8832,6 +9473,35 @@
         },
         "required": ["home", "state", "config", "worktree", "directory"]
       },
+<<<<<<< HEAD
+=======
+      "Worktree": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "branch": {
+            "type": "string"
+          },
+          "directory": {
+            "type": "string"
+          }
+        },
+        "required": ["name", "branch", "directory"]
+      },
+      "WorktreeCreateInput": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "startCommand": {
+            "type": "string"
+          }
+        }
+      },
+>>>>>>> upstream/dev
       "VcsInfo": {
         "type": "object",
         "properties": {
@@ -9470,9 +10140,12 @@
           "hidden": {
             "type": "boolean"
           },
+<<<<<<< HEAD
           "default": {
             "type": "boolean"
           },
+=======
+>>>>>>> upstream/dev
           "topP": {
             "type": "number"
           },
@@ -9483,6 +10156,7 @@
             "type": "string"
           },
           "permission": {
+<<<<<<< HEAD
             "type": "object",
             "properties": {
               "edit": {
@@ -9523,6 +10197,9 @@
               }
             },
             "required": ["edit", "bash", "skill"]
+=======
+            "$ref": "#/components/schemas/PermissionRuleset"
+>>>>>>> upstream/dev
           },
           "model": {
             "type": "object",
@@ -9539,6 +10216,7 @@
           "prompt": {
             "type": "string"
           },
+<<<<<<< HEAD
           "tools": {
             "type": "object",
             "propertyNames": {
@@ -9548,6 +10226,8 @@
               "type": "boolean"
             }
           },
+=======
+>>>>>>> upstream/dev
           "options": {
             "type": "object",
             "propertyNames": {
@@ -9555,13 +10235,21 @@
             },
             "additionalProperties": {}
           },
+<<<<<<< HEAD
           "maxSteps": {
+=======
+          "steps": {
+>>>>>>> upstream/dev
             "type": "integer",
             "exclusiveMinimum": 0,
             "maximum": 9007199254740991
           }
         },
+<<<<<<< HEAD
         "required": ["name", "mode", "permission", "tools", "options"]
+=======
+        "required": ["name", "mode", "permission", "options"]
+>>>>>>> upstream/dev
       },
       "MCPStatusConnected": {
         "type": "object",

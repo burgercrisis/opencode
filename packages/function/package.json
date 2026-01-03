@@ -1,9 +1,17 @@
 {
   "name": "@opencode-ai/function",
+<<<<<<< HEAD
   "version": "1.0.218",
   "$schema": "https://json.schemastore.org/package.json",
   "private": true,
   "type": "module",
+=======
+  "version": "1.0.224",
+  "$schema": "https://json.schemastore.org/package.json",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+>>>>>>> upstream/dev
   "devDependencies": {
     "@cloudflare/workers-types": "catalog:",
     "@tsconfig/node22": "22.0.2",
