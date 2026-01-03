@@ -2,7 +2,7 @@ import { FileDiff, Message, Model, Part, Session } from "@opencode-ai/sdk/v2"
 import { fn } from "@opencode-ai/util/fn"
 import { iife } from "@opencode-ai/util/iife"
 import { Identifier } from "@opencode-ai/util/identifier"
-import z from "zod"
+import { z } from "@opencode-ai/util"
 import { Storage } from "./storage"
 import { Binary } from "@opencode-ai/util/binary"
 

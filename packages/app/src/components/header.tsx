@@ -75,7 +75,7 @@ export function Header(props: {
                         {(i) => (
                           <div class="flex items-center gap-2">
                             <Icon name="folder" size="small" />
-                            <div class="text-text-strong">{getFilename(i)}</div>
+                            <div class="text-text-strong">{getFilename(i || '')}</div>
                           </div>
                         )}
                       </Select>

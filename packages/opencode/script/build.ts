@@ -2,7 +2,7 @@
 
 import solidPlugin from "../node_modules/@opentui/solid/scripts/solid-plugin"
 import path from "path"
-import fs from "fs"
+import fs, { existsSync } from "fs"
 import { $ } from "bun"
 import { fileURLToPath } from "url"
 
@@ -94,7 +94,11 @@ const targets = singleFlag
     })
   : allTargets
 
-await $`rm -rf dist`
+// Cross-platform directory removal
+const distPath = path.resolve(dir, "dist");
+if (existsSync(distPath)) {
+  await fs.promises.rm(distPath, { recursive: true, force: true });
+}
 
 const binaries: Record<string, string> = {}
 if (!skipInstall) {
@@ -113,7 +117,9 @@ for (const item of targets) {
     .filter(Boolean)
     .join("-")
   console.log(`building ${name}`)
-  await $`mkdir -p dist/${name}/bin`
+  // Cross-platform directory creation
+const binDir = path.resolve(dir, `dist/${name}/bin`);
+await fs.promises.mkdir(binDir, { recursive: true });
 
   const parserWorker = fs.realpathSync(path.resolve(dir, "./node_modules/@opentui/core/parser.worker.js"))
   const workerPath = "./src/cli/cmd/tui/worker.ts"
@@ -148,7 +154,11 @@ for (const item of targets) {
     },
   })
 
-  await $`rm -rf ./dist/${name}/bin/tui`
+  // Cross-platform directory removal
+const tuiPath = path.resolve(dir, `./dist/${name}/bin/tui`);
+if (existsSync(tuiPath)) {
+  await fs.promises.rm(tuiPath, { recursive: true, force: true });
+}
   await Bun.file(`dist/${name}/package.json`).write(
     JSON.stringify(
       {

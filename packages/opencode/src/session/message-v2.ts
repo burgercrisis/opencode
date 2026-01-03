@@ -344,11 +344,41 @@ export namespace MessageV2 {
     }),
     error: z
       .discriminatedUnion("name", [
-        AuthError.Schema,
-        NamedError.Unknown.Schema,
-        OutputLengthError.Schema,
-        AbortedError.Schema,
-        APIError.Schema,
+        z.object({
+          name: z.literal("ProviderAuthError"),
+          message: z.string(),
+          data: z.object({
+            providerID: z.string(),
+            message: z.string(),
+          }),
+        }),
+        z.object({
+          name: z.literal("UnknownError"),
+          message: z.string(),
+          data: z.object({ message: z.string() }),
+        }),
+        z.object({
+          name: z.literal("MessageOutputLengthError"),
+          message: z.string(),
+          data: z.object({}),
+        }),
+        z.object({
+          name: z.literal("MessageAbortedError"),
+          message: z.string(),
+          data: z.object({ message: z.string() }),
+        }),
+        z.object({
+          name: z.literal("APIError"),
+          message: z.string(),
+          data: z.object({
+            message: z.string(),
+            statusCode: z.number().optional(),
+            isRetryable: z.boolean(),
+            responseHeaders: z.record(z.string(), z.string()).optional(),
+            responseBody: z.string().optional(),
+            metadata: z.record(z.string(), z.string()).optional(),
+          }),
+        }),
       ])
       .optional(),
     parentID: z.string(),

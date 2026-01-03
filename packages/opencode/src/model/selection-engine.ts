@@ -77,8 +77,25 @@ export class ModelSelectionEngine {
       // Sort by score (higher is better)
       scoredModels.sort((a, b) => b.score - a.score)
 
+      // GLM Model Preference: Prioritize zenmux provider for GLM models
+      const hasGLMModels = candidateModels.some(m => m.id.includes('glm-4.7') || m.id.includes('glm-4.6'))
+      if (hasGLMModels) {
+        // Find the highest scored GLM model from zenmux provider
+        const zenGLMModel = scoredModels.find(m => 
+          (m.id.includes('glm-4.7') || m.id.includes('glm-4.6')) && m.providerID === 'zenmux'
+        )
+        if (zenGLMModel) {
+          console.log(`Prioritized zenmux GLM model: ${zenGLMModel.providerID}/${zenGLMModel.id}`)
+          return zenGLMModel
+        }
+      }
+
       // Return the best model
-      return scoredModels[0]
+      const selected = scoredModels[0]
+      if (selected.id.includes('glm')) {
+        console.log('Selected GLM model:', `${selected.providerID}/${selected.id}`)
+      }
+      return selected
 
     } catch (error) {
       console.error("Error selecting optimal model:", error)
@@ -96,6 +113,12 @@ export class ModelSelectionEngine {
 
       const providerModels = provider.models || {}
       models.push(...Object.values(providerModels))
+    }
+
+    // Debug: log GLM models
+    const glmModels = models.filter(m => m.id.includes('glm'))
+    if (glmModels.length > 0) {
+      console.log('Available GLM models:', glmModels.map(m => `${m.providerID}/${m.id}`))
     }
 
     return models

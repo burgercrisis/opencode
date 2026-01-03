@@ -838,12 +838,47 @@ export namespace Provider {
         }
       }
 
+      // Debug: log GLM models in providers
+      const glmModels = Object.keys(provider.models).filter(id => id.includes('glm'))
+      if (glmModels.length > 0) {
+        console.log(`Provider ${providerID} has GLM models:`, glmModels)
+      }
+
       if (Object.keys(provider.models).length === 0) {
         delete providers[providerID]
         continue
       }
 
       log.info("found", { providerID })
+    }
+
+    // Route GLM models to OpenCode Zen provider (after all providers are loaded)
+    console.log("🔄 Processing GLM model routing...")
+    const zenProvider = providers['zenmux']
+    if (zenProvider) {
+      for (const [providerID, provider] of Object.entries(providers)) {
+        if (providerID === 'zenmux') continue // Skip zenmux itself
+        
+        const glmModels = Object.keys(provider.models).filter(id => 
+          id.includes('glm-4.7') || id.includes('glm-4.6')
+        )
+        
+        if (glmModels.length > 0) {
+          for (const modelID of glmModels) {
+            // Move GLM model to zenmux provider
+            const model = provider.models[modelID]
+            if (model) {
+              // Update model to belong to zenmux provider
+              model.providerID = 'zenmux'
+              zenProvider.models[modelID] = model
+              delete provider.models[modelID]
+              console.log(`✅ Routed GLM model ${modelID} from ${providerID} to zenmux`)
+            }
+          }
+        }
+      }
+    } else {
+      console.log("⚠️  zenmux provider not found, GLM models remain in original providers")
     }
 
     return {
@@ -929,7 +964,12 @@ export namespace Provider {
         installedPath = model.api.npm
       }
 
-      const mod = await import(installedPath)
+      const mod = await Promise.race([
+        import(installedPath),
+        new Promise<never>((_, reject) => 
+          setTimeout(() => reject(new Error('Provider SDK load timeout')), 30000)
+        )
+      ])
 
       const fn = mod[Object.keys(mod).find((key) => key.startsWith("create"))!]
       const loaded = fn({

@@ -1,4 +1,6 @@
 import { $ } from "bun"
+import fs from "fs"
+import path from "path"
 
 export const SIDECAR_BINARIES: Array<{ rustTarget: string; ocBinary: string; assetExt: string }> = [
   {
@@ -40,9 +42,13 @@ export function getCurrentSidecar(target = RUST_TARGET) {
 }
 
 export async function copyBinaryToSidecarFolder(source: string, target = RUST_TARGET) {
-  await $`mkdir -p src-tauri/sidecars`
+  // Cross-platform directory creation
+  const sidecarDir = "src-tauri/sidecars";
+  await fs.promises.mkdir(sidecarDir, { recursive: true });
+  
   const dest = `src-tauri/sidecars/opencode-cli-${target}${process.platform === "win32" ? ".exe" : ""}`
-  await $`cp ${source} ${dest}`
+  // Cross-platform file copy
+  await fs.promises.copyFile(source, dest);
 
   console.log(`Copied ${source} to ${dest}`)
 }

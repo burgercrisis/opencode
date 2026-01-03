@@ -42,11 +42,21 @@ export namespace SessionProcessor {
       async process(streamInput: LLM.StreamInput) {
         log.info("process")
         const shouldBreak = (await Config.get()).experimental?.continue_loop_on_deny !== true
+        
+        // Add hard timeout to prevent infinite hangs
+        const HARD_TIMEOUT = 300000 // 5 minutes
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Session processing timeout')), HARD_TIMEOUT)
+        )
+        
         while (true) {
           try {
             let currentText: MessageV2.TextPart | undefined
             let reasoningMap: Record<string, MessageV2.ReasoningPart> = {}
-            const stream = await LLM.stream(streamInput)
+            const stream = await Promise.race([
+              LLM.stream(streamInput),
+              timeoutPromise
+            ])
 
             for await (const value of stream.fullStream) {
               input.abort.throwIfAborted()

@@ -11,6 +11,29 @@ import { Instance } from "../project/instance"
 import { Flag } from "../flag/flag"
 import { Archive } from "../util/archive"
 
+// Cross-platform executable permission setter
+async function setExecutablePermission(binPath: string): Promise<boolean> {
+  if (process.platform === 'win32') {
+    // On Windows, most binaries are executable by default
+    // Just try to set permissions if possible, but don't fail if we can't
+    try {
+      await fs.chmod(binPath, 0o755);
+      return true;
+    } catch (error) {
+      // Windows might not support chmod, ignore and return success
+      return true;
+    }
+  } else {
+    // Unix-like systems: use chmod
+    try {
+      await $`chmod +x ${binPath}`.quiet().nothrow();
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+}
+
 export namespace LSPServer {
   const log = Log.create({ service: "lsp.server" })
 
@@ -710,9 +733,7 @@ export namespace LSPServer {
           return
         }
 
-        if (platform !== "win32") {
-          await $`chmod +x ${bin}`.quiet().nothrow()
-        }
+        await setExecutablePermission(bin)
 
         log.info(`installed zls`, { bin })
       }
@@ -1014,9 +1035,7 @@ export namespace LSPServer {
         return
       }
 
-      if (platform !== "win32") {
-        await $`chmod +x ${bin}`.quiet().nothrow()
-      }
+      await setExecutablePermission(bin)
 
       await fs.unlink(path.join(Global.Path.bin, "clangd")).catch(() => { })
       await fs.symlink(bin, path.join(Global.Path.bin, "clangd")).catch(() => { })
@@ -1377,13 +1396,10 @@ export namespace LSPServer {
           return
         }
 
-        if (platform !== "win32") {
-          const ok = await $`chmod +x ${bin}`.quiet().catch((error) => {
-            log.error("Failed to set executable permission for lua-language-server binary", {
-              error,
-            })
-          })
-          if (!ok) return
+        const ok = await setExecutablePermission(bin)
+        if (!ok) {
+          log.error("Failed to set executable permission for lua-language-server binary")
+          return
         }
 
         log.info(`installed lua-language-server`, { bin })
@@ -1598,9 +1614,7 @@ export namespace LSPServer {
           return
         }
 
-        if (platform !== "win32") {
-          await $`chmod +x ${bin}`.quiet().nothrow()
-        }
+        await setExecutablePermission(bin)
 
         log.info(`installed terraform-ls`, { bin })
       }
@@ -1694,9 +1708,7 @@ export namespace LSPServer {
           return
         }
 
-        if (platform !== "win32") {
-          await $`chmod +x ${bin}`.quiet().nothrow()
-        }
+        await setExecutablePermission(bin)
 
         log.info("installed texlab", { bin })
       }
@@ -1946,9 +1958,7 @@ export namespace LSPServer {
           return
         }
 
-        if (platform !== "win32") {
-          await $`chmod +x ${bin}`.quiet().nothrow()
-        }
+        await setExecutablePermission(bin)
 
         log.info("installed tinymist", { bin })
       }

@@ -1,6 +1,8 @@
 #!/usr/bin/env bun
 import { $ } from "bun"
 import { Script } from "@opencode-ai/script"
+import fs from "fs"
+import path from "path"
 
 if (Script.channel === "dev") {
   // Calculate SHA values
@@ -110,7 +112,11 @@ if (Script.channel === "dev") {
   ]) {
     for (let i = 0; i < 30; i++) {
       try {
-        await $`rm -rf ./dist/aur-${pkg}`
+        // Cross-platform directory removal
+        const aurDir = path.resolve(`./dist/aur-${pkg}`);
+        if (fs.existsSync(aurDir)) {
+          await fs.promises.rm(aurDir, { recursive: true, force: true });
+        }
         await $`git clone ssh://aur@aur.archlinux.org/${pkg}.git ./dist/aur-${pkg}`
         await $`cd ./dist/aur-${pkg} && git checkout master`
         await Bun.file(`./dist/aur-${pkg}/PKGBUILD`).write(pkgbuild)
@@ -178,7 +184,11 @@ if (Script.channel === "dev") {
     "",
   ].join("\n")
 
-  await $`rm -rf ./dist/homebrew-tap`
+  // Cross-platform directory removal
+  const homebrewDir = path.resolve("./dist/homebrew-tap");
+  if (fs.existsSync(homebrewDir)) {
+    await fs.promises.rm(homebrewDir, { recursive: true, force: true });
+  }
   await $`git clone https://${process.env["GITHUB_TOKEN"]}@github.com/sst/homebrew-tap.git ./dist/homebrew-tap`
   await Bun.file("./dist/homebrew-tap/opencode.rb").write(homebrewFormula)
   await $`cd ./dist/homebrew-tap && git add opencode.rb`
