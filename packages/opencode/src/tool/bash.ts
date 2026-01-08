@@ -13,6 +13,8 @@ import { fileURLToPath } from "url"
 import { Flag } from "@/flag/flag.ts"
 import { Shell } from "@/shell/shell"
 import { buildGitEnv } from "./git-env"
+import { PowerShellExecutor } from './powershell-executor'
+import { TempFileManager } from './temp-file-manager'
 
 import { BashArity } from "@/permission/arity"
 
@@ -68,11 +70,11 @@ const SHELL_BUILTINS = new Set([
 ])
 
 // Commands that look like shell built-ins (start with special characters)
-const SHELL_PATTERN = /^%\\w+%|\\$\\w+|\\\\$\\{\\w+\\}/
+const SHELL_PATTERN = /^%\w+%|\$\w+|\\$\{\w+\}/
 
 function needsShellExecution(command: string): boolean {
   // Extract first word (handle quotes)
-  const firstWord = command.trim().match(/^([\"']?)(\\S+)\\1/)?.[2]?.toLowerCase() ?? ""
+  const firstWord = command.trim().match(/^(["']?)(\S+)\1/)?.[2]?.toLowerCase() ?? ""
 
   // Check if it's a known shell built-in
   if (SHELL_BUILTINS.has(firstWord)) {
@@ -93,12 +95,17 @@ function needsShellExecution(command: string): boolean {
 }
 
 function resolveWindowsCommand(command: string, shell: string): { cmd: string[]; useShell: boolean } {
-  const trimmed = command.trim()
   const shellName = path.basename(shell).toLowerCase()
-
-  // Use appropriate flag for different shells
   const flag = shellName.includes('cmd') ? '/c' : '-c'
-  return { cmd: [shell, flag, trimmed], useShell: true }
+  
+  // Check if command needs shell execution
+  if (needsShellExecution(command)) {
+    // Pass command as-is to avoid quote double-wrapping
+    return { cmd: [shell, flag, command], useShell: true }
+  }
+  
+  // For simple commands, bypass shell wrapper
+  return { cmd: [command], useShell: false }
 }
 
 /**
@@ -134,9 +141,8 @@ export function parseCommand(command: string): { executable: string; args: strin
   const trimmed = command.trim()
   const shellType = detectCommandShell(trimmed)
 
-  // PowerShell commands: On Windows, use direct execution to bypass cmd.exe corruption
+  // PowerShell commands: Always bypass shell wrapper on Windows to avoid cmd.exe corruption
   // Issue #10 fix: cmd.exe wrapper corrupts PowerShell -Command arguments
-  // Issue #13 fix: Ensure consistent behavior between Unix and Windows
   if (shellType === 'powershell' || shellType === 'pwsh') {
     const parts = trimmed.split(/\s+/)
     const executable = shellType === 'pwsh' ? 'pwsh' : 'powershell.exe'
@@ -145,32 +151,87 @@ export function parseCommand(command: string): { executable: string; args: strin
     return {
       executable,
       args,
-      // On Windows, bypass shell wrapper to avoid cmd.exe corruption
-      // On Unix, use shell wrapper (pwsh handles this correctly)
-      shouldBypassShell: process.platform === "win32"
+      // Always bypass shell wrapper for PowerShell commands
+      shouldBypassShell: true
     }
   }
 
-  // CMD commands: extract cmd.exe and arguments
-  if (shellType === 'cmd') {
-    const parts = trimmed.split(/\s+/)
-    if (parts.length > 0 && (parts[0] === 'cmd.exe' || parts[0] === 'cmd')) {
-      return {
-        executable: parts[0],
-        args: parts.slice(1),
-        shouldBypassShell: true // Direct execution, no shell wrapping
-      }
+  // For shell built-ins and commands with special syntax, use shell wrapper
+  if (needsShellExecution(trimmed)) {
+    return {
+      executable: command,
+      args: [],
+      shouldBypassShell: false
     }
   }
 
+  // Simple commands can be executed directly
   return {
-    executable: command, // Use entire command as executable
+    executable: command,
     args: [],
-    shouldBypassShell: false // Use default shell wrapping
+    shouldBypassShell: true
   }
 }
 
 // TODO: we may wanna rename this tool so it works better on other shells
+
+/**
+ * Strips outer matching quotes from a string if present.
+ * Handles both single and double quotes.
+ * 
+ * @param str - The string to strip quotes from
+ * @returns The string with outer quotes removed, or original if no matching outer quotes
+ */
+function stripOuterQuotes(str: string): string {
+  const trimmed = str.trim();
+  if (trimmed.length < 2) {
+    return str;
+  }
+  
+  const first = trimmed[0];
+  const last = trimmed[trimmed.length - 1];
+  
+  // Check for matching outer quotes
+  if ((first === '"' && last === '"') || (first === "'" && last === "'")) {
+    // Check if quote is escaped or if there's a matching quote inside
+    let escaped = false;
+    let hasInnerQuote = false;
+    
+    for (let i = 1; i < trimmed.length - 1; i++) {
+      if (trimmed[i] === '\\' && !escaped) {
+        escaped = true;
+        continue;
+      }
+      if (trimmed[i] === first && !escaped) {
+        hasInnerQuote = true;
+        break;
+      }
+      escaped = false;
+    }
+    
+    // Only strip if no unescaped matching quote inside
+    if (!hasInnerQuote) {
+      return trimmed.slice(1, -1);
+    }
+  }
+  
+  return str;
+}
+
+/**
+ * PowerShell executor singleton for Windows PowerShell command execution.
+ * Uses temp files to avoid the -Command quote corruption issue.
+ */
+let psExecutor: PowerShellExecutor | undefined;
+
+function getPowerShellExecutor(): PowerShellExecutor {
+  if (!psExecutor) {
+    const tempFileManager = new TempFileManager()
+    psExecutor = new PowerShellExecutor({ tempFileManager })
+  }
+  return psExecutor
+}
+
 export const BashTool = Tool.define("bash", async () => {
   // Temporarily force cmd.exe on Windows for testing
   const shell = process.platform === "win32" ? "cmd.exe" : Shell.acceptable()
@@ -278,18 +339,36 @@ export const BashTool = Tool.define("bash", async () => {
       const parsed = parseCommand(params.command)
       const shellType = detectCommandShell(params.command)
       let cmd: string[]
-      let shellConfig: string | undefined
 
-      // Issue #10 fix: PowerShell on Windows needs direct execution (bypass cmd.exe wrapper)
-      // The cmd.exe wrapper corrupts PowerShell -Command arguments, causing commands to echo instead of execute
+      // PowerShell routing: Use PowerShellExecutor for -Command to avoid quote issues
+      // Issue #10 fix: Route PowerShell -Command through temp files using -File
+      let psExecuted = false;
       if (process.platform === "win32" && (shellType === 'powershell' || shellType === 'pwsh')) {
-        log.info("Direct PowerShell execution (bypassing cmd.exe wrapper)", {
-          command: params.command,
-          executable: parsed.executable,
-          args: parsed.args
-        })
-        cmd = [parsed.executable, ...parsed.args]
-        shellConfig = undefined // Direct execution, no shell wrapper
+        // Extract command from -Command "..."
+        const match = params.command.match(/-Command\s+["'](.+?)["']/s);
+        if (match) {
+          const commandContent = match[1];
+          const executor = getPowerShellExecutor();
+          const result = await executor.execute(commandContent);
+          
+          return {
+            title: params.description,
+            metadata: {
+              output: result.stdout,
+              exit: result.exitCode,
+              description: params.description,
+            },
+            output: result.stdout,
+          };
+        }
+        // No -Command found, use normal execution
+        psExecuted = true;
+      }
+
+      if (psExecuted) {
+        // PowerShell without -Command: parse and execute normally
+        const powerShellParsed = parseCommand(params.command);
+        cmd = [powerShellParsed.executable, ...powerShellParsed.args];
       } else if (parsed.shouldBypassShell && process.platform === "win32") {
         // Direct execution for CMD commands
         log.info("Direct execution detected", {
@@ -298,21 +377,18 @@ export const BashTool = Tool.define("bash", async () => {
           args: parsed.args
         })
         cmd = [parsed.executable, ...parsed.args]
-        shellConfig = undefined // No shell wrapper
       } else {
         // Use shell wrapper for other commands
-        const { cmd: shellCmd, useShell } = resolveWindowsCommand(params.command, shell)
+        const { cmd: shellCmd } = resolveWindowsCommand(params.command, shell)
         cmd = shellCmd
-        shellConfig = useShell ? undefined : shell
       }
 
       const proc = Bun.spawn(cmd, {
-        shell: shellConfig,
         cwd,
         env: buildGitEnv(),
         stdio: ["ignore", "pipe", "pipe"],
         detached: process.platform !== "win32",
-      })
+      }) as any
 
       let output = ""
 
@@ -360,7 +436,7 @@ export const BashTool = Tool.define("bash", async () => {
       let aborted = false
       let exited = false
 
-      const kill = () => Shell.killTree(proc, { exited: () => exited })
+      const kill = () => Shell.killTree(proc as any, { exited: () => exited })
 
       // Handle abort before starting
       if (ctx.abort.aborted) {
