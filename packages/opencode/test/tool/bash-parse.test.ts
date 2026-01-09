@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { detectCommandShell, parseCommand } from "./bash"
+import { detectCommandShell, parseCommand } from "../../src/tool/bash"
 
 describe("Shell Bypass - Unit Tests", () => {
   describe("detectCommandShell", () => {

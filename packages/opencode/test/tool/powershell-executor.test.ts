@@ -12,8 +12,8 @@ import { spawn } from 'bun'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { existsSync, unlinkSync, writeFileSync, rmSync, mkdirSync } from 'fs'
-import { PowerShellExecutor, ExecOptions, ExecutorMetrics, PowerShellExecutionError } from './powershell-executor'
-import { TempFileManager } from './temp-file-manager'
+import { PowerShellExecutor, ExecOptions, ExecutorMetrics, PowerShellExecutionError } from '../../src/tool/powershell-executor'
+import { TempFileManager } from '../../src/tool/temp-file-manager'
 
 // Detect if we're on Windows (has PowerShell)
 const isWindows = process.platform === 'win32'

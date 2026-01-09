@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test'
 import { existsSync, mkdirSync, unlinkSync, writeFileSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
-import { TempFileManager, TempFilePoolFullError } from './temp-file-manager'
+import { TempFileManager, TempFilePoolFullError } from '../../src/tool/temp-file-manager'
 
 describe('TempFileManager', () => {
   let manager: TempFileManager
