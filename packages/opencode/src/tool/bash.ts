@@ -17,8 +17,9 @@ import { PowerShellExecutor } from './powershell-executor'
 import { TempFileManager } from './temp-file-manager'
 
 import { BashArity } from "@/permission/arity"
+import { Truncate } from "./truncation"
 
-const MAX_OUTPUT_LENGTH = Flag.OPENCODE_EXPERIMENTAL_BASH_MAX_OUTPUT_LENGTH || 30_000
+const MAX_METADATA_LENGTH = 30_000
 const DEFAULT_TIMEOUT = Flag.OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS || 2 * 60 * 1000
 
 export const log = Log.create({ service: "bash-tool" })
@@ -334,7 +335,9 @@ export const BashTool = Tool.define("bash", async () => {
   log.info("bash tool using shell", { shell })
 
   return {
-    description: DESCRIPTION.replaceAll("${directory}", Instance.directory),
+    description: DESCRIPTION.replaceAll("${directory}", Instance.directory)
+      .replaceAll("${maxLines}", String(Truncate.MAX_LINES))
+      .replaceAll("${maxBytes}", String(Truncate.MAX_BYTES)),
     parameters: z.object({
       command: z.string().describe("The command to execute"),
       timeout: z.number().describe("Optional timeout in milliseconds").optional(),
@@ -486,19 +489,19 @@ export const BashTool = Tool.define("bash", async () => {
         },
       })
 
+      // Combined append function - supports multiple types and truncates metadata
       const append = (chunk: Buffer | Uint8Array | string) => {
         const text = chunk instanceof Buffer || chunk instanceof Uint8Array
           ? new TextDecoder().decode(chunk)
           : chunk
-        if (output.length <= MAX_OUTPUT_LENGTH) {
-          output += text
-          ctx.metadata({
-            metadata: {
-              output,
-              description: params.description,
-            },
-          })
-        }
+        output += text
+        ctx.metadata({
+          metadata: {
+            // truncate the metadata to avoid GIANT blobs of data (has nothing to do w/ what agent can access)
+            output: output.length > MAX_METADATA_LENGTH ? output.slice(0, MAX_METADATA_LENGTH) + "\n\n..." : output,
+            description: params.description,
+          },
+        })
       }
 
       // Stream reader approach for cross-platform compatibility
@@ -559,12 +562,7 @@ export const BashTool = Tool.define("bash", async () => {
       clearTimeout(timeoutTimer)
       ctx.abort.removeEventListener("abort", abortHandler)
 
-      let resultMetadata: String[] = ["<bash_metadata>"]
-
-      if (output.length > MAX_OUTPUT_LENGTH) {
-        output = output.slice(0, MAX_OUTPUT_LENGTH)
-        resultMetadata.push(`bash tool truncated output as it exceeded ${MAX_OUTPUT_LENGTH} char limit`)
-      }
+      const resultMetadata: string[] = []
 
       if (timedOut) {
         resultMetadata.push(`bash tool terminated command after exceeding timeout ${timeout} ms`)
@@ -574,15 +572,14 @@ export const BashTool = Tool.define("bash", async () => {
         resultMetadata.push("User aborted the command")
       }
 
-      if (resultMetadata.length > 1) {
-        resultMetadata.push("</bash_metadata>")
-        output += "\n\n" + resultMetadata.join("\n")
+      if (resultMetadata.length > 0) {
+        output += "\n\n<bash_metadata>\n" + resultMetadata.join("\n") + "\n</bash_metadata>"
       }
 
       return {
         title: params.description,
         metadata: {
-          output,
+          output: output.length > MAX_METADATA_LENGTH ? output.slice(0, MAX_METADATA_LENGTH) + "\n\n..." : output,
           exit: proc.exitCode,
           description: params.description,
         },

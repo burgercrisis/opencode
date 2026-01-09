@@ -1,4 +1,4 @@
-import { bigint, boolean, index, int, mysqlTable, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
+import { bigint, boolean, index, int, json, mysqlTable, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
 import { timestamps, ulid, utc, workspaceColumns } from "../drizzle/types"
 import { workspaceIndexes } from "./workspace.sql"
 
@@ -21,8 +21,27 @@ export const BillingTable = mysqlTable(
     reloadError: varchar("reload_error", { length: 255 }),
     timeReloadError: utc("time_reload_error"),
     timeReloadLockedTill: utc("time_reload_locked_till"),
+    subscriptionID: varchar("subscription_id", { length: 28 }),
   },
-  (table) => [...workspaceIndexes(table), uniqueIndex("global_customer_id").on(table.customerID)],
+  (table) => [
+    ...workspaceIndexes(table),
+    uniqueIndex("global_customer_id").on(table.customerID),
+    uniqueIndex("global_subscription_id").on(table.subscriptionID),
+  ],
+)
+
+export const SubscriptionTable = mysqlTable(
+  "subscription",
+  {
+    ...workspaceColumns,
+    ...timestamps,
+    userID: ulid("user_id").notNull(),
+    rollingUsage: bigint("rolling_usage", { mode: "number" }),
+    fixedUsage: bigint("fixed_usage", { mode: "number" }),
+    timeRollingUpdated: utc("time_rolling_updated"),
+    timeFixedUpdated: utc("time_fixed_updated"),
+  },
+  (table) => [...workspaceIndexes(table), uniqueIndex("workspace_user_id").on(table.workspaceID, table.userID)],
 )
 
 export const PaymentTable = mysqlTable(
@@ -54,6 +73,9 @@ export const UsageTable = mysqlTable(
     cacheWrite1hTokens: int("cache_write_1h_tokens"),
     cost: bigint("cost", { mode: "number" }).notNull(),
     keyID: ulid("key_id"),
+    enrichment: json("enrichment").$type<{
+      plan: "sub"
+    }>(),
   },
   (table) => [...workspaceIndexes(table), index("usage_time_created").on(table.workspaceID, table.timeCreated)],
 )
