@@ -39,16 +39,18 @@ describe("Shell Bypass - Unit Tests", () => {
   })
 
   describe("parseCommand", () => {
-    it("should bypass shell for powershell.exe commands", () => {
+    // PowerShell commands now use shell wrapper for proper -Command handling
+    // This prevents quote corruption when cmd.exe wraps PowerShell commands
+    it("should use shell wrapper for powershell.exe commands", () => {
       const result = parseCommand("powershell.exe -Command Get-Process")
-      expect(result.shouldBypassShell).toBe(true)
+      expect(result.shouldBypassShell).toBe(false)
       expect(result.executable).toBe("powershell.exe")
       expect(result.args).toEqual(["-Command", "Get-Process"])
     })
 
-    it("should bypass shell for pwsh commands", () => {
+    it("should use shell wrapper for pwsh commands", () => {
       const result = parseCommand("pwsh -NoProfile -Command Get-Process")
-      expect(result.shouldBypassShell).toBe(true)
+      expect(result.shouldBypassShell).toBe(false)
       expect(result.executable).toBe("pwsh")
       expect(result.args).toEqual(["-NoProfile", "-Command", "Get-Process"])
     })
@@ -85,9 +87,10 @@ describe("Shell Bypass - Unit Tests", () => {
       expect(result.shouldBypassShell).toBe(false)
     })
 
-    it("should handle simple PowerShell arguments", () => {
+    // PowerShell without -Command still uses shell wrapper
+    it("should use shell wrapper for PowerShell arguments", () => {
       const result = parseCommand("powershell.exe -NoProfile Get-Process")
-      expect(result.shouldBypassShell).toBe(true)
+      expect(result.shouldBypassShell).toBe(false)
       expect(result.executable).toBe("powershell.exe")
       expect(result.args).toEqual(["-NoProfile", "Get-Process"])
     })
