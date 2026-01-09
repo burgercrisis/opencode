@@ -730,6 +730,25 @@ export function replace(content: string, oldString: string, newString: string, r
     throw new Error("oldString and newString must be different")
   }
 
+  // NEW: Pre-validation for multiple matches
+  let totalMatchCount = 0
+  let searchPos = 0
+  while (searchPos < content.length) {
+    const index = content.indexOf(oldString, searchPos)
+    if (index === -1) break
+    totalMatchCount++
+    searchPos = index + 1
+  }
+
+  // FIXED: Throw error when multiple matches exist without replaceFirst/replaceAll
+  if (totalMatchCount > 1 && !replaceAll && !replaceFirst) {
+    throw new Error(
+      `Found multiple matches (${totalMatchCount}) for oldString. ` +
+      `Use replaceFirst=true to replace only the first occurrence, ` +
+      `or provide more context in oldString to make the match unique.`
+    )
+  }
+
   let notFound = true
   let firstMatchIndex = -1
   let firstMatchLength = 0
