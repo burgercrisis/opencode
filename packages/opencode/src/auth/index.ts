@@ -3,6 +3,8 @@ import { Global } from "../global"
 import { isBunRuntime, readFile, writeFile } from "../utils/platform"
 import z from "zod"
 
+export const OAUTH_DUMMY_KEY = "opencode-oauth-dummy-key"
+
 export namespace Auth {
   export const Oauth = z
     .object({

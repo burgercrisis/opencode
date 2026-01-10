@@ -97,8 +97,8 @@ export namespace Clipboard {
     if (os === "win32" || release().includes("WSL")) {
       const script =
         "Add-Type -AssemblyName System.Windows.Forms; $img = [System.Windows.Forms.Clipboard]::GetImage(); if ($img) { $ms = New-Object System.IO.MemoryStream; $img.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png); [System.Convert]::ToBase64String($ms.ToArray()) }"
-      const result = await shell(["powershell.exe", "-command", script])
-      const base64 = result.stdout.toString().trim()
+      const isBunRuntime = typeof Bun !== "undefined"
+      const base64 = isBunRuntime ? await $`powershell.exe -NonInteractive -NoProfile -command "${script}"`.nothrow().text() : (await shell(["powershell.exe", "-NonInteractive", "-NoProfile", "-command", script])).stdout.toString().trim()
       if (base64) {
         const imageBuffer = Buffer.from(base64, "base64")
         if (imageBuffer.length > 0) {
@@ -189,8 +189,13 @@ export namespace Clipboard {
     if (os === "win32") {
       console.log("clipboard: using powershell")
       return async (text: string) => {
-        const escaped = text.replace(/"/g, '""')
-        await shell(["powershell", "-command", `Set-Clipboard -Value "${escaped}"`]).catch(() => {})
+        const isBunRuntime = typeof Bun !== "undefined"
+        const escaped = text.replace(/"/g, '""').replace(/`/g, "``")
+        if (isBunRuntime) {
+          await $`powershell -NonInteractive -NoProfile -Command "Set-Clipboard -Value \"${escaped}\""`.nothrow().quiet()
+        } else {
+          await shell(["powershell", "-NonInteractive", "-NoProfile", "-command", `Set-Clipboard -Value "${escaped}"`]).catch(() => {})
+        }
       }
     }
 
