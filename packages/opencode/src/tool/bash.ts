@@ -18,6 +18,13 @@ import { buildGitEnv } from "./git-env"
 import { BashArity } from "@/permission/arity"
 import { spawn, type ChildProcess } from "child_process"
 import { Truncate } from "./truncation"
+import { UnixToWindowsTranslator } from "./unix-to-windows-translator"
+import { SignalHandlerFactory } from "./cross-platform-signal-handler"
+import { PathHandlerFactory } from "./cross-platform-path"
+import { EnvironmentHandlerFactory } from "./environment-handler"
+import { HereDocumentHandlerFactory } from "./here-document-translator"
+import { PersistentShell } from "./persistent-shell"
+import { UnicodeHandler, unicodeHandler } from "./unicode-handler"
 
 /**
  * Detect if running under Bun runtime for cross-platform compatibility
@@ -26,8 +33,30 @@ const isBunRuntime = typeof Bun !== "undefined" && Bun.spawn !== undefined
 
 const MAX_METADATA_LENGTH = 30_000
 const DEFAULT_TIMEOUT = Flag.OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS || 2 * 60 * 1000
+const USE_PERSISTENT_SHELL = process.env.OPENCODE_EXPERIMENTAL_PERSISTENT_SHELL !== "false"
 
 export const log = Log.create({ service: "bash-tool" })
+
+// Unix to Windows translator singleton (Windows only)
+let translator: UnixToWindowsTranslator | null = null
+
+function getTranslator(): UnixToWindowsTranslator | null {
+  if (process.platform !== "win32") {
+    return null
+  }
+
+  if (!translator) {
+    translator = new UnixToWindowsTranslator()
+  }
+
+  return translator
+}
+
+// Cross-platform handlers
+const signalHandler = SignalHandlerFactory.create()
+const pathHandler = PathHandlerFactory.create()
+const environmentHandler = EnvironmentHandlerFactory.create()
+const hereDocumentHandler = HereDocumentHandlerFactory.create()
 
 const resolveWasm = (asset: string) => {
   if (asset.startsWith("file://")) return fileURLToPath(asset)
@@ -177,14 +206,11 @@ function needsShellExecution(command: string): boolean {
 }
 
 function resolveWindowsCommand(command: string, shell: string): { cmd: string[]; useShell: boolean } {
-  const shellType = detectCommandShell(command)
+  const shellType = detectShellType(command)
 
   // Native Windows commands bypass shell wrapper - pass as parsed arguments
   if (shellType === "powershell" || shellType === "pwsh" || shellType === "cmd") {
-    const parts = command
-      .trim()
-      .split(/\s+/)
-      .map((arg) => stripOuterQuotes(arg))
+    const parts = parseShellArgs(command.trim())
     return { cmd: parts, useShell: false }
   }
 
@@ -200,35 +226,44 @@ function resolveWindowsCommand(command: string, shell: string): { cmd: string[];
  */
 export function hasCmdBuiltInSyntax(command: string): boolean {
   const trimmed = command.trim()
-  
+
   // Check for command chaining operators first (covers most cases)
   if (/[;&|]/.test(command)) {
     return true
   }
-  
+
   // Check for cmd.exe built-in patterns that need shell parsing
   // Look for patterns anywhere in the command, not just at the start
   const builtInPatterns = [
-    /for\s+\/l/i,           // for /l loops
-    /for\s+\/f/i,           // for /f file parsing
-    /for\s+\/r/i,           // for /r recursive
-    /for\s+\/d/i,           // for /d directory matching
-    /if\s+/i,                // if statements
-    /set\s+\/a/i,           // set /a arithmetic
-    /set\s+\/p/i,           // set /p prompt
-    /echo\s+on/i,            // echo on
-    /echo\s+off/i,           // echo off
-    /goto\s+/i,              // goto statements
-    /call\s+/i,              // call statements
-    /^shift/i,                // shift command
+    /for\s+\/l/i, // for /l loops
+    /for\s+\/f/i, // for /f file parsing
+    /for\s+\/r/i, // for /r recursive
+    /for\s+\/d/i, // for /d directory matching
+    /if\s+/i, // if statements
+    /set\s+\/a/i, // set /a arithmetic
+    /set\s+\/p/i, // set /p prompt
+    /echo\s+on/i, // echo on
+    /echo\s+off/i, // echo off
+    /goto\s+/i, // goto statements
+    /call\s+/i, // call statements
+    /^shift/i, // shift command
   ]
-  
-  return builtInPatterns.some(pattern => pattern.test(trimmed))
+
+  return builtInPatterns.some((pattern) => pattern.test(trimmed))
 }
 
 /**
  * Detects the shell type from a command string
  * Returns: 'powershell' | 'pwsh' | 'cmd' | 'bash' | 'other'
+ */
+export function detectShellType(command: string): "powershell" | "pwsh" | "cmd" | "bash" | "other" {
+  return detectCommandShell(command)
+}
+
+/**
+ * Detects the shell type from a command string
+ * Returns: 'powershell' | 'pwsh' | 'cmd' | 'bash' | 'other'
+ * @deprecated Use detectShellType instead
  */
 export function detectCommandShell(command: string): "powershell" | "pwsh" | "cmd" | "bash" | "other" {
   const trimmed = (command || "").trim().toLowerCase()
@@ -266,11 +301,12 @@ export function parseCommand(command: string): { executable: string; args: strin
   if (!trimmed) {
     return { executable: "", args: [], shouldBypassShell: true }
   }
-  const shellType = detectCommandShell(trimmed)
+
+  const shellType = detectShellType(trimmed)
 
   // CMD commands: Parse executable and args separately for direct execution
   if (shellType === "cmd") {
-    const parts = trimmed.split(/\s+/)
+    const parts = parseShellArgs(trimmed)
     const executable = parts[0] || "cmd.exe"
     const args = parts.slice(1)
 
@@ -319,13 +355,13 @@ export function parseCommand(command: string): { executable: string; args: strin
 
   // PowerShell commands: Use shell wrapper for proper argument parsing
   if (shellType === "powershell" || shellType === "pwsh") {
-    const parts = trimmed.split(/\s+/)
+    const parts = parseShellArgs(trimmed)
     const executable = shellType === "pwsh" ? "pwsh" : "powershell.exe"
     const args = parts.slice(1)
 
     // Handle external commands that conflict with PowerShell aliases
     const firstArg = args[0]?.toLowerCase()
-    const externalCommands = ['sc', 'net', 'tasklist', 'taskkill', 'findstr', 'where', 'whoami']
+    const externalCommands = ["sc", "net", "tasklist", "taskkill", "findstr", "where", "whoami"]
     if (firstArg && externalCommands.includes(firstArg)) {
       // Route through cmd.exe for external commands that conflict with PowerShell
       return {
@@ -344,8 +380,9 @@ export function parseCommand(command: string): { executable: string; args: strin
   }
 
   // Handle external commands that conflict with PowerShell aliases
-  const firstWord = trimmed.split(/\s+/)[0]?.toLowerCase()
-  const externalCommands = ['sc', 'net', 'tasklist', 'taskkill', 'findstr', 'where', 'whoami']
+  const parts = parseShellArgs(trimmed)
+  const firstWord = parts[0]?.toLowerCase()
+  const externalCommands = ["sc", "net", "tasklist", "taskkill", "findstr", "where", "whoami"]
   if (firstWord && externalCommands.includes(firstWord)) {
     // Route through cmd.exe for external commands that conflict with PowerShell
     return {
@@ -364,7 +401,7 @@ export function parseCommand(command: string): { executable: string; args: strin
     trimmed.startsWith("npm.")
   ) {
     return {
-      executable: command,
+      executable: trimmed,
       args: [],
       shouldBypassShell: false,
     }
@@ -372,7 +409,7 @@ export function parseCommand(command: string): { executable: string; args: strin
 
   // Simple commands can be executed directly
   return {
-    executable: command,
+    executable: trimmed,
     args: [],
     shouldBypassShell: true,
   }
@@ -388,29 +425,76 @@ function buildExitCodeCaptureCommand(cmd: string[], shellType: string): string[]
   if (shellType === "powershell" || shellType === "pwsh") {
     // Wrap PowerShell command to capture $LASTEXITCODE
     const commandPart = cmd.slice(1).join(" ")
-    return [
-      cmd[0],
-      "-NoProfile",
-      "-Command",
-      `${commandPart}; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }`,
-    ]
+    return [cmd[0], "-NoProfile", "-Command", `${commandPart}; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }`]
   }
-  
+
   if (shellType === "cmd") {
     // For cmd.exe, we need to wrap to capture exit codes from chained commands
     const cmdArgs = cmd.slice(1).join(" ")
-    return [
-      "powershell.exe",
-      "-NoProfile",
-      "-Command",
-      `cmd /c "${cmdArgs.replace(/"/g, '\\"')}"; exit $LASTEXITCODE`,
-    ]
+    return ["powershell.exe", "-NoProfile", "-Command", `cmd /c "${cmdArgs.replace(/"/g, '\\"')}"; exit $LASTEXITCODE`]
   }
-  
+
   return cmd
 }
 
 // TODO: we may wanna rename this tool so it works better on other shells
+
+/**
+ * Parses shell arguments from a command string, properly handling quotes and escapes.
+ * Supports both single and double quotes, escape sequences, and arguments with spaces.
+ *
+ * @param command - The command string to parse
+ * @returns Array of parsed arguments
+ */
+function parseShellArgs(command: string): string[] {
+  const args: string[] = []
+  let current = ""
+  let inSingleQuote = false
+  let inDoubleQuote = false
+  let escaped = false
+
+  for (let i = 0; i < command.length; i++) {
+    const char = command[i]
+    const nextChar = command[i + 1]
+
+    if (escaped) {
+      current += char
+      escaped = false
+      continue
+    }
+
+    if (char === "\\" && (inDoubleQuote || !inSingleQuote)) {
+      escaped = true
+      continue
+    }
+
+    if (char === "'" && !inDoubleQuote) {
+      inSingleQuote = !inSingleQuote
+      continue
+    }
+
+    if (char === '"' && !inSingleQuote) {
+      inDoubleQuote = !inDoubleQuote
+      continue
+    }
+
+    if (char === " " && !inSingleQuote && !inDoubleQuote) {
+      if (current.length > 0) {
+        args.push(current)
+        current = ""
+      }
+      continue
+    }
+
+    current += char
+  }
+
+  if (current.length > 0) {
+    args.push(current)
+  }
+
+  return args
+}
 
 /**
  * Strips outer matching quotes from a string if present.
@@ -548,8 +632,8 @@ function routePowerShellCommand(command: string): {
   direct?: boolean
   tempCommand?: string
 } {
-  // Extract PowerShell executable
-  const parts = command.trim().split(/\s+/)
+  // Extract PowerShell executable using proper argument parsing
+  const parts = parseShellArgs(command.trim())
   const executable = parts[0] || "powershell.exe"
 
   // Check for -Command parameter
@@ -625,54 +709,85 @@ export const BashTool = Tool.define("bash", async () => {
         throw new Error(`Invalid timeout value: ${params.timeout}. Timeout must be a positive number.`)
       }
       const timeout = params.timeout ?? DEFAULT_TIMEOUT
-      const tree = await parser().then((p) => p.parse(params.command))
-      if (!tree) {
-        throw new Error("Failed to parse command")
+
+      // Preprocess command with cross-platform handlers
+      let processedCommand = params.command
+
+      // Handle here documents first
+      if (hereDocumentHandler.hasHereDocuments(processedCommand)) {
+        processedCommand = await hereDocumentHandler.translate(processedCommand)
+        log.debug("Translated here documents", {
+          original: params.command,
+          processed: processedCommand,
+        })
       }
+
+      // Handle environment variable syntax
+      processedCommand = environmentHandler.convertSyntax(processedCommand)
+
+      // Handle path expansion and normalization
+      processedCommand = pathHandler.expandUser(processedCommand)
+      processedCommand = pathHandler.normalize(processedCommand)
+
+      // Skip Tree-sitter parsing for PowerShell commands to prevent misinterpretation
+      const shellType = detectShellType(processedCommand)
+      const isPowerShellCommand = shellType === "powershell" || shellType === "pwsh"
+
+      let tree: any = null
+      if (!isPowerShellCommand) {
+        tree = await parser().then((p) => p.parse(processedCommand))
+        if (!tree) {
+          throw new Error("Failed to parse command")
+        }
+      }
+
       const directories = new Set<string>()
       if (!Filesystem.contains(Instance.directory, cwd)) directories.add(cwd)
       const patterns = new Set<string>()
       const always = new Set<string>()
 
-      for (const node of tree.rootNode.descendantsOfType("command")) {
-        if (!node) continue
-        const command = []
-        for (let i = 0; i < node.childCount; i++) {
-          const child = node.child(i)
-          if (!child) continue
-          if (
-            child.type !== "command_name" &&
-            child.type !== "word" &&
-            child.type !== "string" &&
-            child.type !== "raw_string" &&
-            child.type !== "concatenation"
-          ) {
-            continue
+      // Skip Tree-sitter analysis for PowerShell commands
+      if (tree) {
+        for (const node of tree.rootNode.descendantsOfType("command")) {
+          if (!node) continue
+          const command = []
+          for (let i = 0; i < node.childCount; i++) {
+            const child = node.child(i)
+            if (!child) continue
+            if (
+              child.type !== "command_name" &&
+              child.type !== "word" &&
+              child.type !== "string" &&
+              child.type !== "raw_string" &&
+              child.type !== "concatenation"
+            ) {
+              continue
+            }
+            command.push(child.text)
           }
-          command.push(child.text)
-        }
 
-        // not an exhaustive list, but covers most common cases
-        if (["cd", "rm", "cp", "mv", "mkdir", "touch", "chmod", "chown"].includes(command[0])) {
-          for (const arg of command.slice(1)) {
-            if (arg.startsWith("-") || (command[0] === "chmod" && arg.startsWith("+"))) continue
-            const resolved = await resolvePath(arg, cwd)
-            log.info("resolved path", { arg, resolved })
-            if (resolved) {
-              // Git Bash on Windows returns Unix-style paths like /c/Users/...
-              const normalized =
-                process.platform === "win32" && resolved.match(/^\/[a-z]\//)
-                  ? resolved.replace(/^\/([a-z])\//, (_, drive) => `${drive.toUpperCase()}:\\`).replace(/\//g, "\\")
-                  : resolved
-              if (!Filesystem.contains(Instance.directory, normalized)) directories.add(normalized)
+          // not an exhaustive list, but covers most common cases
+          if (["cd", "rm", "cp", "mv", "mkdir", "touch", "chmod", "chown"].includes(command[0])) {
+            for (const arg of command.slice(1)) {
+              if (arg.startsWith("-") || (command[0] === "chmod" && arg.startsWith("+"))) continue
+              const resolved = await resolvePath(arg, cwd)
+              log.info("resolved path", { arg, resolved })
+              if (resolved) {
+                // Git Bash on Windows returns Unix-style paths like /c/Users/...
+                const normalized =
+                  process.platform === "win32" && resolved.match(/^\/[a-z]\//)
+                    ? resolved.replace(/^\/([a-z])\//, (_, drive) => `${drive.toUpperCase()}:\\`).replace(/\//g, "\\")
+                    : resolved
+                if (!Filesystem.contains(Instance.directory, normalized)) directories.add(normalized)
+              }
             }
           }
-        }
 
-        // cd covered by above check
-        if (command.length && command[0] !== "cd") {
-          patterns.add(command.join(" "))
-          always.add(BashArity.prefix(command).join(" ") + "*")
+          // cd covered by above check
+          if (command.length && command[0] !== "cd") {
+            patterns.add(command.join(" "))
+            always.add(BashArity.prefix(command).join(" ") + "*")
+          }
         }
       }
 
@@ -694,16 +809,71 @@ export const BashTool = Tool.define("bash", async () => {
         })
       }
 
+      // Check if we should use persistent shell for performance
+      const shouldUsePersistentShell =
+        USE_PERSISTENT_SHELL &&
+        process.platform === "win32" && // Only on Windows for now
+        !needsShellExecution(processedCommand) && // Only for simple commands
+        !processedCommand.includes("&&") &&
+        !processedCommand.includes("||") &&
+        !processedCommand.includes("|") &&
+        !processedCommand.includes(";")
+
+      if (shouldUsePersistentShell) {
+        log.debug("Using persistent shell for command execution", { command: processedCommand.slice(0, 100) })
+
+        try {
+          const persistentShell = PersistentShell.getInstance(cwd)
+          const shellType = detectShellType(processedCommand) === "other" ? "cmd" : detectShellType(processedCommand)
+
+          const result = await persistentShell.execute(processedCommand, {
+            shell: shellType as "powershell" | "cmd" | "bash",
+            timeout,
+          })
+
+          // Process output with UnicodeHandler
+          const processedOutput = unicodeHandler.validateAndFix(result.stdout)
+          const processedStderr = unicodeHandler.validateAndFix(result.stderr)
+
+          return {
+            title: params.description,
+            metadata: {
+              output:
+                processedOutput.length > MAX_METADATA_LENGTH
+                  ? processedOutput.slice(0, MAX_METADATA_LENGTH) + "\n\n..."
+                  : processedOutput,
+              exit: result.exitCode,
+              description: params.description,
+            },
+            output: processedOutput + (processedStderr ? `\n${processedStderr}` : ""),
+          }
+        } catch (error) {
+          log.warn("Persistent shell execution failed, falling back to standard execution", { error })
+          // Fall through to standard execution
+        }
+      }
+
       // Resolve command for Windows compatibility
       // Use parseCommand to detect native Windows commands and bypass shell wrapping
-      const parsed = parseCommand(params.command)
-      const shellType = detectCommandShell(params.command)
+      const parsed = parseCommand(processedCommand)
       let cmd: string[] | undefined = undefined
       let psExecutorUsed = false
 
       // PowerShell routing (Windows only)
       if (process.platform === "win32" && (shellType === "powershell" || shellType === "pwsh")) {
-        const routing = routePowerShellCommand(params.command)
+        // Apply Unix to Windows translation for PowerShell commands
+        let translatedCommand = processedCommand
+        const translator = getTranslator()
+        if (translator) {
+          translatedCommand = translator.translateCommand(processedCommand, { cwd, shell: shellType })
+          if (translatedCommand !== processedCommand) {
+            log.debug("Command translated for PowerShell execution", {
+              original: processedCommand,
+              translated: translatedCommand,
+            })
+          }
+        }
+        const routing = routePowerShellCommand(translatedCommand)
 
         if (routing.useExecutor) {
           // Use PowerShellExecutor for -Command
@@ -736,7 +906,7 @@ export const BashTool = Tool.define("bash", async () => {
         if (process.platform === "win32" && parsed.shouldBypassShell) {
           cmd = [parsed.executable, ...parsed.args]
         } else {
-          const { cmd: shellCmd } = resolveWindowsCommand(params.command, shell)
+          const { cmd: shellCmd } = resolveWindowsCommand(processedCommand, shell)
           cmd = shellCmd
         }
       }
@@ -775,7 +945,10 @@ export const BashTool = Tool.define("bash", async () => {
       })
 
       const append = (chunk: Buffer | Uint8Array | string) => {
-        const text = chunk instanceof Buffer || chunk instanceof Uint8Array ? new TextDecoder().decode(chunk) : chunk
+        const text =
+          chunk instanceof Buffer || chunk instanceof Uint8Array
+            ? unicodeHandler.decode(chunk)
+            : unicodeHandler.validateAndFix(chunk)
         output += text
         ctx.metadata({
           metadata: {
@@ -836,7 +1009,18 @@ export const BashTool = Tool.define("bash", async () => {
       let aborted = false
       let exited = false
 
-      const kill = () => Shell.killTree(proc as any, { exited: () => exited })
+      const kill = async () => {
+        try {
+          // Try cross-platform signal handler first
+          if (proc.pid) {
+            await signalHandler.sendTerminate(proc.pid)
+          }
+        } catch (error) {
+          log.warn("Cross-platform signal handler failed, falling back to Shell.killTree", { error })
+          // Fallback to existing kill method
+          Shell.killTree(proc as any, { exited: () => exited })
+        }
+      }
 
       // Handle abort before starting
       if (ctx.abort.aborted) {
@@ -881,6 +1065,9 @@ export const BashTool = Tool.define("bash", async () => {
         output += "\n\n<bash_metadata>\n" + resultMetadata.join("\n") + "\n</bash_metadata>"
       }
 
+      // Final Unicode validation and normalization
+      output = unicodeHandler.validateAndFix(output)
+
       // Normalize exit code (negative codes on Unix indicate signal termination)
       let exitCode = proc.exitCode ?? proc.code
       if (exitCode < 0) {
@@ -888,7 +1075,10 @@ export const BashTool = Tool.define("bash", async () => {
       }
 
       // For PowerShell commands with potential sub-command failures, try to capture $LASTEXITCODE
-      if (process.platform === "win32" && (shellType === "powershell" || shellType === "pwsh" || parsed.shouldBypassShell === false)) {
+      if (
+        process.platform === "win32" &&
+        (shellType === "powershell" || shellType === "pwsh" || parsed.shouldBypassShell === false)
+      ) {
         // The PowerShell executor already handles this properly, but for direct spawns
         // we should ensure exit codes are propagated correctly
         if (exitCode === 0 && /\$LASTEXITCODE|\$\?/.test(output)) {

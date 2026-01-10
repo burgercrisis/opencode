@@ -15,10 +15,11 @@ export async function killProcessOnPort(port: number): Promise<boolean> {
 
   try {
     const { $ } = await import("bun")
-    
+
     // Use PowerShell to find and kill the process using the port
-    const result = await $`powershell -Command "$listener = Get-NetTCPConnection -LocalPort ${port} -ErrorAction SilentlyContinue; if ($listener) { Stop-Process -Id $listener.OwningProcess -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 300; Write-Output 'killed' } else { Write-Output 'not-found' }"`.text()
-    
+    const result =
+      await $`powershell -Command "$listener = Get-NetTCPConnection -LocalPort ${port} -ErrorAction SilentlyContinue; if ($listener) { Stop-Process -Id $listener.OwningProcess -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 300; Write-Output 'killed' } else { Write-Output 'not-found' }"`.text()
+
     if (result.includes("killed")) {
       log.info("port-cleaned", { port, message: `Successfully killed process on port ${port}` })
       return true

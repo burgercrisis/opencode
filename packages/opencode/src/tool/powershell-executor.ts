@@ -377,7 +377,7 @@ export class PowerShellExecutor {
    */
   private wrapCommandForBetterOutput(command: string): string {
     // Skip wrapping for commands that already handle their own output formatting
-    if (command.includes('Out-String') || command.includes('Format-Table') || command.includes('Format-List')) {
+    if (command.includes("Out-String") || command.includes("Format-Table") || command.includes("Format-List")) {
       return command
     }
 
@@ -385,7 +385,7 @@ export class PowerShellExecutor {
 
     // Skip wrapping for external commands that should be executed via cmd.exe
     const firstWord = trimmed.split(/\s+/)[0]?.toLowerCase()
-    const externalCommands = ['sc', 'net', 'tasklist', 'taskkill', 'findstr', 'where', 'whoami']
+    const externalCommands = ["sc", "net", "tasklist", "taskkill", "findstr", "where", "whoami"]
     if (firstWord && externalCommands.includes(firstWord)) {
       return command
     }
@@ -402,7 +402,7 @@ export class PowerShellExecutor {
     }
 
     // For commands that might write to both stdout and stderr, combine streams
-    if (command.includes('Write-Error') || command.includes('Write-Warning') || command.includes('Write-Verbose')) {
+    if (command.includes("Write-Error") || command.includes("Write-Warning") || command.includes("Write-Verbose")) {
       return command
     }
 
