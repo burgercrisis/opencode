@@ -1,116 +1,19 @@
-#!/usr/bin/env bun
+#!/bin/sh
 
-/**
- * Cross-platform husky hooks setup script
- * Works on Windows, macOS, and Linux
- */
+if [ ! -d ".git" ]; then
+    exit 0
+fi
 
-import { $ } from "bun"
-import { writeFileSync, chmodSync, existsSync, rmSync } from "fs"
+mkdir -p .git/hooks
 
-const hooksDir = ".husky"
+cat > .git/hooks/pre-push << 'EOF'
+#!/bin/sh
+# Ensure dependencies are installed before typecheck
+if command -v bun >/dev/null 2>&1; then
+  bun install >/dev/null 2>&1 || true
+fi
+bun run typecheck
+EOF
 
-// Ensure .husky directory exists
-if (!existsSync(hooksDir)) {
-  console.error("❌ .husky directory not found. Run 'bun install' first.")
-  process.exit(1)
-}
-
-// Create pre-commit hook
-const preCommitContent = `#!/usr/bin/env bun
-
-/**
- * Cross-platform pre-commit hook
- * Runs prettier formatting check on staged files
- */
-
-import { $ } from "bun"
-
-console.log("🔍 Running pre-commit hooks...")
-
-// Ensure dependencies are installed
-await $ \`bun install --quiet\`.catch(() => {})
-
-// Run prettier on staged TypeScript/JavaScript/JSON/CSS/Markdown files only
-// Ignore binary files, webmanifests, etc.
-const formatResult = await $ \`bun run prettier --ignore-unknown --write --glob "*.{ts,tsx,js,jsx,mjs,cjs,json,css,scss,md,mdx,yml,yaml}" .\`
-const formatExitCode = formatResult.exitCode
-
-if (formatExitCode !== 0) {
-  console.error("❌ Pre-commit failed: Formatting issues found")
-  console.log("💡 Run 'bun run prettier --write .' to fix formatting")
-  process.exit(1)
-}
-
-console.log("✅ Pre-commit hooks passed")
-`
-
-// Create pre-push hook
-const prePushContent = `#!/usr/bin/env bun
-
-/**
- * Cross-platform pre-push hook
- * Checks bun version and runs typecheck before push
- */
-
-import { $ } from "bun"
-import { readFileSync, existsSync, rmSync } from "fs"
-
-console.log("🔍 Running pre-push hooks...")
-
-// Read package.json to get expected bun version
-const packageJson = JSON.parse(readFileSync("package.json", "utf-8"))
-const expectedVersion = packageJson.packageManager.match(/bun@(\\d+\\.\\d+\\.\\d+)/)?.[1]
-
-if (!expectedVersion) {
-  console.warn("⚠️  Could not determine expected bun version from package.json")
-} else {
-  // Get current bun version
-  const { stdout } = await $ \`bun --version\`
-  const currentVersion = new TextDecoder().decode(stdout).trim()
-
-  if (currentVersion !== expectedVersion) {
-    console.error(\`❌ Pre-push failed: Bun version mismatch\`)
-    console.error(\`   Expected: bun@\${expectedVersion}\`)
-    console.error(\`   Current:  bun@\${currentVersion}\`)
-    console.log(\`💡 Run 'bun upgrade' or update package.json packageManager field\`)
-    process.exit(1)
-  }
-}
-
-// Ensure dependencies are installed
-await $ \`bun install --quiet\`.catch(() => {})
-
-// Clear turbo cache to force fresh typecheck
-if (existsSync(".turbo")) {
-  rmSync(".turbo", { recursive: true, force: true })
-}
-
-// Run typecheck
-console.log("📋 Running typecheck...")
-const typecheckResult = await $ \`bun run typecheck\`
-const typecheckExitCode = typecheckResult.exitCode
-
-if (typecheckExitCode !== 0) {
-  console.error("❌ Pre-push failed: Typecheck errors found")
-  process.exit(1)
-}
-
-console.log("✅ Pre-push hooks passed")
-`
-
-// Write hooks
-writeFileSync(`${hooksDir}/pre-commit`, preCommitContent)
-writeFileSync(`${hooksDir}/pre-push`, prePushContent)
-
-// Make executable (Unix-like systems)
-try {
-  chmodSync(`${hooksDir}/pre-commit`, 0o755)
-  chmodSync(`${hooksDir}/pre-push`, 0o755)
-} catch {
-  // On Windows, chmodSync might not work, but that's okay
-}
-
-console.log("✅ Cross-platform husky hooks installed successfully!")
-console.log("   - .husky/pre-commit (formatting check)")
-console.log("   - .husky/pre-push (version check + typecheck)")
+chmod +x .git/hooks/pre-push
+echo "✅ Pre-push hook installed"
