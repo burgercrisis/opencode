@@ -230,7 +230,6 @@ pub fn run() {
 
             {
                 app.manage(LogState(Arc::new(Mutex::new(VecDeque::new()))));
-                app.manage(ServerState(Arc::new(Mutex::new(None))));
             }
 
             // Get port and create window immediately for faster perceived startup
