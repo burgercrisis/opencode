@@ -131,6 +131,18 @@ type IssueQueryResponse = {
   }
 }
 
+/**
+ * Cross-platform sleep function that uses Bun.sleep when available (faster),
+ * falling back to setTimeout for Node.js compatibility.
+ */
+function sleep(ms: number): Promise<void> {
+  // Bun.sleep is preferred when running in Bun for better performance
+  if (typeof Bun !== "undefined" && typeof Bun.sleep === "function") {
+    return Bun.sleep(ms)
+  }
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 const AGENT_USERNAME = "opencode-agent[bot]"
 const AGENT_REACTION = "eyes"
 const WORKFLOW_FILE = ".github/workflows/opencode.yml"
@@ -348,7 +360,7 @@ export const GithubInstallCommand = cmd({
               }
 
               retries++
-              await new Promise((resolve) => setTimeout(resolve, 1000))
+              await sleep(1000)
             } while (true)
 
             s.stop("Installed GitHub app")
@@ -515,7 +527,9 @@ export const GithubRunCommand = cmd({
 
         // Setup opencode session
         const repoData = await fetchRepo()
-        session = await Session.create({})
+        session = await Session.create({
+          permission: [{ permission: "question", action: "deny", pattern: "*" }],
+        })
         subscribeSessionEvents()
         shareId = await (async () => {
           if (share === false) return
@@ -1279,7 +1293,7 @@ Co-authored-by: ${actor} <${actor}@users.noreply.github.com>"`
         } catch (e) {
           if (retries > 0) {
             console.log(`Retrying after ${delayMs}ms...`)
-            await new Promise((resolve) => setTimeout(resolve, delayMs))
+            await sleep(delayMs)
             return withRetry(fn, retries - 1, delayMs)
           }
           throw e
