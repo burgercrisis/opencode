@@ -935,6 +935,10 @@ export const BashTool = Tool.define("bash", async () => {
       }
 
       let output = ""
+      let timedOut = false
+      let aborted = false
+      let exited = false
+      let metadataUpdateCounter = 0
 
       // Initialize metadata with empty output
       ctx.metadata({
@@ -950,64 +954,19 @@ export const BashTool = Tool.define("bash", async () => {
             ? unicodeHandler.decode(chunk)
             : unicodeHandler.validateAndFix(chunk)
         output += text
-        ctx.metadata({
-          metadata: {
-            // truncate the metadata to avoid GIANT blobs of data (has nothing to do w/ what agent can access)
-            output: output.length > MAX_METADATA_LENGTH ? output.slice(0, MAX_METADATA_LENGTH) + "\n\n..." : output,
-            description: params.description,
-          },
-        })
-      }
 
-      /**
-       * Normalized process exit handler - works on both Bun and Node.js
-       */
-      const waitForExit = async (proc: ChildProcess | any): Promise<void> => {
-        if (isBunRuntime) {
-          // Bun: proc.exited is a Promise
-          await proc.exited
-        } else {
-          // Node.js: use 'close' event (better than 'exit' as it includes stdio cleanup)
-          await new Promise<void>((resolve) => {
-            proc.on("close", () => resolve())
-            proc.on("error", () => resolve()) // Handle spawn errors gracefully
+        // Update metadata less frequently to avoid blocking (every 1KB or every 100 chunks)
+        metadataUpdateCounter++
+        if (metadataUpdateCounter % 100 === 0 || output.length % 1024 === 0 || output.length < 1024) {
+          ctx.metadata({
+            metadata: {
+              // truncate the metadata to avoid GIANT blobs of data (has nothing to do w/ what agent can access)
+              output: output.length > MAX_METADATA_LENGTH ? output.slice(0, MAX_METADATA_LENGTH) + "\n\n..." : output,
+              description: params.description,
+            },
           })
         }
       }
-
-      // Cross-platform stream reading
-      if (isBunRuntime) {
-        // Bun path: use getReader() for streams
-        const stdoutReader = proc.stdout?.getReader()
-        const stderrReader = proc.stderr?.getReader()
-
-        const readStream = async (reader: ReadableStreamDefaultReader | undefined): Promise<void> => {
-          if (!reader) return
-          try {
-            while (true) {
-              const { done, value } = await reader.read()
-              if (done) break
-              append(value)
-            }
-          } catch {
-            // Stream reading ended (abort or natural completion)
-          }
-        }
-
-        await Promise.all([readStream(stdoutReader), readStream(stderrReader)])
-      } else {
-        // Node.js path: use event handlers for streams
-        await new Promise<void>((resolve) => {
-          proc.stdout?.on("data", (chunk: Buffer) => append(chunk))
-          proc.stderr?.on("data", (chunk: Buffer) => append(chunk))
-          proc.on("error", () => resolve())
-          proc.on("close", () => resolve())
-        })
-      }
-
-      let timedOut = false
-      let aborted = false
-      let exited = false
 
       const kill = async () => {
         try {
@@ -1022,18 +981,19 @@ export const BashTool = Tool.define("bash", async () => {
         }
       }
 
-      // Handle abort before starting
-      if (ctx.abort.aborted) {
-        aborted = true
-        await kill()
-      }
-
+      // Set up abort handling before stream operations
       const abortHandler = () => {
         aborted = true
         void kill()
       }
 
       ctx.abort.addEventListener("abort", abortHandler, { once: true })
+
+      // Handle abort if already aborted
+      if (ctx.abort.aborted) {
+        aborted = true
+        await kill()
+      }
 
       const timeoutTimer = setTimeout(() => {
         if (!exited) {
@@ -1042,14 +1002,67 @@ export const BashTool = Tool.define("bash", async () => {
         }
       }, timeout + 100)
 
-      // Wait for process exit using cross-platform handler
-      await waitForExit(proc)
+      /**
+       * Unified process and stream handling - ensures proper synchronization
+       */
+      const waitForCompletion = async (proc: ChildProcess | any): Promise<void> => {
+        return new Promise<void>((resolve, reject) => {
+          // Set up stream listeners based on runtime
+          if (isBunRuntime) {
+            // Bun: streams are ReadableStream instances
+            const setupBunStream = (stream: any) => {
+              if (stream && typeof stream.getReader === 'function') {
+                const reader = stream.getReader()
+                const readChunk = async () => {
+                  try {
+                    const { done, value } = await reader.read()
+                    if (done) return
+                    append(value)
+                    await readChunk()
+                  } catch (error) {
+                    // Stream ended
+                  }
+                }
+                readChunk()
+              }
+            }
 
-      exited = true
+            setupBunStream(proc.stdout)
+            setupBunStream(proc.stderr)
+          } else {
+            // Node.js: use event emitters
+            proc.stdout?.on("data", (chunk: Buffer) => append(chunk))
+            proc.stderr?.on("data", (chunk: Buffer) => append(chunk))
+          }
 
-      // Cleanup
-      clearTimeout(timeoutTimer)
-      ctx.abort.removeEventListener("abort", abortHandler)
+          // Handle process completion
+          const onComplete = (code?: number | null, signal?: string | null) => {
+            exited = true
+            clearTimeout(timeoutTimer)
+            ctx.abort.removeEventListener("abort", abortHandler)
+            resolve()
+          }
+
+          const onError = (error: Error) => {
+            exited = true
+            clearTimeout(timeoutTimer)
+            ctx.abort.removeEventListener("abort", abortHandler)
+            reject(error)
+          }
+
+          if (isBunRuntime) {
+            // Bun: wait for process completion
+            proc.exited.then(onComplete).catch(onError)
+          } else {
+            // Node.js: use events for process completion
+            proc.on("close", onComplete)
+            proc.on("error", onError)
+          }
+        })
+      }
+
+      // Wait for both streams and process completion
+      await waitForCompletion(proc)
 
       const resultMetadata: string[] = []
 
