@@ -193,6 +193,39 @@ function resolveWindowsCommand(command: string, shell: string): { cmd: string[];
 }
 
 /**
+ * Detects cmd.exe built-in patterns that require shell wrapper
+ * @param command - The command to check
+ * @returns true if command contains cmd.exe built-in syntax
+ */
+export function hasCmdBuiltInSyntax(command: string): boolean {
+  const trimmed = command.trim()
+  
+  // Check for command chaining operators first (covers most cases)
+  if (/[;&|]/.test(command)) {
+    return true
+  }
+  
+  // Check for cmd.exe built-in patterns that need shell parsing
+  // Look for patterns anywhere in the command, not just at the start
+  const builtInPatterns = [
+    /for\s+\/l/i,           // for /l loops
+    /for\s+\/f/i,           // for /f file parsing
+    /for\s+\/r/i,           // for /r recursive
+    /for\s+\/d/i,           // for /d directory matching
+    /if\s+/i,                // if statements
+    /set\s+\/a/i,           // set /a arithmetic
+    /set\s+\/p/i,           // set /p prompt
+    /echo\s+on/i,            // echo on
+    /echo\s+off/i,           // echo off
+    /goto\s+/i,              // goto statements
+    /call\s+/i,              // call statements
+    /^shift/i,                // shift command
+  ]
+  
+  return builtInPatterns.some(pattern => pattern.test(trimmed))
+}
+
+/**
  * Detects the shell type from a command string
  * Returns: 'powershell' | 'pwsh' | 'cmd' | 'bash' | 'other'
  */
@@ -205,8 +238,8 @@ export function detectCommandShell(command: string): "powershell" | "pwsh" | "cm
     return trimmed.startsWith("pwsh") ? "pwsh" : "powershell"
   }
 
-  // CMD detection
-  if (trimmed.startsWith("cmd.exe") || trimmed.startsWith("cmd ")) {
+  // CMD detection - be more flexible to catch command chains
+  if (trimmed.startsWith("cmd.exe") || trimmed.startsWith("cmd ") || trimmed.startsWith("cmd /")) {
     return "cmd"
   }
 
@@ -243,13 +276,35 @@ export function parseCommand(command: string): { executable: string; args: strin
     // Check if this is a batch file
     const isBatchFile = executable.endsWith(".bat") || executable.endsWith(".cmd")
 
+    // Check if cmd command has built-in syntax that needs shell wrapper
+    let needsWrapper = hasCmdBuiltInSyntax(trimmed) || hasCmdBuiltInSyntax(args.join(" "))
+    if (SHELL_BUILTINS.has(executable.toLowerCase())) {
+      needsWrapper = true
+    }
+
     if (isBatchFile && process.platform === "win32") {
       // Route through PowerShell wrapper with argument quoting
       const batchArgs =
         args.length > 0 ? ` ${args.map((arg) => (/^[a-zA-Z0-9_\-\.]+$/.test(arg) ? arg : `'${arg}'`)).join(" ")}` : ""
       return {
         executable: "powershell.exe",
-        args: ["-NoProfile", "-Command", `& '${executable}'${batchArgs}`],
+        args: ["-NoProfile", "-Command", `& '${executable}'${batchArgs}; exit $LASTEXITCODE`],
+        shouldBypassShell: false,
+      }
+    }
+
+    // For cmd.exe commands with built-in syntax, route through PowerShell
+    if (needsWrapper && process.platform === "win32") {
+      // Build the cmd command - include /c flag if not already present
+      let cmdArgs = args
+      if (args.length === 0 || args[0] !== "/c") {
+        cmdArgs = ["/c", ...args]
+      }
+      // Escape quotes properly for PowerShell -Command parameter
+      const escapedCommand = `"${args.join(" ").replace(/"/g, '\"')}"`
+      return {
+        executable: "powershell.exe",
+        args: ["-NoProfile", "-Command", `cmd ${escapedCommand}; exit $LASTEXITCODE`],
         shouldBypassShell: false,
       }
     }
@@ -257,7 +312,7 @@ export function parseCommand(command: string): { executable: string; args: strin
     return {
       executable,
       args,
-      shouldBypassShell: true, // Direct execution for cmd.exe
+      shouldBypassShell: !needsWrapper, // Direct execution for simple cmd commands
     }
   }
 
@@ -267,10 +322,34 @@ export function parseCommand(command: string): { executable: string; args: strin
     const executable = shellType === "pwsh" ? "pwsh" : "powershell.exe"
     const args = parts.slice(1)
 
+    // Handle external commands that conflict with PowerShell aliases
+    const firstArg = args[0]?.toLowerCase()
+    const externalCommands = ['sc', 'net', 'tasklist', 'taskkill', 'findstr', 'where', 'whoami']
+    if (firstArg && externalCommands.includes(firstArg)) {
+      // Route through cmd.exe for external commands that conflict with PowerShell
+      return {
+        executable: "cmd.exe",
+        args: ["/c", trimmed],
+        shouldBypassShell: false,
+      }
+    }
+
     return {
       executable,
       args,
       // Use shell wrapper for PowerShell commands to avoid quote corruption
+      shouldBypassShell: false,
+    }
+  }
+
+  // Handle external commands that conflict with PowerShell aliases
+  const firstWord = trimmed.split(/\s+/)[0]?.toLowerCase()
+  const externalCommands = ['sc', 'net', 'tasklist', 'taskkill', 'findstr', 'where', 'whoami']
+  if (firstWord && externalCommands.includes(firstWord)) {
+    // Route through cmd.exe for external commands that conflict with PowerShell
+    return {
+      executable: "cmd.exe",
+      args: ["/c", trimmed],
       shouldBypassShell: false,
     }
   }
@@ -296,6 +375,38 @@ export function parseCommand(command: string): { executable: string; args: strin
     args: [],
     shouldBypassShell: true,
   }
+}
+
+/**
+ * Builds a command wrapper that captures exit codes properly
+ * @param cmd - The command array to execute
+ * @param shellType - The type of shell being used
+ * @returns Modified command array with exit code capture
+ */
+function buildExitCodeCaptureCommand(cmd: string[], shellType: string): string[] {
+  if (shellType === "powershell" || shellType === "pwsh") {
+    // Wrap PowerShell command to capture $LASTEXITCODE
+    const commandPart = cmd.slice(1).join(" ")
+    return [
+      cmd[0],
+      "-NoProfile",
+      "-Command",
+      `${commandPart}; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }`,
+    ]
+  }
+  
+  if (shellType === "cmd") {
+    // For cmd.exe, we need to wrap to capture exit codes from chained commands
+    const cmdArgs = cmd.slice(1).join(" ")
+    return [
+      "powershell.exe",
+      "-NoProfile",
+      "-Command",
+      `cmd /c "${cmdArgs.replace(/"/g, '\\"')}"; exit $LASTEXITCODE`,
+    ]
+  }
+  
+  return cmd
 }
 
 // TODO: we may wanna rename this tool so it works better on other shells
@@ -611,6 +722,9 @@ export const BashTool = Tool.define("bash", async () => {
           }
         } else if (routing.direct) {
           cmd = routing.cmd
+          if (shellType === "powershell" || shellType === "pwsh") {
+            cmd = buildExitCodeCaptureCommand(cmd, shellType)
+          }
         }
       }
 
@@ -775,6 +889,15 @@ export const BashTool = Tool.define("bash", async () => {
       let exitCode = proc.exitCode ?? proc.code
       if (exitCode < 0) {
         exitCode = 128 + Math.abs(exitCode)
+      }
+
+      // For PowerShell commands with potential sub-command failures, try to capture $LASTEXITCODE
+      if (process.platform === "win32" && (shellType === "powershell" || shellType === "pwsh" || parsed.shouldBypassShell === false)) {
+        // The PowerShell executor already handles this properly, but for direct spawns
+        // we should ensure exit codes are propagated correctly
+        if (exitCode === 0 && /\$LASTEXITCODE|\$\?/.test(output)) {
+          // If output contains LASTEXITCODE references but exit was 0, this is expected
+        }
       }
 
       return {
