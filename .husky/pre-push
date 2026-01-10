@@ -1,0 +1,51 @@
+#!/usr/bin/env bun
+
+/**
+ * Cross-platform pre-push hook
+ * Checks bun version and runs typecheck before push
+ */
+
+import { $ } from "bun"
+import { readFileSync, existsSync, rmSync } from "fs"
+
+console.log("🔍 Running pre-push hooks...")
+
+// Read package.json to get expected bun version
+const packageJson = JSON.parse(readFileSync("package.json", "utf-8"))
+const expectedVersion = packageJson.packageManager.match(/bun@(\d+\.\d+\.\d+)/)?.[1]
+
+if (!expectedVersion) {
+  console.warn("⚠️  Could not determine expected bun version from package.json")
+} else {
+  // Get current bun version
+  const { stdout } = await $`bun --version`
+  const currentVersion = new TextDecoder().decode(stdout).trim()
+
+  if (currentVersion !== expectedVersion) {
+    console.error(`❌ Pre-push failed: Bun version mismatch`)
+    console.error(`   Expected: bun@${expectedVersion}`)
+    console.error(`   Current:  bun@${currentVersion}`)
+    console.log(`💡 Run 'bun upgrade' or update package.json packageManager field`)
+    process.exit(1)
+  }
+}
+
+// Ensure dependencies are installed
+await $`bun install --quiet`.catch(() => {})
+
+// Clear turbo cache to force fresh typecheck
+if (existsSync(".turbo")) {
+  rmSync(".turbo", { recursive: true, force: true })
+}
+
+// Run typecheck
+console.log("📋 Running typecheck...")
+const typecheckResult = await $`bun run typecheck`
+const typecheckExitCode = typecheckResult.exitCode
+
+if (typecheckExitCode !== 0) {
+  console.error("❌ Pre-push failed: Typecheck errors found")
+  process.exit(1)
+}
+
+console.log("✅ Pre-push hooks passed")

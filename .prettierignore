@@ -1,1 +1,4 @@
 sst-env.d.ts
+# Build-time placeholder files (not valid JSON)
+**/public/site.webmanifest
+**/openapi.json

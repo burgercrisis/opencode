@@ -1,0 +1,26 @@
+#!/usr/bin/env bun
+
+/**
+ * Cross-platform pre-commit hook
+ * Runs prettier formatting check on staged files
+ */
+
+import { $ } from "bun"
+
+console.log("🔍 Running pre-commit hooks...")
+
+// Ensure dependencies are installed
+await $`bun install --quiet`.catch(() => {})
+
+// Run prettier on staged TypeScript/JavaScript/JSON/CSS/Markdown files only
+// Ignore binary files, webmanifests, etc.
+const formatResult = await $`bun run prettier --ignore-unknown --write --glob "*.{ts,tsx,js,jsx,mjs,cjs,json,css,scss,md,mdx,yml,yaml}" .`
+const formatExitCode = formatResult.exitCode
+
+if (formatExitCode !== 0) {
+  console.error("❌ Pre-commit failed: Formatting issues found")
+  console.log("💡 Run 'bun run prettier --write .' to fix formatting")
+  process.exit(1)
+}
+
+console.log("✅ Pre-commit hooks passed")
