@@ -7,4 +7,3 @@ if [ "$CURRENT_VERSION" != "$EXPECTED_VERSION" ]; then
   exit 1
 fi
 bun typecheck
-
