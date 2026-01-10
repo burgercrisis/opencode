@@ -1,4 +1,5 @@
 import path from "path"
+import { exec } from "child_process"
 import * as prompts from "@clack/prompts"
 import { map, pipe, sortBy, values } from "remeda"
 import { Octokit } from "@octokit/rest"
@@ -318,11 +319,18 @@ export const GithubInstallCommand = cmd({
 
             // Open browser
             const url = "https://github.com/apps/opencode-agent"
-            try {
-              Bun.open(url)
-            } catch {
-              prompts.log.warn(`Could not open browser. Please visit: ${url}`)
-            }
+            const command =
+              process.platform === "darwin"
+                ? `open "${url}"`
+                : process.platform === "win32"
+                  ? `start "" "${url}"`
+                  : `xdg-open "${url}"`
+
+            exec(command, (error) => {
+              if (error) {
+                prompts.log.warn(`Could not open browser. Please visit: ${url}`)
+              }
+            })
 
             // Wait for installation
             s.message("Waiting for GitHub app to be installed")
@@ -340,7 +348,7 @@ export const GithubInstallCommand = cmd({
               }
 
               retries++
-              await Bun.sleep(1000)
+              await new Promise((resolve) => setTimeout(resolve, 1000))
             } while (true)
 
             s.stop("Installed GitHub app")
@@ -1271,7 +1279,7 @@ Co-authored-by: ${actor} <${actor}@users.noreply.github.com>"`
         } catch (e) {
           if (retries > 0) {
             console.log(`Retrying after ${delayMs}ms...`)
-            await Bun.sleep(delayMs)
+            await new Promise((resolve) => setTimeout(resolve, delayMs))
             return withRetry(fn, retries - 1, delayMs)
           }
           throw e
