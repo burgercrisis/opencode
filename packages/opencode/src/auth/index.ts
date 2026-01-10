@@ -40,8 +40,19 @@ export namespace Auth {
   }
 
   export async function all(): Promise<Record<string, Info>> {
-    const file = Bun.file(filepath)
-    const data = await file.json().catch(() => ({}) as Record<string, unknown>)
+    const isBunRuntime = typeof Bun !== "undefined" && Bun.file !== undefined
+    let data: Record<string, unknown> = {}
+    if (isBunRuntime) {
+      const file = Bun.file(filepath)
+      data = await file.json().catch(() => ({}))
+    } else {
+      try {
+        const content = await fs.readFile(filepath, "utf-8")
+        data = JSON.parse(content)
+      } catch {
+        data = {}
+      }
+    }
     return Object.entries(data).reduce(
       (acc, [key, value]) => {
         const parsed = Info.safeParse(value)
@@ -54,17 +65,29 @@ export namespace Auth {
   }
 
   export async function set(key: string, info: Info) {
-    const file = Bun.file(filepath)
+    const isBunRuntime = typeof Bun !== "undefined" && Bun.file !== undefined
     const data = await all()
-    await Bun.write(file, JSON.stringify({ ...data, [key]: info }, null, 2))
-    await fs.chmod(file.name!, 0o600)
+    const content = JSON.stringify({ ...data, [key]: info }, null, 2)
+    if (isBunRuntime) {
+      const file = Bun.file(filepath)
+      await Bun.write(file, content)
+    } else {
+      await fs.writeFile(filepath, content, "utf-8")
+    }
+    await fs.chmod(filepath, 0o600)
   }
 
   export async function remove(key: string) {
-    const file = Bun.file(filepath)
+    const isBunRuntime = typeof Bun !== "undefined" && Bun.file !== undefined
     const data = await all()
     delete data[key]
-    await Bun.write(file, JSON.stringify(data, null, 2))
-    await fs.chmod(file.name!, 0o600)
+    const content = JSON.stringify(data, null, 2)
+    if (isBunRuntime) {
+      const file = Bun.file(filepath)
+      await Bun.write(file, content)
+    } else {
+      await fs.writeFile(filepath, content, "utf-8")
+    }
+    await fs.chmod(filepath, 0o600)
   }
 }
