@@ -1,8 +1,8 @@
-import { writeFile, unlink, stat } from 'fs/promises'
-import { join } from 'path'
-import { randomUUID } from 'crypto'
-import { tmpdir } from 'os'
-import { Log } from '../util/log'
+import { writeFile, unlink, stat } from "fs/promises"
+import { join } from "path"
+import { randomUUID } from "crypto"
+import { tmpdir } from "os"
+import { Log } from "../util/log"
 
 /**
  * Options for configuring the TempFileManager.
@@ -58,17 +58,17 @@ export interface PoolStats {
 export class TempFilePoolFullError extends Error {
   constructor(message: string) {
     super(message)
-    this.name = 'TempFilePoolFullError'
+    this.name = "TempFilePoolFullError"
   }
 }
 
 /**
  * Manages temporary PowerShell script files for Windows command execution.
- * 
+ *
  * This class creates temporary `.ps1` files with secure permissions (0o600)
  * and tracks them for cleanup. It helps resolve issues with PowerShell's
  * `-Command` parameter by using `-File` instead.
- * 
+ *
  * @example
  * ```typescript
  * const manager = new TempFileManager({ maxPoolSize: 50 })
@@ -80,10 +80,9 @@ export class TempFilePoolFullError extends Error {
 export class TempFileManager {
   private poolDir: string
   private maxPoolSize: number
-  private cleanupInterval: number
   private activeFiles = new Set<string>()
-  private cleanupTimer?: ReturnType<typeof setInterval>
   private logger?: Log.Logger
+  private cleanupTimer?: ReturnType<typeof setInterval>
 
   /**
    * Creates a new TempFileManager instance.
@@ -92,15 +91,14 @@ export class TempFileManager {
   constructor(options?: TempFileManagerOptions) {
     this.poolDir = options?.poolDir ?? tmpdir()
     this.maxPoolSize = options?.maxPoolSize ?? 100
-    this.cleanupInterval = options?.cleanupInterval ?? 60000
     this.logger = options?.logger
 
-    this.startCleanupTimer()
+    // NOTE: Periodic cleanup timer never started - cleanup handled by execute() finally blocks and manual dispose() calls
   }
 
   /**
    * Creates a new temporary file with the given content.
-   * 
+   *
    * @param content - The content to write to the temporary file
    * @returns The path to the created temporary file
    * @throws TempFilePoolFullError if the pool size limit is reached
@@ -109,9 +107,7 @@ export class TempFileManager {
   async create(content: string): Promise<string> {
     // Check pool size limit
     if (this.activeFiles.size >= this.maxPoolSize) {
-      throw new TempFilePoolFullError(
-        `Pool size limit reached (${this.maxPoolSize} files)`
-      )
+      throw new TempFilePoolFullError(`Pool size limit reached (${this.maxPoolSize} files)`)
     }
 
     // Generate unique filename with UUID
@@ -121,7 +117,7 @@ export class TempFileManager {
 
     // Write file with secure permissions (owner read/write only)
     await writeFile(filepath, content, {
-      encoding: 'utf8',
+      encoding: "utf8",
       mode: 0o600,
     })
 
@@ -134,7 +130,7 @@ export class TempFileManager {
 
   /**
    * Cleans up a specific temporary file.
-   * 
+   *
    * @param path - Path to the file to clean up
    */
   async cleanup(path: string): Promise<void> {
@@ -154,12 +150,11 @@ export class TempFileManager {
   async cleanupAll(): Promise<void> {
     const files = Array.from(this.activeFiles)
     await Promise.all(files.map((f) => this.cleanup(f)))
-    this.logger?.info(`Cleaned up ${files.length} temp files`)
   }
 
   /**
    * Cleans up temporary files older than the specified maximum age.
-   * 
+   *
    * @param maxAge - Maximum age in milliseconds
    * @returns The number of files cleaned up
    */
@@ -187,7 +182,7 @@ export class TempFileManager {
 
   /**
    * Gets the number of currently active temporary files.
-   * 
+   *
    * @returns The count of active files
    */
   getActiveFileCount(): number {
@@ -196,7 +191,7 @@ export class TempFileManager {
 
   /**
    * Gets current pool statistics.
-   * 
+   *
    * @returns Pool statistics including usage percentage
    */
   getPoolStats(): PoolStats {
@@ -208,29 +203,9 @@ export class TempFileManager {
   }
 
   /**
-   * Starts the periodic cleanup timer for expired files.
+   * Disposes of the TempFileManager, cleaning up all tracked files.
    */
-  private startCleanupTimer(): void {
-    this.cleanupTimer = setInterval(() => {
-      this.cleanupExpired(3600000) // 1 hour
-        .then((count) => {
-          if (count > 0) {
-            this.logger?.info(`Expired cleanup: ${count} files removed`)
-          }
-        })
-        .catch((error) => {
-          this.logger?.error('Expired cleanup failed', { error })
-        })
-    }, this.cleanupInterval)
-  }
-
-  /**
-   * Disposes of the TempFileManager, clearing the cleanup timer.
-   */
-  dispose(): void {
-    if (this.cleanupTimer) {
-      clearInterval(this.cleanupTimer)
-      this.cleanupTimer = undefined
-    }
+  async dispose(): Promise<void> {
+    await this.cleanupAll()
   }
 }

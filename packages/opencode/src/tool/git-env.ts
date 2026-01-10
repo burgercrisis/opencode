@@ -20,13 +20,7 @@ const IDE_VARIABLES = [
 ]
 
 // Essential user variables to preserve
-const ESSENTIAL_VARIABLES = [
-  "PATH",
-  "HOME",
-  "USER",
-  "SHELL",
-  "TERM",
-]
+const ESSENTIAL_VARIABLES = ["PATH", "HOME", "USER", "SHELL", "TERM"]
 
 // Git-specific variables to set on Windows
 const GIT_WINDOWS_VARIABLES: Record<string, string> = {
@@ -54,7 +48,7 @@ export function buildGitEnv(inputEnv?: Record<string, string>): NodeJS.ProcessEn
 
   // Copy all other variables except IDE-specific ones
   for (const [key, value] of Object.entries(env)) {
-    if (!IDE_VARIABLES.includes(key)) {
+    if (value !== undefined && !IDE_VARIABLES.includes(key)) {
       result[key] = value
     }
   }

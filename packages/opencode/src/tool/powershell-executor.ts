@@ -1,15 +1,21 @@
 /**
  * PowerShell Executor - Executes PowerShell commands via temp files
- * 
+ *
  * This module provides a reliable way to execute PowerShell commands on Windows
  * by writing commands to temporary `.ps1` files and executing them via the
  * `-File` parameter instead of the problematic `-Command` parameter.
- * 
+ *
  * @module powershell-executor
  */
 
-import { spawn } from 'bun'
-import type { TempFileManager } from './temp-file-manager'
+import type { TempFileManager } from "./temp-file-manager"
+import { Log } from "../util/log"
+
+/**
+ * Runtime detection for cross-platform compatibility
+ * Note: PowerShellExecutor is Windows-only, so we primarily use Bun APIs
+ */
+const isBunRuntime = typeof Bun !== "undefined" && Bun.spawn !== undefined
 
 /**
  * Options for executing a PowerShell command
@@ -18,7 +24,7 @@ export interface ExecOptions {
   /** Whether to skip loading PowerShell profiles */
   noProfile?: boolean
   /** Execution policy to use */
-  executionPolicy?: 'Bypass' | 'RemoteSigned'
+  executionPolicy?: "Bypass" | "RemoteSigned"
   /** Timeout in milliseconds */
   timeout?: number
   /** Whether to capture stdout/stderr */
@@ -36,9 +42,9 @@ export interface PowerShellExecutorOptions {
   /** Default timeout in milliseconds (default: 60000) */
   defaultTimeout?: number
   /** Default execution policy (default: 'Bypass') */
-  executionPolicy?: 'Bypass' | 'RemoteSigned'
+  executionPolicy?: "Bypass" | "RemoteSigned"
   /** Optional logger for debugging */
-  logger?: Logger
+  logger?: Log.Logger
 }
 
 /**
@@ -91,7 +97,7 @@ export class PowerShellExecutionError extends Error {
    */
   constructor(message: string, details?: ExecutionResult) {
     super(message)
-    this.name = 'PowerShellExecutionError'
+    this.name = "PowerShellExecutionError"
     if (details) {
       this.stdout = details.stdout
       this.stderr = details.stderr
@@ -102,16 +108,16 @@ export class PowerShellExecutionError extends Error {
 
 /**
  * PowerShellExecutor executes PowerShell commands reliably using temp files
- * 
+ *
  * This class solves the issue where PowerShell's `-Command` parameter treats
  * quoted strings as literal data rather than executable code. Instead, commands
  * are written to temporary `.ps1` files and executed via the `-File` parameter.
- * 
+ *
  * @example
  * ```typescript
  * const tempFileManager = new TempFileManager()
  * const executor = new PowerShellExecutor({ tempFileManager })
- * 
+ *
  * const result = await executor.execute('Write-Host "Hello World"')
  * console.log(result.stdout) // "Hello World"
  * ```
@@ -124,9 +130,9 @@ export class PowerShellExecutor {
   /** Default timeout in milliseconds */
   private defaultTimeout: number
   /** Default execution policy */
-  private defaultExecutionPolicy: 'Bypass' | 'RemoteSigned'
+  private defaultExecutionPolicy: "Bypass" | "RemoteSigned"
   /** Optional logger for debugging */
-  private logger?: Logger
+  private logger?: Log.Logger
   /** Execution metrics */
   private metrics: ExecutorMetrics
   /** History for P99 latency calculation */
@@ -138,9 +144,9 @@ export class PowerShellExecutor {
    */
   constructor(options: PowerShellExecutorOptions) {
     this.tempFileManager = options.tempFileManager
-    this.executable = options.executable ?? 'powershell'
+    this.executable = options.executable ?? "powershell"
     this.defaultTimeout = options.defaultTimeout ?? 60000
-    this.defaultExecutionPolicy = options.executionPolicy ?? 'Bypass'
+    this.defaultExecutionPolicy = options.executionPolicy ?? "Bypass"
     this.logger = options.logger
 
     this.metrics = {
@@ -149,16 +155,16 @@ export class PowerShellExecutor {
       errorCount: 0,
       retryCount: 0,
       totalLatencyMs: 0,
-      p99LatencyMs: 0
+      p99LatencyMs: 0,
     }
   }
 
   /**
    * Executes a PowerShell command
-   * 
+   *
    * Creates a temporary file with the command and executes it via PowerShell's
    * `-File` parameter. The temp file is automatically cleaned up after execution.
-   * 
+   *
    * @param command - The PowerShell command to execute
    * @returns Promise resolving to the execution result
    */
@@ -179,18 +185,24 @@ export class PowerShellExecutor {
       this.recordError(Date.now() - startTime)
       throw error
     } finally {
-      // Always cleanup
+      // Always cleanup - ensure it completes before returning
       if (tempPath) {
-        await this.tempFileManager.cleanup(tempPath).catch((e) => {
-          this.logger?.warn(`Failed to cleanup temp file: ${tempPath}`, { error: e })
-        })
+        try {
+          await this.tempFileManager.cleanup(tempPath)
+        } catch (cleanupError) {
+          // Only log unexpected errors (not ENOENT which means file already gone)
+          if (!(cleanupError instanceof Error && cleanupError.message?.includes("ENOENT"))) {
+            this.logger?.error("Failed to cleanup temp file", { path: tempPath, error: cleanupError })
+            this.metrics.errorCount++
+          }
+        }
       }
     }
   }
 
   /**
    * Executes a PowerShell command with custom options
-   * 
+   *
    * @param command - The PowerShell command to execute
    * @param options - Execution options to override defaults
    * @returns Promise resolving to the execution result
@@ -208,20 +220,27 @@ export class PowerShellExecutor {
       this.recordError(Date.now() - startTime)
       throw error
     } finally {
+      // Cleanup - ensure it completes before returning
       if (tempPath) {
-        await this.tempFileManager.cleanup(tempPath).catch((e) => {
-          this.logger?.warn(`Failed to cleanup temp file: ${tempPath}`, { error: e })
-        })
+        try {
+          await this.tempFileManager.cleanup(tempPath)
+        } catch (cleanupError) {
+          // Only log unexpected errors (not ENOENT which means file already gone)
+          if (!(cleanupError instanceof Error && cleanupError.message?.includes("ENOENT"))) {
+            this.logger?.error("Failed to cleanup temp file", { path: tempPath, error: cleanupError })
+            this.metrics.errorCount++
+          }
+        }
       }
     }
   }
 
   /**
    * Executes a PowerShell command with retry logic
-   * 
+   *
    * Retries the command with exponential backoff (100ms, 200ms, 400ms, etc.)
    * up to the specified number of retries.
-   * 
+   *
    * @param command - The PowerShell command to execute
    * @param retries - Number of retries (default: 3)
    * @returns Promise resolving to the execution result
@@ -245,15 +264,16 @@ export class PowerShellExecutor {
       }
     }
 
-    throw new PowerShellExecutionError(
-      `Failed after ${retries} retries: ${lastError?.message}`,
-      { stdout: '', stderr: lastError?.message ?? '', exitCode: -1 }
-    )
+    throw new PowerShellExecutionError(`Failed after ${retries} retries: ${lastError?.message}`, {
+      stdout: "",
+      stderr: lastError?.message ?? "",
+      exitCode: -1,
+    })
   }
 
   /**
    * Alias for execute - executes a PowerShell script
-   * 
+   *
    * @param script - The PowerShell script to execute
    * @returns Promise resolving to the execution result
    */
@@ -263,9 +283,9 @@ export class PowerShellExecutor {
 
   /**
    * Executes an existing PowerShell script file
-   * 
+   *
    * Spawns PowerShell to execute the specified file with the `-File` parameter.
-   * 
+   *
    * @param filePath - Path to the PowerShell script file
    * @param options - Optional execution options
    * @returns Promise resolving to the execution result
@@ -274,58 +294,76 @@ export class PowerShellExecutor {
     const args = this.buildArgs(filePath, options)
     const timeout = options?.timeout ?? this.defaultTimeout
 
-    this.logger?.debug(`Executing PowerShell: ${this.executable} ${args.join(' ')}`)
+    this.logger?.debug(`Executing PowerShell: ${this.executable} ${args.join(" ")}`)
 
-    const proc = spawn({
+    // Use Bun.spawn directly (PowerShellExecutor is Windows-only)
+    const proc = Bun.spawn({
       cmd: [this.executable, ...args],
-      stdout: options?.captureOutput !== false ? 'pipe' : 'ignore',
-      stderr: options?.captureOutput !== false ? 'pipe' : 'ignore'
+      stdout: options?.captureOutput !== false ? "pipe" : "ignore",
+      stderr: options?.captureOutput !== false ? "pipe" : "ignore",
     })
+
+    let timedOut = false
+    let exitCode: number | undefined = undefined
 
     // Set up timeout
     const timeoutId = setTimeout(() => {
-      proc.kill()
+      timedOut = true
+      try {
+        proc.kill()
+      } catch {
+        // Process may have already exited
+      }
     }, timeout)
 
-    let timedOut = false
+    // Monitor process exit concurrently with output capture
+    const exitPromise = (async () => {
+      try {
+        const code = await proc.exited
+        return code
+      } catch {
+        return -1
+      }
+    })()
+
     try {
-      const [stdout, stderr] = await Promise.all([
-        options?.captureOutput !== false ? new Response(proc.stdout).text() : '',
-        options?.captureOutput !== false ? new Response(proc.stderr).text() : ''
-      ])
+      // Capture output (if enabled)
+      const stdoutPromise = options?.captureOutput !== false ? new Response(proc.stdout).text() : Promise.resolve("")
 
-      const exitCode = await proc.exited
+      const stderrPromise = options?.captureOutput !== false ? new Response(proc.stderr).text() : Promise.resolve("")
 
-      // Check if the process was killed due to timeout
-      if (exitCode === -1 && timedOut) {
+      const [stdout, stderr] = await Promise.all([stdoutPromise, stderrPromise])
+
+      // Get exit code AFTER output capture
+      exitCode = await exitPromise
+
+      // Check timeout condition - either timedOut flag OR exitCode === -1
+      if (timedOut || exitCode === -1) {
         return {
           stdout,
           stderr,
           exitCode: -1,
-          timedOut: true
+          timedOut: true,
         }
       }
 
       return {
         stdout,
         stderr,
-        exitCode,
-        timedOut: false
+        exitCode: exitCode ?? -1,
+        timedOut: false,
       }
     } catch (error) {
       this.logger?.error(`PowerShell execution failed`, { error })
-      throw new PowerShellExecutionError(
-        `PowerShell execution failed: ${(error as Error).message}`
-      )
+      throw new PowerShellExecutionError(`PowerShell execution failed: ${(error as Error).message}`)
     } finally {
       clearTimeout(timeoutId)
-      timedOut = true // Mark as timed out if we get here due to timeout
     }
   }
 
   /**
    * Builds the PowerShell command arguments
-   * 
+   *
    * @param filePath - Path to the script file
    * @param options - Execution options
    * @returns Array of command-line arguments
@@ -335,15 +373,15 @@ export class PowerShellExecutor {
 
     // Add NoProfile unless disabled
     if (options?.noProfile !== false) {
-      args.push('-NoProfile')
+      args.push("-NoProfile")
     }
 
     // Add ExecutionPolicy
-    args.push('-ExecutionPolicy')
+    args.push("-ExecutionPolicy")
     args.push(options?.executionPolicy ?? this.defaultExecutionPolicy)
 
     // Add File parameter
-    args.push('-File')
+    args.push("-File")
     args.push(filePath)
 
     return args
@@ -351,7 +389,7 @@ export class PowerShellExecutor {
 
   /**
    * Records a successful execution
-   * 
+   *
    * @param result - The execution result
    * @param latencyMs - Execution latency in milliseconds
    */
@@ -364,14 +402,14 @@ export class PowerShellExecutor {
     if (result.exitCode !== 0) {
       this.logger?.warn(`PowerShell exited with non-zero code: ${result.exitCode}`, {
         stdout: result.stdout,
-        stderr: result.stderr
+        stderr: result.stderr,
       })
     }
   }
 
   /**
    * Records a failed execution
-   * 
+   *
    * @param latencyMs - Execution latency in milliseconds
    */
   private recordError(latencyMs: number): void {
@@ -383,10 +421,10 @@ export class PowerShellExecutor {
 
   /**
    * Updates the P99 latency metric
-   * 
+   *
    * Maintains a sliding window of the last 100 latency measurements
    * and calculates the P99 value.
-   * 
+   *
    * @param latencyMs - Latency in milliseconds
    */
   private updateP99Latency(latencyMs: number): void {
@@ -403,7 +441,7 @@ export class PowerShellExecutor {
 
   /**
    * Gets the current executor metrics
-   * 
+   *
    * @returns Copy of the current metrics
    */
   getMetrics(): ExecutorMetrics {
@@ -420,7 +458,7 @@ export class PowerShellExecutor {
       errorCount: 0,
       retryCount: 0,
       totalLatencyMs: 0,
-      p99LatencyMs: 0
+      p99LatencyMs: 0,
     }
     this.p99History = []
   }

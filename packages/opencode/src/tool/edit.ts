@@ -29,7 +29,10 @@ export const EditTool = Tool.define("edit", {
     oldString: z.string().describe("The text to replace"),
     newString: z.string().describe("The text to replace it with (must be different from oldString)"),
     replaceAll: z.boolean().optional().describe("Replace all occurrences of oldString (default false)"),
-    replaceFirst: z.boolean().optional().describe("Replace only the first occurrence when multiple matches exist (default false)"),
+    replaceFirst: z
+      .boolean()
+      .optional()
+      .describe("Replace only the first occurrence when multiple matches exist (default false)"),
   }),
   async execute(params, ctx) {
     if (!params.filePath) {
@@ -40,8 +43,8 @@ export const EditTool = Tool.define("edit", {
     if (params.newString === undefined || params.newString === null || params.newString === "") {
       throw new Error(
         "newString parameter is required but was empty or undefined. " +
-        "This may indicate a serialization issue in the tool invocation layer. " +
-        "Ensure newString is properly passed as a non-empty string value."
+          "This may indicate a serialization issue in the tool invocation layer. " +
+          "Ensure newString is properly passed as a non-empty string value.",
       )
     }
 
@@ -49,9 +52,7 @@ export const EditTool = Tool.define("edit", {
     const safeNewString = params.newString === null ? "" : String(params.newString)
 
     // Normalize line endings
-    const normalizedNewString = safeNewString
-      .replace(/\r\n/g, "\n")
-      .replace(/\r/g, "")
+    const normalizedNewString = safeNewString.replace(/\r\n/g, "\n").replace(/\r/g, "")
 
     // Log for debugging (can be removed after fix is verified)
     // console.log("[EDIT-TOOL] Called with:", {
@@ -280,9 +281,7 @@ export const BlockAnchorReplacer: Replacer = function* (content, find) {
     for (let j = i + 1; j < originalLines.length; j++) {
       // Skip consecutive empty lines when looking for last anchor
       let skipCount = 0
-      while (j + skipCount < originalLines.length && 
-             originalLines[j + skipCount].trim() === "" && 
-             skipCount < 2) {
+      while (j + skipCount < originalLines.length && originalLines[j + skipCount].trim() === "" && skipCount < 2) {
         skipCount++
       }
       const actualJ = j + skipCount
@@ -291,7 +290,7 @@ export const BlockAnchorReplacer: Replacer = function* (content, find) {
         candidates.push({ startLine: i, endLine: actualJ })
         break // Only match the first occurrence of the last line
       }
-      j = actualJ  // Continue from after empty lines
+      j = actualJ // Continue from after empty lines
     }
   }
 
@@ -524,29 +523,29 @@ export const UnicodeNormalizedReplacer: Replacer = function* (content, find) {
   // Character mapping: smart characters → regular characters
   const smartCharMap: Record<string, string> = {
     // Smart double quotes → regular quote
-    '\u201C': '"',  // "
-    '\u201D': '"',  // "
-    '\u201E': '"',  // ,,
-    '\u201F': '"',  // ,,
+    "\u201C": '"', // "
+    "\u201D": '"', // "
+    "\u201E": '"', // ,,
+    "\u201F": '"', // ,,
     // Smart single quotes → regular apostrophe
-    '\u2018': "'",  // '
-    '\u2019': "'",  // '
-    '\u201A': "'",  // ,,
-    '\u201B': "'",  // ,,
+    "\u2018": "'", // '
+    "\u2019": "'", // '
+    "\u201A": "'", // ,,
+    "\u201B": "'", // ,,
     // Dashes
-    '\u2014': '-',  // Em dash
-    '\u2013': '-',  // En dash
-    '\u2212': '-',  // Minus sign
+    "\u2014": "-", // Em dash
+    "\u2013": "-", // En dash
+    "\u2212": "-", // Minus sign
     // Ellipsis
-    '\u2026': '...',
+    "\u2026": "...",
     // Other
-    '\u00A0': ' ',  // Non-breaking space
+    "\u00A0": " ", // Non-breaking space
   }
 
   const cleanString = (str: string): string => {
     let result = str
     for (const [smart, regular] of Object.entries(smartCharMap)) {
-      result = result.replace(new RegExp(smart, 'g'), regular)
+      result = result.replace(new RegExp(smart, "g"), regular)
     }
     return result
   }
@@ -725,7 +724,13 @@ export function trimDiff(diff: string): string {
   return trimmedLines.join("\n")
 }
 
-export function replace(content: string, oldString: string, newString: string, replaceAll = false, replaceFirst = false): string {
+export function replace(
+  content: string,
+  oldString: string,
+  newString: string,
+  replaceAll = false,
+  replaceFirst = false,
+): string {
   if (oldString === newString) {
     throw new Error("oldString and newString must be different")
   }
@@ -744,8 +749,8 @@ export function replace(content: string, oldString: string, newString: string, r
   if (totalMatchCount > 1 && !replaceAll && !replaceFirst) {
     throw new Error(
       `Found multiple matches (${totalMatchCount}) for oldString. ` +
-      `Use replaceFirst=true to replace only the first occurrence, ` +
-      `or provide more context in oldString to make the match unique.`
+        `Use replaceFirst=true to replace only the first occurrence, ` +
+        `or provide more context in oldString to make the match unique.`,
     )
   }
 
@@ -761,25 +766,25 @@ export function replace(content: string, oldString: string, newString: string, r
     WhitespaceNormalizedReplacer,
     IndentationFlexibleReplacer,
     EscapeNormalizedReplacer,
-    UnicodeNormalizedReplacer,  // FIX #19: Added UnicodeNormalizedReplacer
+    UnicodeNormalizedReplacer, // FIX #19: Added UnicodeNormalizedReplacer
     TrimmedBoundaryReplacer,
     ContextAwareReplacer,
   ]) {
     for (const search of replacer(content, oldString)) {
       const index = content.indexOf(search)
       if (index === -1) continue
-      
+
       notFound = false
-      
+
       // Record first match for replaceFirst mode
       if (replaceFirst && firstMatchIndex === -1) {
         firstMatchIndex = index
         firstMatchLength = search.length
       }
-      
+
       if (!replaceAll && !replaceFirst) {
         const lastIndex = content.lastIndexOf(search)
-        if (index !== lastIndex) continue  // Multiple matches, skip
+        if (index !== lastIndex) continue // Multiple matches, skip
         return content.substring(0, index) + newString + content.substring(index + search.length)
       }
     }
@@ -787,9 +792,7 @@ export function replace(content: string, oldString: string, newString: string, r
 
   // Handle replaceFirst mode
   if (replaceFirst && firstMatchIndex !== -1) {
-    return content.substring(0, firstMatchIndex) + 
-           newString + 
-           content.substring(firstMatchIndex + firstMatchLength)
+    return content.substring(0, firstMatchIndex) + newString + content.substring(firstMatchIndex + firstMatchLength)
   }
 
   // Handle replaceAll mode
@@ -802,14 +805,12 @@ export function replace(content: string, oldString: string, newString: string, r
         matches.push({ search, index, length: search.length })
       }
     }
-    
+
     if (matches.length > 0) {
       // Replace from end to avoid index shifting
       let result = content
       for (const match of matches.sort((a, b) => b.index - a.index)) {
-        result = result.substring(0, match.index) + 
-                 newString + 
-                 result.substring(match.index + match.length)
+        result = result.substring(0, match.index) + newString + result.substring(match.index + match.length)
       }
       return result
     }
@@ -820,6 +821,6 @@ export function replace(content: string, oldString: string, newString: string, r
   }
   throw new Error(
     "Found multiple matches for oldString. " +
-    "Provide more surrounding lines in oldString or use replaceFirst parameter."
+      "Provide more surrounding lines in oldString or use replaceFirst parameter.",
   )
 }
