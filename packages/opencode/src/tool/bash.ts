@@ -865,7 +865,7 @@ export const BashTool = Tool.define("bash", async () => {
         let translatedCommand = processedCommand
         const translator = getTranslator()
         if (translator) {
-          translatedCommand = translator.translateCommand(processedCommand, { cwd, shell: shellType })
+          translatedCommand = translator.translateCommand(processedCommand, { cwd, shell: shellType }) as string
           if (translatedCommand !== processedCommand) {
             log.debug("Command translated for PowerShell execution", {
               original: processedCommand,

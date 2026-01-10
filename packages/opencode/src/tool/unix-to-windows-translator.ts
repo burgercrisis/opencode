@@ -27,8 +27,8 @@ export interface TranslationRule {
  */
 export interface TranslationStrategy {
   name: string
-  canHandle(command: string): boolean
-  translate(command: string, rules: TranslationRule[], context?: any): string
+  canHandle(command: string | null | undefined): boolean
+  translate(command: string | null | undefined, rules: TranslationRule[], context?: any): string | null | undefined
 }
 
 /**
@@ -37,11 +37,16 @@ export interface TranslationStrategy {
 class PatternTranslationStrategy implements TranslationStrategy {
   name = "pattern"
 
-  canHandle(command: string): boolean {
+  canHandle(command: string | null | undefined): boolean {
     return true // This strategy handles all commands
   }
 
-  translate(command: string, rules: TranslationRule[], context?: any): string {
+  translate(command: string | null | undefined, rules: TranslationRule[], context?: any): string | null | undefined {
+    // Handle null/undefined commands
+    if (command == null) {
+      return command
+    }
+
     // Sort rules by priority (highest first)
     const sortedRules = [...rules].sort((a, b) => b.priority - a.priority)
 
@@ -100,7 +105,12 @@ abstract class BaseTranslator {
     this.strategies.push(strategy)
   }
 
-  translate(command: string, context?: any): string {
+  translate(command: string | null | undefined, context?: any): string | null | undefined {
+    // Handle null/undefined commands
+    if (command == null) {
+      return command
+    }
+
     // Pre-translation validation
     if (!this.validateCommand(command)) {
       log.warn("Command failed pre-translation validation", { command })
@@ -118,7 +128,7 @@ abstract class BaseTranslator {
     const translated = strategy.translate(command, this.getRules(), context)
 
     // Post-translation validation
-    if (!this.validateTranslation(command, translated)) {
+    if (!this.validateTranslation(command as string, translated as string)) {
       log.warn("Translation failed post-validation", { command, translated })
       return command
     }
@@ -331,7 +341,7 @@ export class UnixToWindowsTranslator extends BaseTranslator {
   /**
    * Validate command before translation
    */
-  protected validateCommand(command: string): boolean {
+  protected validateCommand(command: string | null | undefined): boolean {
     if (!command || typeof command !== "string") {
       return false
     }
@@ -378,7 +388,7 @@ export class UnixToWindowsTranslator extends BaseTranslator {
   /**
    * Validate translation result
    */
-  protected validateTranslation(original: string, translated: string): boolean {
+  protected validateTranslation(original: string | null | undefined, translated: string | null | undefined): boolean {
     // Basic validation - ensure translation is not empty and different from original
     if (!translated || translated.trim().length === 0) {
       return false
@@ -403,7 +413,7 @@ export class UnixToWindowsTranslator extends BaseTranslator {
   /**
    * Translate a command with optional context
    */
-  translateCommand(command: string, context?: { cwd?: string; shell?: string }): string {
+  translateCommand(command: string | null | undefined, context?: { cwd?: string; shell?: string }): string | null | undefined {
     try {
       const translated = this.translate(command, context)
 

@@ -241,8 +241,8 @@ pub fn run() {
                 .unwrap_or(LogicalSize::new(1920, 1080));
 
             // Create window immediately with serverReady = false
-            let mut window_builder =
-                WebviewWindow::builder(&app, "main", WebviewUrl::App("/".into()))
+            let window_builder = {
+                let wb = WebviewWindow::builder(&app, "main", WebviewUrl::App("/".into()))
                     .title("OpenCode")
                     .inner_size(size.width as f64, size.height as f64)
                     .decorations(true)
@@ -255,13 +255,12 @@ pub fn run() {
                       window.__OPENCODE__.port = {port};
                     "#
                     ));
-
-            #[cfg(target_os = "macos")]
-            {
-                window_builder = window_builder
+                #[cfg(target_os = "macos")]
+                let wb = wb
                     .title_bar_style(tauri::TitleBarStyle::Overlay)
                     .hidden_title(true);
-            }
+                wb
+            };
 
             let window = window_builder.build().expect("Failed to create window");
 
