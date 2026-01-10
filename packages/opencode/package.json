@@ -42,6 +42,7 @@
     "@types/yargs": "17.0.33",
     "@typescript/native-preview": "catalog:",
     "typescript": "catalog:",
+    "vitest": "4.0.16",
     "vscode-languageserver-types": "3.17.5",
     "why-is-node-running": "3.2.2",
     "zod-to-json-schema": "3.24.5"
@@ -103,6 +104,7 @@
     "ignore": "7.0.5",
     "jsonc-parser": "3.3.1",
     "minimatch": "10.0.3",
+    "node-pty": "1.0.0",
     "open": "10.1.2",
     "opentui-spinner": "0.0.6",
     "partial-json": "0.1.7",

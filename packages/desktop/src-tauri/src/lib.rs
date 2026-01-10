@@ -231,10 +231,8 @@ pub fn run() {
 
                     let should_spawn_sidecar = !is_server_running(port).await;
 
-                    let mut spawned_sidecar = false;
                     let child = if should_spawn_sidecar {
                         let child = spawn_sidecar(&app, port);
-                        spawned_sidecar = true;
 
                         let timestamp = Instant::now();
                         loop {
@@ -279,7 +277,7 @@ pub fn run() {
                         .map(|m| m.size().to_logical(m.scale_factor()))
                         .unwrap_or(LogicalSize::new(1920, 1080));
 
-                    let window_builder =
+                    let mut window_builder =
                         WebviewWindow::builder(&app, "main", WebviewUrl::App("/".into()))
                             .title("OpenCode")
                             .inner_size(size.width as f64, size.height as f64)
@@ -303,13 +301,7 @@ pub fn run() {
 
                     window_builder.build().expect("Failed to create window");
 
-                    if let Some(child) = child {
-                        let server_state = app.state::<ServerState>();
-                        let mut state = server_state.0.lock().unwrap();
-                        *state = Some(child);
-                    } else if !spawned_sidecar {
-                        // No-op: no sidecar spawned and no server to manage
-                    }
+                    app.manage(ServerState(Arc::new(Mutex::new(child))));
                 });
             }
 
