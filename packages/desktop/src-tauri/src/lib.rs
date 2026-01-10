@@ -96,6 +96,7 @@ fn get_sidecar_port() -> u32 {
         }) as u32
 }
 
+#[allow(dead_code)]
 fn get_user_shell() -> String {
     std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string())
 }
@@ -277,7 +278,7 @@ pub fn run() {
                         .map(|m| m.size().to_logical(m.scale_factor()))
                         .unwrap_or(LogicalSize::new(1920, 1080));
 
-                    let mut window_builder =
+                    let window_builder =
                         WebviewWindow::builder(&app, "main", WebviewUrl::App("/".into()))
                             .title("OpenCode")
                             .inner_size(size.width as f64, size.height as f64)
