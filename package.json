@@ -72,7 +72,8 @@
     "@opencode-ai/plugin": "workspace:*",
     "@opencode-ai/script": "workspace:*",
     "@opencode-ai/sdk": "workspace:*",
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "zod": "4.3.5"
   },
   "repository": {
     "type": "git",

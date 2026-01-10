@@ -1,20 +1,20 @@
 import z from "zod"
 import { spawn } from "child_process"
-import { Tool } from "./tool"
+import { Tool } from "./packages/opencode/src/tool/tool"
 import path from "path"
 import DESCRIPTION from "./bash.txt"
-import { Log } from "../util/log"
-import { Instance } from "../project/instance"
-import { lazy } from "@/util/lazy"
+import { Log } from "./packages/opencode/src/util/log"
+import { Instance } from "./packages/opencode/src/project/instance"
+import { lazy } from "./packages/opencode/src/util/lazy"
 import { Language } from "web-tree-sitter"
 
 import { $ } from "bun"
-import { Filesystem } from "@/util/filesystem"
+import { Filesystem } from "./packages/opencode/src/util/filesystem"
 import { fileURLToPath } from "url"
-import { Flag } from "@/flag/flag.ts"
-import { Shell } from "@/shell/shell"
+import { Flag } from "./packages/opencode/src/flag/flag.ts"
+import { Shell } from "./packages/opencode/src/shell/shell"
 
-import { BashArity } from "@/permission/arity"
+import { BashArity } from "./packages/opencode/src/permission/arity"
 
 const MAX_OUTPUT_LENGTH = Flag.OPENCODE_EXPERIMENTAL_BASH_MAX_OUTPUT_LENGTH || 30_000
 const DEFAULT_TIMEOUT = Flag.OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS || 2 * 60 * 1000
@@ -105,7 +105,7 @@ export const BashTool = Tool.define("bash", async () => {
         }
 
         // not an exhaustive list, but covers most common cases
-        if (["cd", "rm", "cp", "mv", "mkdir", "touch", "chmod", "chown"].includes(command[0])) {
+        if (command.length > 0 && ["cd", "rm", "cp", "mv", "mkdir", "touch", "chmod", "chown"].includes(command[0]!)) {
           for (const arg of command.slice(1)) {
             if (arg.startsWith("-") || (command[0] === "chmod" && arg.startsWith("+"))) continue
             const resolved = await $`realpath ${arg}`
