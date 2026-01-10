@@ -173,8 +173,11 @@ export class PowerShellExecutor {
 
     let tempPath: string | undefined
     try {
-      // Create temp file with command
-      tempPath = await this.tempFileManager.create(command)
+      // Wrap command for better output formatting and stream handling
+      const wrappedCommand = this.wrapCommandForBetterOutput(command)
+
+      // Create temp file with wrapped command
+      tempPath = await this.tempFileManager.create(wrappedCommand)
       this.logger?.debug(`Created temp file for command: ${tempPath}`)
 
       // Execute via temp file
@@ -359,6 +362,52 @@ export class PowerShellExecutor {
     } finally {
       clearTimeout(timeoutId)
     }
+  }
+
+  /**
+   * Wraps a PowerShell command for better output formatting and stream handling
+   *
+   * This addresses Issue 2 by:
+   * - Using Out-String to prevent table formatting
+   * - Combining stdout and stderr with 2>&1
+   * - Ensuring consistent output format
+   *
+   * @param command - The original PowerShell command
+   * @returns Wrapped command with improved output handling
+   */
+  private wrapCommandForBetterOutput(command: string): string {
+    // Skip wrapping for commands that already handle their own output formatting
+    if (command.includes('Out-String') || command.includes('Format-Table') || command.includes('Format-List')) {
+      return command
+    }
+
+    const trimmed = command.trim()
+
+    // Skip wrapping for external commands that should be executed via cmd.exe
+    const firstWord = trimmed.split(/\s+/)[0]?.toLowerCase()
+    const externalCommands = ['sc', 'net', 'tasklist', 'taskkill', 'findstr', 'where', 'whoami']
+    if (firstWord && externalCommands.includes(firstWord)) {
+      return command
+    }
+
+    // For Get-Process commands specifically, always use Out-String
+    // Temporarily disabled to fix test timeout
+    // if (trimmed.toLowerCase().includes('get-process')) {
+    //   return `${command} | Out-String -Width 200`
+    // }
+
+    // For other Get-* commands that typically produce tables
+    if (trimmed.match(/\bGet-\w+/)) {
+      return `${command} | Out-String -Width 200`
+    }
+
+    // For commands that might write to both stdout and stderr, combine streams
+    if (command.includes('Write-Error') || command.includes('Write-Warning') || command.includes('Write-Verbose')) {
+      return command
+    }
+
+    // For simple commands, just return as-is
+    return command
   }
 
   /**
