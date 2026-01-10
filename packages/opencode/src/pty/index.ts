@@ -1,6 +1,5 @@
 import { BusEvent } from "@/bus/bus-event"
 import { Bus } from "@/bus"
-import { type IPty } from "bun-pty"
 import z from "zod"
 import { Identifier } from "../id/id"
 import { Log } from "../util/log"
@@ -15,10 +14,7 @@ export namespace Pty {
   const BUFFER_LIMIT = 1024 * 1024 * 2
   const BUFFER_CHUNK = 64 * 1024
 
-  const pty = lazy(async () => {
-    const { spawn } = await import("bun-pty")
-    return spawn
-  })
+  const isBunRuntime = typeof Bun !== "undefined" && Bun.spawn !== undefined
 
   export const Info = z
     .object({
@@ -65,7 +61,7 @@ export namespace Pty {
 
   interface ActiveSession {
     info: Info
-    process: IPty
+    process: any
     buffer: string
     subscribers: Set<WSContext>
   }
@@ -105,12 +101,27 @@ export namespace Pty {
     const env = { ...process.env, ...input.env, TERM: "xterm-256color" } as Record<string, string>
     log.info("creating session", { id, cmd: command, args, cwd })
 
-    const spawn = await pty()
-    const ptyProcess = spawn(command, args, {
-      name: "xterm-256color",
-      cwd,
-      env,
-    })
+    let ptyProcess: any
+
+    if (isBunRuntime) {
+      // Bun-native PTY using bun-pty
+      const { spawn } = await import("bun-pty")
+      ptyProcess = spawn(command, args, {
+        name: "xterm-256color",
+        cwd,
+        env,
+      })
+    } else {
+      // Node.js PTY interface - use dynamic import
+      const nodePty = await import("node-pty")
+      ptyProcess = nodePty.spawn(command, args, {
+        name: "xterm-256color",
+        cwd,
+        env,
+        rows: 24,
+        cols: 80,
+      })
+    }
 
     const info = {
       id,
@@ -128,7 +139,8 @@ export namespace Pty {
       subscribers: new Set(),
     }
     state().set(id, session)
-    ptyProcess.onData((data) => {
+
+    ptyProcess.onData((data: string) => {
       let open = false
       for (const ws of session.subscribers) {
         if (ws.readyState !== 1) {
@@ -143,7 +155,7 @@ export namespace Pty {
       if (session.buffer.length <= BUFFER_LIMIT) return
       session.buffer = session.buffer.slice(-BUFFER_LIMIT)
     })
-    ptyProcess.onExit(({ exitCode }) => {
+    ptyProcess.onExit(({ exitCode }: { exitCode: number }) => {
       log.info("session exited", { id, exitCode })
       session.info.status = "exited"
       Bus.publish(Event.Exited, { id, exitCode })

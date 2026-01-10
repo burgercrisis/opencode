@@ -49,25 +49,30 @@ import { buildGitEnv } from "../tool/git-env"
  * Detects the shell type from a command string
  * Returns: 'powershell' | 'pwsh' | 'cmd' | 'bash' | 'other'
  */
-function detectCommandShell(command: string): 'powershell' | 'pwsh' | 'cmd' | 'bash' | 'other' {
+function detectCommandShell(command: string): "powershell" | "pwsh" | "cmd" | "bash" | "other" {
   const trimmed = command.trim().toLowerCase()
 
   // PowerShell detection
-  if (trimmed.startsWith('powershell.exe') || trimmed.startsWith('powershell') || trimmed.startsWith('pwsh')) {
-    return trimmed.startsWith('pwsh') ? 'pwsh' : 'powershell'
+  if (trimmed.startsWith("powershell.exe") || trimmed.startsWith("powershell") || trimmed.startsWith("pwsh")) {
+    return trimmed.startsWith("pwsh") ? "pwsh" : "powershell"
   }
 
   // CMD detection
-  if (trimmed.startsWith('cmd.exe') || trimmed.startsWith('cmd ')) {
-    return 'cmd'
+  if (trimmed.startsWith("cmd.exe") || trimmed.startsWith("cmd ")) {
+    return "cmd"
   }
 
   // Bash detection
-  if (trimmed.startsWith('bash') || trimmed.startsWith('sh') || trimmed.startsWith('/bin/bash') || trimmed.startsWith('/bin/sh')) {
-    return 'bash'
+  if (
+    trimmed.startsWith("bash") ||
+    trimmed.startsWith("sh") ||
+    trimmed.startsWith("/bin/bash") ||
+    trimmed.startsWith("/bin/sh")
+  ) {
+    return "bash"
   }
 
-  return 'other'
+  return "other"
 }
 
 /**
@@ -81,26 +86,26 @@ function parseCommand(command: string): { executable: string; args: string[]; sh
   // PowerShell commands: MUST use shell wrapper for proper argument parsing
   // Issue #27 fix: PowerShell -Command "..." requires cmd.exe to parse correctly
   // Without shell wrapping, arguments are split incorrectly and commands fail
-  if (shellType === 'powershell' || shellType === 'pwsh') {
+  if (shellType === "powershell" || shellType === "pwsh") {
     const parts = trimmed.split(/\s+/)
-    const executable = shellType === 'pwsh' ? 'pwsh' : 'powershell.exe'
+    const executable = shellType === "pwsh" ? "pwsh" : "powershell.exe"
     const args = parts.slice(1)
 
     return {
       executable,
       args,
-      shouldBypassShell: false // Use shell wrapper for proper parsing
+      shouldBypassShell: false, // Use shell wrapper for proper parsing
     }
   }
 
   // CMD commands: extract cmd.exe and arguments
-  if (shellType === 'cmd') {
+  if (shellType === "cmd") {
     const parts = trimmed.split(/\s+/)
-    if (parts.length > 0 && (parts[0] === 'cmd.exe' || parts[0] === 'cmd')) {
+    if (parts.length > 0 && (parts[0] === "cmd.exe" || parts[0] === "cmd")) {
       return {
         executable: parts[0],
         args: parts.slice(1),
-        shouldBypassShell: true // Direct execution, no shell wrapping
+        shouldBypassShell: true, // Direct execution, no shell wrapping
       }
     }
   }
@@ -108,7 +113,7 @@ function parseCommand(command: string): { executable: string; args: string[]; sh
   return {
     executable: command, // Use entire command as executable
     args: [],
-    shouldBypassShell: false // Use default shell wrapping
+    shouldBypassShell: false, // Use default shell wrapping
   }
 }
 
@@ -1399,14 +1404,14 @@ export namespace SessionPrompt {
     // Shell bypass for native Windows commands (PowerShell, CMD)
     // This prevents double-wrapping when the shell is cmd.exe and command is powershell/cmd
     const parsed = parseCommand(input.command)
-    let proc: Bun.ChildProcess
+    let proc: ReturnType<typeof Bun.spawn>
 
     if (parsed.shouldBypassShell && process.platform === "win32") {
       // Direct execution for PowerShell and CMD commands
       log.info("Direct shell execution", {
         command: input.command,
         executable: parsed.executable,
-        args: parsed.args
+        args: parsed.args,
       })
       proc = Bun.spawn([parsed.executable, ...parsed.args], {
         cwd: Instance.directory,
@@ -1433,8 +1438,8 @@ export namespace SessionPrompt {
     let output = ""
 
     // Read stdout and stderr using Bun's subprocess output
-    const stdoutReader = proc.stdout?.getReader()
-    const stderrReader = proc.stderr?.getReader()
+    const stdoutReader = typeof proc.stdout === "number" ? undefined : proc.stdout?.getReader()
+    const stderrReader = typeof proc.stderr === "number" ? undefined : proc.stderr?.getReader()
 
     const readOutput = async (reader: ReadableStreamDefaultReader | undefined) => {
       if (!reader) return

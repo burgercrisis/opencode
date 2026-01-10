@@ -8,6 +8,7 @@ import { Instance } from "../project/instance"
 import { Flag } from "../flag/flag"
 import { Archive } from "../util/archive"
 import { Log } from "../util/log"
+import { Global } from "../global"
 
 export namespace LSPServer {
   const log = Log.create({ service: "lsp.server" })
