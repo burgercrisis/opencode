@@ -17,7 +17,8 @@ export async function resolvePath(arg: string, cwd: string): Promise<string | un
   try {
     if (isBunRuntime) {
       const result = await Bun.$`realpath ${arg}`.cwd(cwd).quiet().nothrow().text()
-      return (result || "").trim() || undefined
+      const trimmed = (result || "").trim()
+      if (trimmed) return trimmed
     } else {
       const { execSync } = require("child_process")
       const result = execSync(`realpath ${arg}`, {
@@ -25,15 +26,18 @@ export async function resolvePath(arg: string, cwd: string): Promise<string | un
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
       })
-      return (result || "").trim() || undefined
+      const trimmed = (result || "").trim()
+      if (trimmed) return trimmed
     }
   } catch {
-    // Fallback: use path.resolve (doesn't resolve symlinks but always works)
-    try {
-      const { resolve } = require("path")
-      return resolve(cwd, arg)
-    } catch {
-      return undefined
-    }
+    // ignore error and fallback
+  }
+
+  // Fallback: use path.resolve (doesn't resolve symlinks but always works)
+  try {
+    const { resolve } = require("path")
+    return resolve(cwd, arg)
+  } catch {
+    return undefined
   }
 }

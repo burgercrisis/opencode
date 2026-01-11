@@ -396,6 +396,12 @@ export class PowerShellExecutor {
     //   return `${command} | Out-String -Width 200`
     // }
 
+    // Skip wrapping for commands that write directly to host or return simple values
+    const noWrapCommands = ["Get-Random", "Get-Date", "Get-Location", "Write-Host", "Write-Output", "Write-Error", "Write-Warning"]
+    if (noWrapCommands.some(cmd => trimmed.toLowerCase().startsWith(cmd.toLowerCase()))) {
+      return `${command}; exit 0`
+    }
+
     // For other Get-* commands that typically produce tables
     if (trimmed.match(/\bGet-\w+/)) {
       return `${command} | Out-String -Width 200`

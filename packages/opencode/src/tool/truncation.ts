@@ -44,6 +44,7 @@ export namespace Truncate {
     const direction = options.direction ?? "head"
     const lines = text.split("\n")
     const totalBytes = Buffer.byteLength(text, "utf-8")
+    console.log(`Truncate: text length=${text.length}, totalBytes=${totalBytes}, maxBytes=${maxBytes}, lines=${lines.length}, maxLines=${maxLines}`)
 
     if (lines.length <= maxLines && totalBytes <= maxBytes) {
       return { content: text, truncated: false }

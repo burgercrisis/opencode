@@ -259,13 +259,20 @@ describe("tool.bash truncation", () => {
       fn: async () => {
         const bash = await BashTool.init()
         const byteCount = Truncate.MAX_BYTES + 10000
+        const command = process.platform === "win32"
+          ? `powershell -Command "Write-Output ('a' * ${byteCount})"`
+          : `head -c ${byteCount} /dev/zero | tr '\\0' 'a'`
         const result = await bash.execute(
           {
-            command: `head -c ${byteCount} /dev/zero | tr '\\0' 'a'`,
+            command,
             description: "Generate bytes exceeding limit",
           },
           ctx,
         )
+        if (!result.metadata.truncated) {
+          console.log(`Bash byte truncation test FAILED: output length=${result.output.length}, exit=${result.metadata.exit}`)
+          console.log(`Output: ${result.output}`)
+        }
         expect((result.metadata as any).truncated).toBe(true)
         expect(result.output).toContain("truncated")
         expect(result.output).toContain("The tool call succeeded but the output was truncated")

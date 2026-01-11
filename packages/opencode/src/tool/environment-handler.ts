@@ -35,7 +35,8 @@ class WindowsEnvironmentHandler implements EnvironmentHandler {
   async set(key: string, value: string): Promise<void> {
     try {
       // Use PowerShell to set environment variable persistently
-      const command = `$env:${key} = "${value.replace(/"/g, '""')}"`
+      // Use single quotes to prevent variable expansion and escape single quotes by doubling them
+      const command = `$env:${key} = '${value.replace(/'/g, "''")}'`
       await this.executePowerShellCommand(command)
       // Also set in current process
       process.env[key] = value

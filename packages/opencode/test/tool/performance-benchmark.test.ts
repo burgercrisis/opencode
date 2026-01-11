@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, vi } from "bun:test"
+import { describe, it, expect, beforeAll, beforeEach, vi } from "bun:test"
 import { PersistentShell } from "../../src/tool/persistent-shell"
 import { UnicodeHandler } from "../../src/tool/unicode-handler"
 import { spawn } from "child_process"
@@ -15,12 +15,40 @@ describe("Performance Benchmarks", () => {
 
   beforeAll(() => {
     // Setup mock process for consistent benchmarking
+    const stdoutListeners: Function[] = []
+    
     mockProcess = {
-      stdin: { write: vi.fn(), end: vi.fn() },
-      stdout: { on: vi.fn(), removeListener: vi.fn() },
+      stdin: { 
+        write: vi.fn((data: string) => {
+          if (data.includes("__OPENCODE_DONE_")) {
+            const tokenMatch = data.match(/__OPENCODE_DONE_[a-z0-9]+__/);
+            if (tokenMatch) {
+              const token = tokenMatch[0];
+              setTimeout(() => {
+                stdoutListeners.forEach(cb => cb(Buffer.from(`output\n${token} 0\n`)));
+              }, 10);
+            }
+          }
+          return true;
+        }), 
+        end: vi.fn() 
+      },
+      stdout: { 
+        on: vi.fn((event, cb) => {
+          if (event === 'data') stdoutListeners.push(cb);
+        }), 
+        removeListener: vi.fn((event, cb) => {
+          if (event === 'data') {
+            const idx = stdoutListeners.indexOf(cb);
+            if (idx !== -1) stdoutListeners.splice(idx, 1);
+          }
+        }) 
+      },
       stderr: { on: vi.fn(), removeListener: vi.fn() },
       on: vi.fn(),
+      once: vi.fn(),
       kill: vi.fn(),
+      removeListener: vi.fn(),
       killed: false,
       exitCode: null,
     }
@@ -28,24 +56,15 @@ describe("Performance Benchmarks", () => {
     mockSpawn.mockReturnValue(mockProcess)
   })
 
+  beforeEach(() => {
+    // Reset singleton instances
+    ;(PersistentShell as any).instances = new Map()
+    vi.clearAllMocks()
+  })
+
   describe("PersistentShell Performance", () => {
     it("should achieve sub-100ms command execution", async () => {
       const persistentShell = PersistentShell.getInstance(process.cwd())
-
-      // Mock fast command execution
-      mockProcess.stdout.on.mockImplementation((event: string, callback: Function) => {
-        if (event === "data") {
-          // Immediate response
-          callback(Buffer.from("test output\n"))
-        }
-      })
-
-      mockProcess.on.mockImplementation((event: string, callback: Function) => {
-        if (event === "close") {
-          // Very fast completion
-          setTimeout(() => callback(0), 1)
-        }
-      })
 
       const executions = 10
       const times: number[] = []
@@ -76,20 +95,14 @@ describe("Performance Benchmarks", () => {
     it("should show performance improvement over multiple executions", async () => {
       const persistentShell = PersistentShell.getInstance(process.cwd())
 
-      mockProcess.on.mockImplementation((event: string, callback: Function) => {
-        if (event === "close") {
-          setTimeout(() => callback(0), 2)
-        }
-      })
-
       const firstExecution = await measureExecution(() => persistentShell.execute("echo first"))
 
       // Subsequent executions should be faster due to session reuse
-      const subsequentExecutions = await Promise.all([
-        measureExecution(() => persistentShell.execute("echo second")),
-        measureExecution(() => persistentShell.execute("echo third")),
-        measureExecution(() => persistentShell.execute("echo fourth")),
-      ])
+      const subsequentExecutions = [
+        await measureExecution(() => persistentShell.execute("echo second")),
+        await measureExecution(() => persistentShell.execute("echo third")),
+        await measureExecution(() => persistentShell.execute("echo fourth")),
+      ]
 
       const avgSubsequent = subsequentExecutions.reduce((a, b) => a + b, 0) / subsequentExecutions.length
 
@@ -104,12 +117,6 @@ describe("Performance Benchmarks", () => {
 
     it("should handle concurrent command execution efficiently", async () => {
       const persistentShell = PersistentShell.getInstance(process.cwd())
-
-      mockProcess.on.mockImplementation((event: string, callback: Function) => {
-        if (event === "close") {
-          setTimeout(() => callback(0), 5)
-        }
-      })
 
       const concurrentCommands = 5
       const startTime = performance.now()
@@ -207,12 +214,6 @@ describe("Performance Benchmarks", () => {
     it("should maintain reasonable memory usage with persistent sessions", async () => {
       const persistentShell = PersistentShell.getInstance(process.cwd())
 
-      mockProcess.on.mockImplementation((event: string, callback: Function) => {
-        if (event === "close") {
-          setTimeout(() => callback(0), 1)
-        }
-      })
-
       // Execute many commands to test memory stability
       const commandCount = 50
       for (let i = 0; i < commandCount; i++) {
@@ -233,12 +234,6 @@ describe("Performance Benchmarks", () => {
     it("should meet combined performance targets", async () => {
       const persistentShell = PersistentShell.getInstance(process.cwd())
       const unicodeHandler = UnicodeHandler.getInstance()
-
-      mockProcess.on.mockImplementation((event: string, callback: Function) => {
-        if (event === "close") {
-          setTimeout(() => callback(0), 2)
-        }
-      })
 
       // Simulate realistic command execution with Unicode processing
       const testCommands = [

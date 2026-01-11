@@ -68,6 +68,35 @@ describe("Bash Tool Stuck Agent Fix", () => {
       })
     }, 10000)
 
+    test("should handle PowerShell Get-Random command without hanging", async () => {
+      if (process.platform !== "win32") {
+        console.log("Skipping PowerShell Get-Random test on non-Windows platform")
+        return
+      }
+
+      await Instance.provide({
+        directory: projectRoot,
+        fn: async () => {
+          const bash = await BashTool.init()
+
+          // Test Get-Random command that was causing hangs
+          const result = await bash.execute(
+            {
+              command: 'powershell -Command "Get-Random"',
+              description: "Test PowerShell Get-Random execution",
+              timeout: 5000,
+            },
+            ctx,
+          )
+
+          expect([0, 1]).toContain(result.metadata.exit)
+          expect(result.metadata.output.length).toBeGreaterThan(0)
+          // Should contain a number
+          expect(result.metadata.output.trim()).toMatch(/^\d+$/)
+        },
+      })
+    }, 10000)
+
     test("should handle CMD commands without getting stuck", async () => {
       if (process.platform !== "win32") {
         console.log("Skipping CMD test on non-Windows platform")
@@ -341,6 +370,86 @@ describe("Bash Tool Stuck Agent Fix", () => {
           expect(result.metadata).toBeDefined()
           // Should not take longer than the timeout + some buffer
           expect(endTime - startTime).toBeLessThan(3000)
+        },
+      })
+    }, 10000)
+
+    test("should handle PowerShell Write-Host without hanging", async () => {
+      if (process.platform !== "win32") {
+        console.log("Skipping PowerShell Write-Host test on non-Windows platform")
+        return
+      }
+
+      await Instance.provide({
+        directory: projectRoot,
+        fn: async () => {
+          const bash = await BashTool.init()
+
+          const result = await bash.execute(
+            {
+              command: "powershell.exe -NoProfile -Command \"Write-Host 'Test123'\"",
+              description: "Test PowerShell Write-Host command execution (no hang)",
+              timeout: 5000,
+            },
+            ctx,
+          )
+
+          // Main test: command should complete without hanging
+          expect([0, 1]).toContain(result.metadata.exit)
+          expect(result.metadata).toBeDefined()
+        },
+      })
+    }, 10000)
+
+    test("should handle CMD echo without hanging", async () => {
+      if (process.platform !== "win32") {
+        console.log("Skipping CMD echo test on non-Windows platform")
+        return
+      }
+
+      await Instance.provide({
+        directory: projectRoot,
+        fn: async () => {
+          const bash = await BashTool.init()
+
+          const result = await bash.execute(
+            {
+              command: "cmd /c echo native_windows",
+              description: "Test CMD echo command execution",
+              timeout: 5000,
+            },
+            ctx,
+          )
+
+          // Main test: command should complete without hanging
+          expect([0, 1]).toContain(result.metadata.exit)
+          expect(result.metadata).toBeDefined()
+        },
+      })
+    }, 10000)
+
+    test("should handle CMD ver without hanging", async () => {
+      if (process.platform !== "win32") {
+        console.log("Skipping CMD ver test on non-Windows platform")
+        return
+      }
+
+      await Instance.provide({
+        directory: projectRoot,
+        fn: async () => {
+          const bash = await BashTool.init()
+
+          const result = await bash.execute(
+            {
+              command: "cmd /c ver",
+              description: "Test CMD ver command execution",
+              timeout: 5000,
+            },
+            ctx,
+          )
+
+          expect([0, 1]).toContain(result.metadata.exit)
+          expect(result.metadata.output.length).toBeGreaterThan(0)
         },
       })
     }, 10000)

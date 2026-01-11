@@ -28,6 +28,7 @@ export const ReadTool = Tool.define("read", {
     const title = path.relative(Instance.worktree, filepath)
 
     if (!ctx.extra?.["bypassCwdCheck"] && !Filesystem.contains(Instance.directory, filepath)) {
+      console.log(`ReadTool: filepath ${filepath} is NOT in Instance.directory ${Instance.directory}`)
       const parentDir = path.dirname(filepath)
       await ctx.ask({
         permission: "external_directory",

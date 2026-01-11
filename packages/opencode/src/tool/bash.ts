@@ -423,9 +423,29 @@ export function parseCommand(command: string): { executable: string; args: strin
  */
 function buildExitCodeCaptureCommand(cmd: string[], shellType: string): string[] {
   if (shellType === "powershell" || shellType === "pwsh") {
-    // Wrap PowerShell command to capture $LASTEXITCODE
+    // Check if this is already a properly formatted PowerShell command
+    const hasCommandFlag = cmd.includes("-Command") || cmd.includes("-c")
+    if (hasCommandFlag) {
+      // Find the command content (everything after -Command)
+      const commandIndex = cmd.findIndex(arg => arg === "-Command" || arg === "-c")
+      if (commandIndex !== -1 && commandIndex + 1 < cmd.length) {
+        const commandContent = cmd[commandIndex + 1]
+        // Wrap the command content in & { } for proper execution
+        const wrappedCommand = `& { ${commandContent}; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } }`
+        return [cmd[0], "-NoProfile", "-Command", wrappedCommand]
+      }
+    }
+
+    // Fallback: wrap the entire command line
     const commandPart = cmd.slice(1).join(" ")
-    return [cmd[0], "-NoProfile", "-Command", `${commandPart}; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }`]
+    // If already wrapped in & { }, add exit check inside
+    if (commandPart.includes("& {") && commandPart.endsWith("}")) {
+      const modified = commandPart.replace(/}$/, `; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } }`)
+      return [cmd[0], "-NoProfile", "-Command", modified]
+    } else {
+      // Wrap in & { } for proper execution
+      return [cmd[0], "-NoProfile", "-Command", `& { ${commandPart}; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } }`]
+    }
   }
 
   if (shellType === "cmd") {
@@ -631,15 +651,16 @@ function routePowerShellCommand(command: string): {
   useExecutor: boolean
   direct?: boolean
   tempCommand?: string
+  simple?: boolean
 } {
   // Extract PowerShell executable using proper argument parsing
   const parts = parseShellArgs(command.trim())
   const executable = parts[0] || "powershell.exe"
 
-  // Check for -Command parameter
-  const commandMatch = command.match(/-Command\s+["'](.+?)["']/s)
-  if (commandMatch) {
-    const commandContent = commandMatch[1]
+  // Check for -Command parameter using parsed parts for better robustness than regex
+  const commandIndex = parts.findIndex(p => p.toLowerCase() === "-command" || p.toLowerCase() === "-c")
+  if (commandIndex !== -1 && commandIndex + 1 < parts.length) {
+    const commandContent = parts[commandIndex + 1]
 
     // Detect bare script block (needs & wrapper)
     if (/^\s*\{/.test(commandContent) && !/^\s*&\s*\{/.test(commandContent)) {
@@ -648,6 +669,25 @@ function routePowerShellCommand(command: string): {
         cmd: [executable, "-NoProfile", "-Command", wrappedCommand],
         useExecutor: false,
         direct: true,
+      }
+    }
+
+    // Check if this is a simple command that can be executed directly
+    // Simple commands: Write-Host, Get-Date, Get-Location, etc.
+    const trimmedContent = commandContent.trim()
+    const isSimpleCommand = (() => {
+      // Commands that are safe to execute directly without temp files
+      const simpleCommands = ["Get-Random", "Get-Date", "Get-Location", "Write-Host", "Write-Output", "Write-Error", "Write-Warning"]
+      return simpleCommands.some(cmd => trimmedContent.toLowerCase().startsWith(cmd.toLowerCase()))
+    })()
+
+    if (isSimpleCommand) {
+      // Execute simple commands directly to avoid temp file overhead
+      return {
+        cmd: [executable, "-NoProfile", "-Command", commandContent],
+        useExecutor: false,
+        direct: true,
+        simple: true,
       }
     }
 
@@ -660,9 +700,9 @@ function routePowerShellCommand(command: string): {
   }
 
   // Check for -File parameter
-  const fileMatch = command.match(/-File\s+["'](.+?)["']/s)
-  if (fileMatch) {
-    const filePath = fileMatch[1]
+  const fileIndex = parts.findIndex(p => p.toLowerCase() === "-file" || p.toLowerCase() === "-f")
+  if (fileIndex !== -1 && fileIndex + 1 < parts.length) {
+    const filePath = parts[fileIndex + 1]
     return {
       cmd: [executable, "-NoProfile", "-File", filePath],
       useExecutor: false,
@@ -680,7 +720,6 @@ function routePowerShellCommand(command: string): {
 }
 
 export const BashTool = Tool.define("bash", async () => {
-  // Temporarily force cmd.exe on Windows for testing
   const shell = process.platform === "win32" ? "cmd.exe" : Shell.acceptable()
   log.info("bash tool using shell", { shell })
 
@@ -765,20 +804,27 @@ export const BashTool = Tool.define("bash", async () => {
             }
             command.push(child.text)
           }
+          console.log(`BashTool: Tree-sitter found command: ${JSON.stringify(command)}`)
 
           // not an exhaustive list, but covers most common cases
           if (["cd", "rm", "cp", "mv", "mkdir", "touch", "chmod", "chown"].includes(command[0])) {
             for (const arg of command.slice(1)) {
               if (arg.startsWith("-") || (command[0] === "chmod" && arg.startsWith("+"))) continue
+              console.log(`BashTool: Resolving path for arg: ${arg}, cwd: ${cwd}`)
               const resolved = await resolvePath(arg, cwd)
-              log.info("resolved path", { arg, resolved })
+              console.log(`BashTool: Resolved path: ${resolved}`)
               if (resolved) {
                 // Git Bash on Windows returns Unix-style paths like /c/Users/...
                 const normalized =
                   process.platform === "win32" && resolved.match(/^\/[a-z]\//)
                     ? resolved.replace(/^\/([a-z])\//, (_, drive) => `${drive.toUpperCase()}:\\`).replace(/\//g, "\\")
                     : resolved
-                if (!Filesystem.contains(Instance.directory, normalized)) directories.add(normalized)
+                
+                console.log(`BashTool: Checking permission for normalized path: ${normalized}, Instance.directory: ${Instance.directory}`)
+                if (!Filesystem.contains(Instance.directory, normalized)) {
+                  console.log(`BashTool: PATH IS OUTSIDE! Adding to directories Set: ${normalized}`)
+                  directories.add(normalized)
+                }
               }
             }
           }
@@ -817,7 +863,11 @@ export const BashTool = Tool.define("bash", async () => {
         !processedCommand.includes("&&") &&
         !processedCommand.includes("||") &&
         !processedCommand.includes("|") &&
-        !processedCommand.includes(";")
+        !processedCommand.includes(";") &&
+        !processedCommand.trim().startsWith("cmd ") && // Exclude CMD commands from persistent shell
+        !processedCommand.trim().startsWith("cmd/") &&
+        !processedCommand.trim().startsWith("powershell") && // Exclude PowerShell commands from persistent shell
+        !processedCommand.trim().startsWith("pwsh")
 
       if (shouldUsePersistentShell) {
         log.debug("Using persistent shell for command execution", { command: processedCommand.slice(0, 100) })
@@ -895,6 +945,7 @@ export const BashTool = Tool.define("bash", async () => {
           }
         } else if (routing.direct) {
           cmd = routing.cmd
+          // Apply exit code capture for all PowerShell commands to ensure proper process termination
           if (shellType === "powershell" || shellType === "pwsh") {
             cmd = buildExitCodeCaptureCommand(cmd, shellType)
           }
@@ -1003,61 +1054,93 @@ export const BashTool = Tool.define("bash", async () => {
       }, timeout + 100)
 
       /**
+       * Helper function to drain a stream and append its data
+       */
+      const drainStream = async (stream: any, appendFn: (chunk: Buffer | Uint8Array | string) => void): Promise<void> => {
+        return new Promise((resolve, reject) => {
+          if (!stream) {
+            return resolve()
+          }
+
+          if (isBunRuntime) {
+            if (!stream?.getReader) return resolve()
+            const reader = stream.getReader()
+            const readLoop = async () => {
+              try {
+                while (true) {
+                  const { done, value } = await reader.read()
+                  if (done) {
+                    reader.releaseLock()
+                    return resolve()
+                  }
+                  appendFn(value)
+                }
+              } catch (error) {
+                if (error.name !== 'AbortError') reject(error)
+                else resolve()
+              } finally {
+                reader.releaseLock?.()
+              }
+            }
+            readLoop()
+          } else {
+            // Node.js
+            let ended = false
+            const onData = (chunk: Buffer) => appendFn(chunk)
+            const onEnd = () => {
+              if (!ended) {
+                ended = true
+                stream.removeListener('data', onData)
+                stream.removeListener('error', onError)
+                resolve()
+              }
+            }
+            const onError = (error: unknown) => {
+              stream.removeListener('data', onData)
+              stream.removeListener('end', onEnd)
+              reject(error instanceof Error ? error : new Error(String(error)))
+            }
+            stream.on('data', onData)
+            stream.on('end', onEnd)
+            stream.on('error', onError)
+          }
+        })
+      }
+
+      /**
        * Unified process and stream handling - ensures proper synchronization
        */
       const waitForCompletion = async (proc: ChildProcess | any): Promise<void> => {
         return new Promise<void>((resolve, reject) => {
-          // Set up stream listeners based on runtime
-          if (isBunRuntime) {
-            // Bun: streams are ReadableStream instances
-            const setupBunStream = (stream: any) => {
-              if (stream && typeof stream.getReader === 'function') {
-                const reader = stream.getReader()
-                const readChunk = async () => {
-                  try {
-                    const { done, value } = await reader.read()
-                    if (done) return
-                    append(value)
-                    await readChunk()
-                  } catch (error) {
-                    // Stream ended
-                  }
-                }
-                readChunk()
-              }
-            }
+          // Create null streams for handling undefined streams
+          const nullStream = isBunRuntime ? null : new (require('stream').Readable)({ read() {} })
 
-            setupBunStream(proc.stdout)
-            setupBunStream(proc.stderr)
-          } else {
-            // Node.js: use event emitters
-            proc.stdout?.on("data", (chunk: Buffer) => append(chunk))
-            proc.stderr?.on("data", (chunk: Buffer) => append(chunk))
-          }
+          // Set up stream draining promises
+          const drainStdout = drainStream(proc.stdout ?? nullStream, append)
+          const drainStderr = drainStream(proc.stderr ?? nullStream, append)
 
           // Handle process completion
-          const onComplete = (code?: number | null, signal?: string | null) => {
-            exited = true
-            clearTimeout(timeoutTimer)
-            ctx.abort.removeEventListener("abort", abortHandler)
-            resolve()
-          }
+          const procCompletion = isBunRuntime 
+            ? proc.exited 
+            : new Promise((res, rej) => { 
+                proc.once('close', res)
+                proc.once('error', rej)
+              })
 
-          const onError = (error: Error) => {
-            exited = true
-            clearTimeout(timeoutTimer)
-            ctx.abort.removeEventListener("abort", abortHandler)
-            reject(error)
-          }
-
-          if (isBunRuntime) {
-            // Bun: wait for process completion
-            proc.exited.then(onComplete).catch(onError)
-          } else {
-            // Node.js: use events for process completion
-            proc.on("close", onComplete)
-            proc.on("error", onError)
-          }
+          // Wait for all streams and process to complete
+          Promise.all([drainStdout, drainStderr, procCompletion])
+            .then(() => {
+              exited = true
+              clearTimeout(timeoutTimer)
+              ctx.abort.removeEventListener("abort", abortHandler)
+              resolve()
+            })
+            .catch((error) => {
+              exited = true
+              clearTimeout(timeoutTimer)
+              ctx.abort.removeEventListener("abort", abortHandler)
+              reject(error)
+            })
         })
       }
 

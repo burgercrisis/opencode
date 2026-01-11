@@ -55,10 +55,9 @@ export class PersistentShell {
   ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
     const { shell = this.detectShell(command), timeout = 30000 } = options
 
-    // Get or create session
-    const session = await this.getSession(shell)
-
     try {
+      // Get or create session
+      const session = await this.getSession(shell)
       return await session.execute(command, { timeout })
     } catch (error) {
       log.warn("Command execution failed, falling back to non-persistent", { error, command })
@@ -252,8 +251,11 @@ class ShellSession {
       stdio: ["pipe", "pipe", "pipe"],
     })
 
-    // Set up session initialization
-    await this.sendCommand(this.getInitCommand())
+    // Set up session initialization - use a shorter timeout for init
+    const initResult = await this.sendCommand(this.getInitCommand(), 2000)
+    if (initResult.exitCode !== 0) {
+      throw new Error(`Shell session initialization failed with exit code ${initResult.exitCode}`)
+    }
 
     this.initialized = true
     log.debug("Shell session initialized", { shell: this.shell, cwd: this.cwd })
@@ -332,17 +334,35 @@ class ShellSession {
       let exitCode = 0
       let timedOut = false
 
+      const token = `__OPENCODE_DONE_${Math.random().toString(36).slice(2)}__`
+      const delimiterCmd = this.getDelimiterCommand(token)
+
       const timer = setTimeout(() => {
         timedOut = true
         this.process!.kill("SIGTERM")
       }, timeout)
 
-      // Send command to stdin
-      this.process!.stdin!.write(command + "\n")
-
-      // Set up one-time listeners for this command
       const onStdout = (chunk: Buffer) => {
-        stdout += chunk.toString()
+        const str = chunk.toString()
+        stdout += str
+
+        if (stdout.includes(token)) {
+          const lines = stdout.split("\n")
+          for (let i = 0; i < lines.length; i++) {
+            if (lines[i].includes(token)) {
+              const match = lines[i].match(new RegExp(`${token}\\s+(-?\\d+)`))
+              if (match) {
+                exitCode = parseInt(match[1], 10)
+                // Keep everything before the delimiter line
+                stdout = lines.slice(0, i).join("\n")
+                if (stdout && !stdout.endsWith("\n")) stdout += "\n"
+                cleanup()
+                resolve({ stdout, stderr, exitCode })
+                return
+              }
+            }
+          }
+        }
       }
 
       const onStderr = (chunk: Buffer) => {
@@ -350,26 +370,48 @@ class ShellSession {
       }
 
       const onClose = (code: number | null) => {
-        clearTimeout(timer)
-        this.process!.stdout!.removeListener("data", onStdout)
-        this.process!.stderr!.removeListener("data", onStderr)
-
         exitCode = code ?? (timedOut ? 143 : 1)
+        cleanup()
         resolve({ stdout, stderr, exitCode })
       }
 
       const onError = (error: Error) => {
-        clearTimeout(timer)
-        this.process!.stdout!.removeListener("data", onStdout)
-        this.process!.stderr!.removeListener("data", onStderr)
+        cleanup()
         reject(error)
+      }
+
+      const cleanup = () => {
+        clearTimeout(timer)
+        if (this.process) {
+          this.process.stdout?.removeListener("data", onStdout)
+          this.process.stderr?.removeListener("data", onStderr)
+          this.process.removeListener("close", onClose)
+          this.process.removeListener("error", onError)
+        }
       }
 
       this.process!.stdout!.on("data", onStdout)
       this.process!.stderr!.on("data", onStderr)
-      this.process!.on("close", onClose)
-      this.process!.on("error", onError)
+      this.process!.once("close", onClose)
+      this.process!.once("error", onError)
+
+      // Send command followed by delimiter
+      this.process!.stdin!.write(`${command}\n${delimiterCmd}\n`)
     })
+  }
+
+  private getDelimiterCommand(token: string): string {
+    switch (this.shell) {
+      case "powershell":
+      case "pwsh":
+        return `echo "${token} $LastExitCode"`
+      case "cmd":
+        return `echo ${token} %errorlevel%`
+      case "bash":
+        return `echo "${token} $?"`
+      default:
+        return `echo "${token} $?"`
+    }
   }
 
   private getShellCommand(): string[] {
