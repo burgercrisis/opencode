@@ -17,6 +17,7 @@ const ctx = {
 }
 
 const projectRoot = path.join(__dirname, "../..")
+const FIXTURES_DIR = path.join(__dirname, "fixtures")
 
 describe("tool.bash", () => {
   test("basic", async () => {
@@ -239,9 +240,12 @@ describe("tool.bash truncation", () => {
       fn: async () => {
         const bash = await BashTool.init()
         const lineCount = Truncate.MAX_LINES + 500
+        const command = process.platform === "win32"
+          ? `powershell -Command "1..${lineCount}"`
+          : `seq 1 ${lineCount}`
         const result = await bash.execute(
           {
-            command: `seq 1 ${lineCount}`,
+            command,
             description: "Generate lines exceeding limit",
           },
           ctx,
@@ -304,9 +308,12 @@ describe("tool.bash truncation", () => {
       fn: async () => {
         const bash = await BashTool.init()
         const lineCount = Truncate.MAX_LINES + 100
+        const command = process.platform === "win32"
+          ? `powershell -Command "1..${lineCount}"`
+          : `seq 1 ${lineCount}`
         const result = await bash.execute(
           {
-            command: `seq 1 ${lineCount}`,
+            command,
             description: "Generate lines for file check",
           },
           ctx,
@@ -319,8 +326,8 @@ describe("tool.bash truncation", () => {
         const saved = await Bun.file(filepath).text()
         const lines = saved.trim().split("\n")
         expect(lines.length).toBe(lineCount)
-        expect(lines[0]).toBe("1")
-        expect(lines[lineCount - 1]).toBe(String(lineCount))
+        expect(lines[0].trim()).toBe("1")
+        expect(lines[lineCount - 1].trim()).toBe(String(lineCount))
       },
     })
   })

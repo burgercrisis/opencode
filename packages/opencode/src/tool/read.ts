@@ -41,12 +41,12 @@ export const ReadTool = Tool.define("read", {
       })
     }
 
-    await ctx.ask({
-      permission: "read",
-      patterns: [filepath],
-      always: ["*"],
-      metadata: {},
-    })
+await ctx.ask({
+  permission: "read",
+  patterns: [title],
+  always: ["*"],
+  metadata: {},
+})
 
     const file = Bun.file(filepath)
     if (!(await file.exists())) {

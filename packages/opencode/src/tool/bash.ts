@@ -1053,15 +1053,8 @@ export const BashTool = Tool.define("bash", async () => {
         }
       }, timeout + 100)
 
-      /**
-       * Helper function to drain a stream and append its data
-       */
       const drainStream = async (stream: any, appendFn: (chunk: Buffer | Uint8Array | string) => void): Promise<void> => {
         return new Promise((resolve, reject) => {
-          if (!stream) {
-            return resolve()
-          }
-
           if (isBunRuntime) {
             if (!stream?.getReader) return resolve()
             const reader = stream.getReader()
@@ -1076,7 +1069,7 @@ export const BashTool = Tool.define("bash", async () => {
                   appendFn(value)
                 }
               } catch (error) {
-                if (error.name !== 'AbortError') reject(error)
+                if ((error as Error).name !== 'AbortError') reject(error)
                 else resolve()
               } finally {
                 reader.releaseLock?.()
@@ -1095,10 +1088,10 @@ export const BashTool = Tool.define("bash", async () => {
                 resolve()
               }
             }
-            const onError = (error: unknown) => {
+            const onError = (error: Error) => {
               stream.removeListener('data', onData)
               stream.removeListener('end', onEnd)
-              reject(error instanceof Error ? error : new Error(String(error)))
+              reject(error)
             }
             stream.on('data', onData)
             stream.on('end', onEnd)
@@ -1107,41 +1100,15 @@ export const BashTool = Tool.define("bash", async () => {
         })
       }
 
-      /**
-       * Unified process and stream handling - ensures proper synchronization
-       */
       const waitForCompletion = async (proc: ChildProcess | any): Promise<void> => {
-        return new Promise<void>((resolve, reject) => {
-          // Create null streams for handling undefined streams
-          const nullStream = isBunRuntime ? null : new (require('stream').Readable)({ read() {} })
-
-          // Set up stream draining promises
-          const drainStdout = drainStream(proc.stdout ?? nullStream, append)
-          const drainStderr = drainStream(proc.stderr ?? nullStream, append)
-
-          // Handle process completion
-          const procCompletion = isBunRuntime 
-            ? proc.exited 
-            : new Promise((res, rej) => { 
-                proc.once('close', res)
-                proc.once('error', rej)
-              })
-
-          // Wait for all streams and process to complete
-          Promise.all([drainStdout, drainStderr, procCompletion])
-            .then(() => {
-              exited = true
-              clearTimeout(timeoutTimer)
-              ctx.abort.removeEventListener("abort", abortHandler)
-              resolve()
-            })
-            .catch((error) => {
-              exited = true
-              clearTimeout(timeoutTimer)
-              ctx.abort.removeEventListener("abort", abortHandler)
-              reject(error)
-            })
-        })
+        const nullStream = null
+        const drainStdout = drainStream(proc.stdout ?? nullStream, append)
+        const drainStderr = drainStream(proc.stderr ?? nullStream, append)
+        const procCompletion = isBunRuntime ? proc.exited : new Promise((res, rej) => { proc.once('close', res); proc.once('error', rej); })
+        await Promise.all([drainStdout, drainStderr, procCompletion])
+        exited = true
+        clearTimeout(timeoutTimer)
+        ctx.abort.removeEventListener("abort", abortHandler)
       }
 
       // Wait for both streams and process completion
@@ -1164,6 +1131,9 @@ export const BashTool = Tool.define("bash", async () => {
       // Final Unicode validation and normalization
       output = unicodeHandler.validateAndFix(output)
 
+      // Apply truncation to output
+      const truncatedResult = await Truncate.output(output)
+
       // Normalize exit code (negative codes on Unix indicate signal termination)
       let exitCode = proc.exitCode ?? proc.code
       if (exitCode < 0) {
@@ -1182,14 +1152,26 @@ export const BashTool = Tool.define("bash", async () => {
         }
       }
 
+      const metadata: any = {
+        exit: exitCode,
+        description: params.description,
+      }
+
+      if (truncatedResult.truncated) {
+        metadata.truncated = true
+        metadata.outputPath = truncatedResult.outputPath
+      }
+
+      // Truncate metadata output if needed
+      const metadataOutput = truncatedResult.content.length > MAX_METADATA_LENGTH
+        ? truncatedResult.content.slice(0, MAX_METADATA_LENGTH) + "\n\n..."
+        : truncatedResult.content
+      metadata.output = metadataOutput
+
       return {
         title: params.description,
-        metadata: {
-          output: output.length > MAX_METADATA_LENGTH ? output.slice(0, MAX_METADATA_LENGTH) + "\n\n..." : output,
-          exit: exitCode,
-          description: params.description,
-        },
-        output,
+        metadata,
+        output: truncatedResult.content,
       }
     },
   }
