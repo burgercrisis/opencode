@@ -1,4 +1,5 @@
 import { Log } from "../util/log"
+import { lazy } from "../util/lazy"
 
 const log = Log.create({ service: "unix-to-windows-translator" })
 
@@ -36,9 +37,21 @@ export interface TranslationStrategy {
  */
 class PatternTranslationStrategy implements TranslationStrategy {
   name = "pattern"
+  private readonly translationCache = new Map<string, string>()
+  private compiledRules: Array<{rule: TranslationRule, pattern: RegExp}> = []
+  private lastRulesHash = ""
 
   canHandle(command: string | null | undefined): boolean {
     return true // This strategy handles all commands
+  }
+
+  clearCache(): void {
+    this.translationCache.clear()
+    this.lastRulesHash = ""
+  }
+
+  private getRulesHash(rules: TranslationRule[]): string {
+    return rules.map(r => `${r.id}:${r.priority}`).join('|')
   }
 
   translate(command: string | null | undefined, rules: TranslationRule[], context?: any): string | null | undefined {
@@ -47,12 +60,26 @@ class PatternTranslationStrategy implements TranslationStrategy {
       return command
     }
 
-    // Sort rules by priority (highest first)
-    const sortedRules = [...rules].sort((a, b) => b.priority - a.priority)
+    // Check cache first
+    const cached = this.translationCache.get(command)
+    if (cached) return cached
 
-    for (const rule of sortedRules) {
+    // Recompile rules if changed
+    const currentHash = this.getRulesHash(rules)
+    if (this.lastRulesHash !== currentHash) {
+      this.compiledRules = rules
+        .map(rule => ({
+          rule,
+          pattern: typeof rule.pattern === "string" ? new RegExp(`^${rule.pattern}$`) : rule.pattern
+        }))
+        .sort((a, b) => b.rule.priority - a.rule.priority)
+      this.lastRulesHash = currentHash
+      // Clear cache when rules change
+      this.translationCache.clear()
+    }
+
+    for (const {rule, pattern} of this.compiledRules) {
       try {
-        const pattern = typeof rule.pattern === "string" ? new RegExp(`^${rule.pattern}$`) : rule.pattern
         const matches = command.match(pattern)
 
         if (matches) {
@@ -69,8 +96,11 @@ class PatternTranslationStrategy implements TranslationStrategy {
           // Standard template substitution
           let result = rule.template
           for (let i = 1; i < matches.length; i++) {
-            result = result.replace(new RegExp(`\\$${i}`, "g"), matches[i])
+            result = result.replaceAll(`$${i}`, matches[i])
           }
+
+          // Cache result
+          this.translationCache.set(command, result)
 
           log.debug("Applied translation rule", {
             ruleId: rule.id,
@@ -327,6 +357,12 @@ export class UnixToWindowsTranslator extends BaseTranslator {
     if (pluginRules) {
       this.rules = this.rules.filter((rule) => !pluginRules.includes(rule))
       this.plugins.delete(name)
+      // Clear cache when rules change
+      this.strategies.forEach(strategy => {
+        if (strategy instanceof PatternTranslationStrategy) {
+          strategy.clearCache()
+        }
+      })
       log.info("Unregistered translation plugin", { pluginName: name })
     }
   }
@@ -451,3 +487,7 @@ export class UnixToWindowsTranslator extends BaseTranslator {
     }
   }
 }
+
+
+
+
