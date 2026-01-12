@@ -25,6 +25,7 @@ import { EnvironmentHandlerFactory } from "./environment-handler"
 import { HereDocumentHandlerFactory } from "./here-document-translator"
 import { PersistentShell } from "./persistent-shell"
 import { UnicodeHandler, unicodeHandler } from "./unicode-handler"
+import { $ } from "bun"
 
 /**
  * Detect if running under Bun runtime for cross-platform compatibility
@@ -781,7 +782,7 @@ export const BashTool = Tool.define("bash", async () => {
       }
 
       const directories = new Set<string>()
-      if (!Filesystem.contains(Instance.directory, cwd)) directories.add(cwd)
+      if (!Instance.containsPath(cwd)) directories.add(cwd)
       const patterns = new Set<string>()
       const always = new Set<string>()
 
@@ -810,30 +811,6 @@ export const BashTool = Tool.define("bash", async () => {
           if (["cd", "rm", "cp", "mv", "mkdir", "touch", "chmod", "chown"].includes(command[0])) {
             for (const arg of command.slice(1)) {
               if (arg.startsWith("-") || (command[0] === "chmod" && arg.startsWith("+"))) continue
-              console.log(`BashTool: Resolving path for arg: ${arg}, cwd: ${cwd}`)
-              const resolved = await resolvePath(arg, cwd)
-              console.log(`BashTool: Resolved path: ${resolved}`)
-              if (resolved) {
-                // Git Bash on Windows returns Unix-style paths like /c/Users/...
-                const normalized =
-                  process.platform === "win32" && resolved.match(/^\/[a-z]\//)
-                    ? resolved.replace(/^\/([a-z])\//, (_, drive) => `${drive.toUpperCase()}:\\`).replace(/\//g, "\\")
-                    : resolved
-                
-                console.log(`BashTool: Checking permission for normalized path: ${normalized}, Instance.directory: ${Instance.directory}`)
-                if (!Filesystem.contains(Instance.directory, normalized)) {
-                  console.log(`BashTool: PATH IS OUTSIDE! Adding to directories Set: ${normalized}`)
-                  directories.add(normalized)
-                }
-              }
-            }
-          }
-
-          // cd covered by above check
-          if (command.length && command[0] !== "cd") {
-            patterns.add(command.join(" "))
-            always.add(BashArity.prefix(command).join(" ") + "*")
-          }
         }
       }
 
