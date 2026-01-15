@@ -2,6 +2,7 @@ import { BusEvent } from "@/bus/bus-event"
 import { Bus } from "@/bus"
 import { GlobalBus } from "@/bus/global"
 import { Log } from "../util/log"
+import { Filesystem } from "../util/filesystem"
 import { describeRoute, generateSpecs, validator, resolver, openAPIRouteHandler } from "hono-openapi"
 import { Hono } from "hono"
 import { cors } from "hono/cors"
@@ -738,8 +739,10 @@ export namespace Server {
             const query = c.req.valid("query")
             const term = query.search?.toLowerCase()
             const sessions: Session.Info[] = []
+            const normalizedQueryDir = query.directory ? Filesystem.nativePath(query.directory) : undefined
             for await (const session of Session.list()) {
-              if (query.directory !== undefined && session.directory !== query.directory) continue
+              if (normalizedQueryDir !== undefined && Filesystem.nativePath(session.directory) !== normalizedQueryDir)
+                continue
               if (query.roots && session.parentID) continue
               if (query.start !== undefined && session.time.updated < query.start) continue
               if (term !== undefined && !session.title.toLowerCase().includes(term)) continue

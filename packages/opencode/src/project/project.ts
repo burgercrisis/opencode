@@ -52,7 +52,7 @@ export namespace Project {
       const git = await matches.next().then((x) => x.value)
       await matches.return()
       if (git) {
-        let sandbox = path.dirname(git)
+        let sandbox = Filesystem.nativePath(path.dirname(git))
 
         const gitBinary = Bun.which("git")
 
@@ -118,7 +118,7 @@ export namespace Project {
           .nothrow()
           .cwd(sandbox)
           .text()
-          .then((x) => path.resolve(sandbox, x.trim()))
+          .then((x) => Filesystem.resolvePath(sandbox, x.trim()))
           .catch(() => undefined)
 
         if (!top) {
@@ -138,7 +138,7 @@ export namespace Project {
           .cwd(sandbox)
           .text()
           .then((x) => {
-            const dirname = path.dirname(x.trim())
+            const dirname = Filesystem.nativePath(path.dirname(x.trim()))
             if (dirname === ".") return sandbox
             return dirname
           })

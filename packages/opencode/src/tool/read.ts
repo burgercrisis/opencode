@@ -8,6 +8,7 @@ import DESCRIPTION from "./read.txt"
 import { Instance } from "../project/instance"
 import { Identifier } from "../id/id"
 import { assertExternalDirectory } from "./external-directory"
+import { Filesystem } from "../util/filesystem"
 
 const DEFAULT_READ_LIMIT = 2000
 const MAX_LINE_LENGTH = 2000
@@ -21,11 +22,11 @@ export const ReadTool = Tool.define("read", {
     limit: z.coerce.number().describe("The number of lines to read (defaults to 2000)").optional(),
   }),
   async execute(params, ctx) {
-    let filepath = params.filePath
+    let filepath = Filesystem.nativePath(params.filePath)
     if (!path.isAbsolute(filepath)) {
-      filepath = path.join(process.cwd(), filepath)
+      filepath = Filesystem.join(process.cwd(), filepath)
     }
-    const title = path.relative(Instance.worktree, filepath)
+    const title = Filesystem.relativePath(Instance.worktree, filepath)
 
     await assertExternalDirectory(ctx, filepath, {
       bypass: Boolean(ctx.extra?.["bypassCwdCheck"]),
@@ -40,7 +41,7 @@ export const ReadTool = Tool.define("read", {
 
     const file = Bun.file(filepath)
     if (!(await file.exists())) {
-      const dir = path.dirname(filepath)
+      const dir = Filesystem.dirname(filepath)
       const base = path.basename(filepath)
 
       const dirEntries = fs.readdirSync(dir)
@@ -49,7 +50,7 @@ export const ReadTool = Tool.define("read", {
           (entry) =>
             entry.toLowerCase().includes(base.toLowerCase()) || base.toLowerCase().includes(entry.toLowerCase()),
         )
-        .map((entry) => path.join(dir, entry))
+        .map((entry) => Filesystem.join(dir, entry))
         .slice(0, 3)
 
       if (suggestions.length > 0) {

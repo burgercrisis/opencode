@@ -9,6 +9,7 @@ import { Instance } from "../project/instance"
 import { Patch } from "../patch"
 import { createTwoFilesPatch } from "diff"
 import { assertExternalDirectory } from "./external-directory"
+import { Filesystem } from "../util/filesystem"
 
 const PatchParams = z.object({
   patchText: z.string().describe("The full patch text that describes all changes to be made"),
@@ -48,7 +49,7 @@ export const PatchTool = Tool.define("patch", {
     let totalDiff = ""
 
     for (const hunk of hunks) {
-      const filePath = path.resolve(Instance.directory, hunk.path)
+      const filePath = Filesystem.resolvePath(Instance.directory, hunk.path)
       await assertExternalDirectory(ctx, filePath)
 
       switch (hunk.type) {
@@ -91,7 +92,7 @@ export const PatchTool = Tool.define("patch", {
 
           const diff = createTwoFilesPatch(filePath, filePath, oldContent, newContent)
 
-          const movePath = hunk.move_path ? path.resolve(Instance.directory, hunk.move_path) : undefined
+          const movePath = hunk.move_path ? Filesystem.resolvePath(Instance.directory, hunk.move_path) : undefined
           await assertExternalDirectory(ctx, movePath)
 
           fileChanges.push({
@@ -126,7 +127,7 @@ export const PatchTool = Tool.define("patch", {
     // Check permissions if needed
     await ctx.ask({
       permission: "edit",
-      patterns: fileChanges.map((c) => path.relative(Instance.worktree, c.filePath)),
+      patterns: fileChanges.map((c) => Filesystem.relativePath(Instance.worktree, c.filePath)),
       always: ["*"],
       metadata: {
         diff: totalDiff,
@@ -140,7 +141,7 @@ export const PatchTool = Tool.define("patch", {
       switch (change.type) {
         case "add":
           // Create parent directories
-          const addDir = path.dirname(change.filePath)
+          const addDir = Filesystem.dirname(change.filePath)
           if (addDir !== "." && addDir !== "/") {
             await fs.mkdir(addDir, { recursive: true })
           }
@@ -156,7 +157,7 @@ export const PatchTool = Tool.define("patch", {
         case "move":
           if (change.movePath) {
             // Create parent directories for destination
-            const moveDir = path.dirname(change.movePath)
+            const moveDir = Filesystem.dirname(change.movePath)
             if (moveDir !== "." && moveDir !== "/") {
               await fs.mkdir(moveDir, { recursive: true })
             }
@@ -187,7 +188,7 @@ export const PatchTool = Tool.define("patch", {
     }
 
     // Generate output summary
-    const relativePaths = changedFiles.map((filePath) => path.relative(Instance.worktree, filePath))
+    const relativePaths = changedFiles.map((filePath) => Filesystem.relativePath(Instance.worktree, filePath))
     const summary = `${fileChanges.length} files changed`
 
     return {

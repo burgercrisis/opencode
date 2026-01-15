@@ -6,6 +6,7 @@ import { Global } from "../global"
 import z from "zod"
 import { Config } from "../config/config"
 import { Instance } from "../project/instance"
+import { Filesystem } from "../util/filesystem"
 
 export namespace Snapshot {
   const log = Log.create({ service: "snapshot" })
@@ -67,7 +68,7 @@ export namespace Snapshot {
         .split("\n")
         .map((x) => x.trim())
         .filter(Boolean)
-        .map((x) => path.join(Instance.worktree, x)),
+        .map((x) => Filesystem.join(Instance.worktree, x)),
     }
   }
 
