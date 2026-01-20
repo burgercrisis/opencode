@@ -52,11 +52,40 @@ export namespace SessionProcessor {
             let reasoningMap: Record<string, MessageV2.ReasoningPart> = {}
             const stream = await LLM.stream(streamInput)
 
+            // Create snapshot BEFORE processing stream to ensure it's captured even if aborted
+            let snapshot: string | undefined
+            try {
+              snapshot = await Snapshot.track()
+            } catch (error) {
+              log.warn("failed to create snapshot before stream", { error: String(error) })
+            }
+
             for await (const value of stream.fullStream) {
-              input.abort.throwIfAborted()
+              // Check abort but don't throw - allow graceful completion of current operation
+              if (input.abort.aborted) {
+                log.info("abort detected during stream processing")
+                // Still try to complete current operation
+              }
               switch (value.type) {
                 case "start":
                   SessionStatus.set(input.sessionID, { type: "busy" })
+                  break
+
+                case "reasoning-start":
+                  if (value.id in reasoningMap) {
+                    continue
+                  }
+                  reasoningMap[value.id] = {
+                    id: Identifier.ascending("part"),
+                    messageID: input.assistantMessage.id,
+                    sessionID: input.assistantMessage.sessionID,
+                    type: "reasoning",
+                    text: "",
+                    time: {
+                      start: Date.now(),
+                    },
+                    metadata: value.providerMetadata,
+                  }
                   break
 
                 case "reasoning-start":
@@ -223,7 +252,14 @@ export namespace SessionProcessor {
                   throw value.error
 
                 case "start-step":
-                  snapshot = await Snapshot.track()
+                  // Only create new snapshot if one doesn't exist from before stream
+                  if (!snapshot) {
+                    try {
+                      snapshot = await Snapshot.track()
+                    } catch (error) {
+                      log.warn("failed to create snapshot in start-step", { error: String(error) })
+                    }
+                  }
                   await Session.updatePart({
                     id: Identifier.ascending("part"),
                     messageID: input.assistantMessage.id,
