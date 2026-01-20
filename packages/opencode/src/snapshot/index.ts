@@ -11,31 +11,85 @@ export namespace Snapshot {
   const log = Log.create({ service: "snapshot" })
 
   export async function track() {
-    if (Instance.project.vcs !== "git") return
+    // Allow snapshots for any project with a .git directory, even if vcs is not explicitly "git"
+    // This fixes the issue where global projects or projects without commits don't get snapshots
     const cfg = await Config.get()
     if (cfg.snapshot === false) return
     const git = gitdir()
-    if (await fs.mkdir(git, { recursive: true })) {
-      await $`git init`
+    
+    // Normalize paths for Windows compatibility
+    const gitNormalized = process.platform === "win32" ? git.replace(/\\/g, "/") : git
+    const worktreeNormalized = Instance.worktree.replace(/\\/g, "/")
+    
+    // Create snapshot directory
+    await fs.mkdir(git, { recursive: true })
+    
+    // Check if git repository is already initialized by looking for HEAD file
+    let gitInitialized = false
+    try {
+      await fs.access(path.join(git, "HEAD"))
+      gitInitialized = true
+    } catch {
+      gitInitialized = false
+    }
+    
+    // Initialize git if not already done
+    if (!gitInitialized) {
+      const initResult = await $`git init`
         .env({
           ...process.env,
-          GIT_DIR: git,
-          GIT_WORK_TREE: Instance.worktree,
+          GIT_DIR: gitNormalized,
+          GIT_WORK_TREE: worktreeNormalized,
         })
         .quiet()
         .nothrow()
+      
+      if (initResult.exitCode !== 0) {
+        log.error("failed to initialize git for snapshot", {
+          exitCode: initResult.exitCode,
+          stderr: initResult.stderr.toString(),
+        })
+        return
+      }
+      
       // Configure git to not convert line endings on Windows
-      await $`git --git-dir ${git} config core.autocrlf false`.quiet().nothrow()
+      await $`git --git-dir ${gitNormalized} config core.autocrlf false`.quiet().nothrow()
       log.info("initialized")
     }
-    await $`git --git-dir ${git} --work-tree ${Instance.worktree} add .`.quiet().cwd(Instance.directory).nothrow()
-    const hash = await $`git --git-dir ${git} --work-tree ${Instance.worktree} write-tree`
+    
+    // Stage all files
+    const addResult = await $`git --git-dir ${gitNormalized} --work-tree ${worktreeNormalized} add .`
       .quiet()
       .cwd(Instance.directory)
       .nothrow()
-      .text()
-    log.info("tracking", { hash, cwd: Instance.directory, git })
-    return hash.trim()
+    
+    if (addResult.exitCode !== 0) {
+      log.warn("git add failed", { exitCode: addResult.exitCode })
+    }
+    
+    // Create snapshot (write-tree) with proper error checking
+    const writeTreeResult = await $`git --git-dir ${gitNormalized} --work-tree ${worktreeNormalized} write-tree`
+      .cwd(Instance.directory)
+      .nothrow()
+    
+    if (writeTreeResult.exitCode !== 0) {
+      log.error("failed to create snapshot", {
+        exitCode: writeTreeResult.exitCode,
+        stderr: writeTreeResult.stderr.toString(),
+        stdout: writeTreeResult.stdout.toString(),
+      })
+      return
+    }
+    
+    const hash = writeTreeResult.text().trim()
+    
+    if (!hash || hash.length < 40) {
+      log.error("invalid snapshot hash", { hash, length: hash?.length })
+      return
+    }
+    
+    log.info("tracking", { hash, cwd: Instance.directory, git: gitNormalized })
+    return hash
   }
 
   export const Patch = z.object({
@@ -46,9 +100,20 @@ export namespace Snapshot {
 
   export async function patch(hash: string): Promise<Patch> {
     const git = gitdir()
-    await $`git --git-dir ${git} --work-tree ${Instance.worktree} add .`.quiet().cwd(Instance.directory).nothrow()
+    const gitNormalized = process.platform === "win32" ? git.replace(/\\/g, "/") : git
+    const worktreeNormalized = Instance.worktree.replace(/\\/g, "/")
+    
+    const addResult = await $`git --git-dir ${gitNormalized} --work-tree ${worktreeNormalized} add .`
+      .quiet()
+      .cwd(Instance.directory)
+      .nothrow()
+    
+    if (addResult.exitCode !== 0) {
+      log.warn("git add failed in patch", { exitCode: addResult.exitCode })
+    }
+    
     const result =
-      await $`git -c core.autocrlf=false --git-dir ${git} --work-tree ${Instance.worktree} diff --no-ext-diff --name-only ${hash} -- .`
+      await $`git -c core.autocrlf=false --git-dir ${gitNormalized} --work-tree ${worktreeNormalized} diff --no-ext-diff --name-only ${hash} -- .`
         .quiet()
         .cwd(Instance.directory)
         .nothrow()
@@ -60,32 +125,63 @@ export namespace Snapshot {
     }
 
     const files = result.text()
+    const normalizedFiles = files
+      .trim()
+      .split("\n")
+      .map((x) => x.trim())
+      .filter(Boolean)
+      .map((x) => {
+        // Normalize path separators for Windows
+        const withWorktree = path.join(Instance.worktree, x)
+        return process.platform === "win32" ? withWorktree.replace(/\//g, "\\") : withWorktree
+      })
+    
     return {
       hash,
-      files: files
-        .trim()
-        .split("\n")
-        .map((x) => x.trim())
-        .filter(Boolean)
-        .map((x) => path.join(Instance.worktree, x)),
+      files: normalizedFiles,
     }
   }
 
   export async function restore(snapshot: string) {
     log.info("restore", { commit: snapshot })
+    
+    // Validate snapshot hash
+    if (!snapshot || snapshot.length < 40) {
+      log.error("invalid snapshot hash for restore", { snapshot })
+      return
+    }
+    
     const git = gitdir()
+    const gitNormalized = process.platform === "win32" ? git.replace(/\\/g, "/") : git
+    const worktreeNormalized = Instance.worktree.replace(/\\/g, "/")
+    
     const result =
-      await $`git --git-dir ${git} --work-tree ${Instance.worktree} read-tree ${snapshot} && git --git-dir ${git} --work-tree ${Instance.worktree} checkout-index -a -f`
+      await $`git --git-dir ${gitNormalized} --work-tree ${worktreeNormalized} read-tree ${snapshot}`
         .quiet()
-        .cwd(Instance.worktree)
+        .cwd(worktreeNormalized)
         .nothrow()
 
     if (result.exitCode !== 0) {
-      log.error("failed to restore snapshot", {
+      log.error("failed to read snapshot", {
         snapshot,
         exitCode: result.exitCode,
         stderr: result.stderr.toString(),
         stdout: result.stdout.toString(),
+      })
+      return
+    }
+    
+    const checkoutResult =
+      await $`git --git-dir ${gitNormalized} --work-tree ${worktreeNormalized} checkout-index -a -f`
+        .quiet()
+        .cwd(worktreeNormalized)
+        .nothrow()
+
+    if (checkoutResult.exitCode !== 0) {
+      log.error("failed to checkout files from snapshot", {
+        snapshot,
+        exitCode: checkoutResult.exitCode,
+        stderr: checkoutResult.stderr.toString(),
       })
     }
   }
@@ -93,28 +189,47 @@ export namespace Snapshot {
   export async function revert(patches: Patch[]) {
     const files = new Set<string>()
     const git = gitdir()
+    const gitNormalized = process.platform === "win32" ? git.replace(/\\/g, "/") : git
+    const worktreeNormalized = Instance.worktree.replace(/\\/g, "/")
+    
     for (const item of patches) {
       for (const file of item.files) {
         if (files.has(file)) continue
-        log.info("reverting", { file, hash: item.hash })
-        const result = await $`git --git-dir ${git} --work-tree ${Instance.worktree} checkout ${item.hash} -- ${file}`
+        
+        // Normalize file path for Windows
+        const normalizedFile = process.platform === "win32" ? file.replace(/\//g, "\\") : file
+        
+        log.info("reverting", { file: normalizedFile, hash: item.hash })
+        
+        const result = await $`git --git-dir ${gitNormalized} --work-tree ${worktreeNormalized} checkout ${item.hash} -- "${normalizedFile}"`
           .quiet()
-          .cwd(Instance.worktree)
+          .cwd(worktreeNormalized)
           .nothrow()
+        
         if (result.exitCode !== 0) {
-          const relativePath = path.relative(Instance.worktree, file)
+          const relativePath = path.relative(Instance.worktree, normalizedFile)
+          const normalizedRelative = process.platform === "win32" ? relativePath.replace(/\//g, "\\") : relativePath
+          
           const checkTree =
-            await $`git --git-dir ${git} --work-tree ${Instance.worktree} ls-tree ${item.hash} -- ${relativePath}`
+            await $`git --git-dir ${gitNormalized} --work-tree ${worktreeNormalized} ls-tree ${item.hash} -- "${normalizedRelative}"`
               .quiet()
-              .cwd(Instance.worktree)
+              .cwd(worktreeNormalized)
               .nothrow()
+          
           if (checkTree.exitCode === 0 && checkTree.text().trim()) {
             log.info("file existed in snapshot but checkout failed, keeping", {
-              file,
+              file: normalizedFile,
             })
           } else {
-            log.info("file did not exist in snapshot, deleting", { file })
-            await fs.unlink(file).catch(() => {})
+            log.info("file did not exist in snapshot, deleting", { file: normalizedFile })
+            try {
+              await fs.unlink(normalizedFile)
+            } catch (error) {
+              log.error("failed to delete file during revert", { 
+                file: normalizedFile, 
+                error: String(error) 
+              })
+            }
           }
         }
         files.add(file)
@@ -124,11 +239,22 @@ export namespace Snapshot {
 
   export async function diff(hash: string) {
     const git = gitdir()
-    await $`git --git-dir ${git} --work-tree ${Instance.worktree} add .`.quiet().cwd(Instance.directory).nothrow()
+    const gitNormalized = process.platform === "win32" ? git.replace(/\\/g, "/") : git
+    const worktreeNormalized = Instance.worktree.replace(/\\/g, "/")
+    
+    const addResult = await $`git --git-dir ${gitNormalized} --work-tree ${worktreeNormalized} add .`
+      .quiet()
+      .cwd(Instance.directory)
+      .nothrow()
+    
+    if (addResult.exitCode !== 0) {
+      log.warn("git add failed in diff", { exitCode: addResult.exitCode })
+    }
+    
     const result =
-      await $`git -c core.autocrlf=false --git-dir ${git} --work-tree ${Instance.worktree} diff --no-ext-diff ${hash} -- .`
+      await $`git -c core.autocrlf=false --git-dir ${gitNormalized} --work-tree ${worktreeNormalized} diff --no-ext-diff ${hash} -- .`
         .quiet()
-        .cwd(Instance.worktree)
+        .cwd(worktreeNormalized)
         .nothrow()
 
     if (result.exitCode !== 0) {
@@ -158,8 +284,11 @@ export namespace Snapshot {
   export type FileDiff = z.infer<typeof FileDiff>
   export async function diffFull(from: string, to: string): Promise<FileDiff[]> {
     const git = gitdir()
+    const gitNormalized = process.platform === "win32" ? git.replace(/\\/g, "/") : git
+    const worktreeNormalized = Instance.worktree.replace(/\\/g, "/")
     const result: FileDiff[] = []
-    for await (const line of $`git -c core.autocrlf=false --git-dir ${git} --work-tree ${Instance.worktree} diff --no-ext-diff --no-renames --numstat ${from} ${to} -- .`
+    
+    for await (const line of $`git -c core.autocrlf=false --git-dir ${gitNormalized} --work-tree ${worktreeNormalized} diff --no-ext-diff --no-renames --numstat ${from} ${to} -- .`
       .quiet()
       .cwd(Instance.directory)
       .nothrow()
@@ -169,13 +298,13 @@ export namespace Snapshot {
       const isBinaryFile = additions === "-" && deletions === "-"
       const before = isBinaryFile
         ? ""
-        : await $`git -c core.autocrlf=false --git-dir ${git} --work-tree ${Instance.worktree} show ${from}:${file}`
+        : await $`git -c core.autocrlf=false --git-dir ${gitNormalized} --work-tree ${worktreeNormalized} show ${from}:${file}`
             .quiet()
             .nothrow()
             .text()
       const after = isBinaryFile
         ? ""
-        : await $`git -c core.autocrlf=false --git-dir ${git} --work-tree ${Instance.worktree} show ${to}:${file}`
+        : await $`git -c core.autocrlf=false --git-dir ${gitNormalized} --work-tree ${worktreeNormalized} show ${to}:${file}`
             .quiet()
             .nothrow()
             .text()
