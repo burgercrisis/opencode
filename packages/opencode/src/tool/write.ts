@@ -22,7 +22,9 @@ export const WriteTool = Tool.define("write", {
     filePath: z.string().describe("The absolute path to the file to write (must be absolute, not relative)"),
   }),
   async execute(params, ctx) {
-    const filepath = path.isAbsolute(params.filePath) ? params.filePath : path.join(Instance.directory, params.filePath)
+    // Use normalized paths for cross-platform consistency
+    const rawPath = path.isAbsolute(params.filePath) ? params.filePath : path.join(Instance.directory, params.filePath)
+    const filepath = Filesystem.normalizeNativePath(rawPath)
     await assertExternalDirectory(ctx, filepath)
 
     const file = Bun.file(filepath)
