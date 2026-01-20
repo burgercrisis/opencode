@@ -88,12 +88,14 @@ export namespace Project {
             .catch(() => undefined)
 
           if (!roots) {
-            // Generate unique ID for repos without commits using path hash
+            // Generate unique ID for repos without commits using canonical path hash
             // This prevents conflicts between multiple repos that have no git history
+            // and ensures consistent IDs across different path representations
+            const canonicalPath = Filesystem.getCanonicalPath(sandbox)
             const crypto = await import("crypto")
             const pathHash = crypto
               .createHash("sha256")
-              .update(sandbox)
+              .update(canonicalPath)
               .digest("hex")
               .substring(0, 40)
             return {
@@ -113,12 +115,14 @@ export namespace Project {
         }
 
         if (!id) {
-          // Generate unique ID for repos without cached ID using path hash
+          // Generate unique ID for repos without cached ID using canonical path hash
           // This prevents conflicts between multiple repos that have no git history
+          // and ensures consistent IDs across different path representations
+          const canonicalPath = Filesystem.getCanonicalPath(sandbox)
           const crypto = await import("crypto")
           const pathHash = crypto
             .createHash("sha256")
-            .update(sandbox)
+            .update(canonicalPath)
             .digest("hex")
             .substring(0, 40)
           return {
