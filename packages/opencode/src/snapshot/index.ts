@@ -112,16 +112,61 @@ export namespace Snapshot {
       log.warn("git add failed in patch", { exitCode: addResult.exitCode })
     }
     
+    // For repos without commits, git diff <hash> won't work
+    // Instead, we need to check what files are different from the snapshot state
+    // Use git ls-tree to check if the file existed in the snapshot
     const result =
       await $`git -c core.autocrlf=false --git-dir ${gitNormalized} --work-tree ${worktreeNormalized} diff --no-ext-diff --name-only ${hash} -- .`
         .quiet()
         .cwd(Instance.directory)
         .nothrow()
 
-    // If git diff fails, return empty patch
-    if (result.exitCode !== 0) {
-      log.warn("failed to get diff", { hash, exitCode: result.exitCode })
-      return { hash, files: [] }
+    // If git diff fails (common in repos without commits), fall back to checking what files exist
+    if (result.exitCode !== 0 || !result.text().trim()) {
+      log.warn("git diff failed or returned empty, checking file changes differently", { 
+        hash, 
+        exitCode: result.exitCode,
+        stdout: result.text().toString().substring(0, 200)
+      })
+      
+      // For repos without commits, we need to check which files are new or modified
+      // by comparing against what was in the snapshot tree
+      try {
+        // Get list of all files in current worktree
+        const lsFilesResult = await $`git --git-dir ${gitNormalized} --work-tree ${worktreeNormalized} ls-files --others --exclude-standard .`
+          .quiet()
+          .cwd(Instance.directory)
+          .nothrow()
+          .text()
+        
+        const untrackedFiles = lsFilesResult.trim().split("\n").filter(Boolean)
+        
+        // Get list of modified tracked files  
+        const diffIndexResult = await $`git --git-dir ${gitNormalized} --work-tree ${worktreeNormalized} diff --name-only .`
+          .quiet()
+          .cwd(Instance.directory)
+          .nothrow()
+          .text()
+          
+        const modifiedFiles = diffIndexResult.trim().split("\n").filter(Boolean)
+        
+        // Combine untracked and modified files
+        const allChangedFiles = [...new Set([...untrackedFiles, ...modifiedFiles])]
+        
+        const normalizedFiles = allChangedFiles.map((x) => {
+          // Normalize path separators for Windows
+          const withWorktree = path.join(Instance.worktree, x)
+          return process.platform === "win32" ? withWorktree.replace(/\//g, "\\") : withWorktree
+        })
+        
+        return {
+          hash,
+          files: normalizedFiles,
+        }
+      } catch (error) {
+        log.error("failed to get file changes by alternative method", { error: String(error) })
+        return { hash, files: [] }
+      }
     }
 
     const files = result.text()
