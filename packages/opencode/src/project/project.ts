@@ -88,8 +88,16 @@ export namespace Project {
             .catch(() => undefined)
 
           if (!roots) {
+            // Generate unique ID for repos without commits using path hash
+            // This prevents conflicts between multiple repos that have no git history
+            const crypto = await import("crypto")
+            const pathHash = crypto
+              .createHash("sha256")
+              .update(sandbox)
+              .digest("hex")
+              .substring(0, 40)
             return {
-              id: "global",
+              id: pathHash,
               worktree: sandbox,
               sandbox: sandbox,
               vcs: Info.shape.vcs.parse(Flag.OPENCODE_FAKE_VCS),
@@ -105,8 +113,16 @@ export namespace Project {
         }
 
         if (!id) {
+          // Generate unique ID for repos without cached ID using path hash
+          // This prevents conflicts between multiple repos that have no git history
+          const crypto = await import("crypto")
+          const pathHash = crypto
+            .createHash("sha256")
+            .update(sandbox)
+            .digest("hex")
+            .substring(0, 40)
           return {
-            id: "global",
+            id: pathHash,
             worktree: sandbox,
             sandbox: sandbox,
             vcs: "git",
@@ -161,8 +177,15 @@ export namespace Project {
         }
       }
 
+      // No .git folder found - generate unique ID using path hash
+      const crypto = await import("crypto")
+      const pathHash = crypto
+        .createHash("sha256")
+        .update(directory)
+        .digest("hex")
+        .substring(0, 40)
       return {
-        id: "global",
+        id: pathHash,
         worktree: "/",
         sandbox: "/",
         vcs: Info.shape.vcs.parse(Flag.OPENCODE_FAKE_VCS),
