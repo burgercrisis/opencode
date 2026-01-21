@@ -207,6 +207,35 @@ export namespace Snapshot {
       // win32 platform: This setting is particularly important for Windows (win32) compatibility
       // cross-platform: This ensures files look the same on Windows, Linux, and Mac
       try {
+        await gitWithRetry(`--git-dir ${gitNormalized} config core.autocrlf false`, {
+          cwd: Instance.directory
+        })
+      } catch (error) {
+        log.warn("failed to set core.autocrlf config", { error: String(error) })
+      }
+      log.info("initialized")
+    }
+        })
+        
+        if (initResult.exitCode !== 0) {
+          log.error("failed to initialize git for snapshot", {
+            exitCode: initResult.exitCode,
+            stderr: initResult.stderr,
+          })
+          return
+        }
+      } catch (error) {
+        log.error("failed to initialize git for snapshot", {
+          error: String(error),
+        })
+        return
+      }
+      
+      // Configure git to not convert line endings on Windows
+      // Windows path handling: core.autocrlf=false prevents line ending conversion issues
+      // win32 platform: This setting is particularly important for Windows (win32) compatibility
+      // cross-platform: This ensures files look the same on Windows, Linux, and Mac
+      try {
         await gitWithRetry(`--git-dir ${gitNormalized} config core.autocrlf false`, { cwd: Instance.directory })
       } catch (error) {
         log.warn("failed to set core.autocrlf config", { error: String(error) })
