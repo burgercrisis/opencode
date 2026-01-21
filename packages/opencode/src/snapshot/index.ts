@@ -7,6 +7,7 @@ import z from "zod"
 import { Config } from "../config/config"
 import { Instance } from "../project/instance"
 import { Filesystem } from "../util/filesystem"
+import { Scheduler } from "../scheduler"
 
 /**
  * Snapshot System - Cross-Platform Implementation
@@ -26,10 +27,13 @@ import { Filesystem } from "../util/filesystem"
  * - Validation caching for performance optimization
  * - Graceful degradation for repos without commits
  * - Comprehensive security measures for path validation
+ * - Scheduled cleanup for repository maintenance
  */
 
 export namespace Snapshot {
   const log = Log.create({ service: "snapshot" })
+  const hour = 60 * 60 * 1000
+  const prune = "7.days"
   
   // Performance optimization: cache recent snapshot validations
   // Prevents redundant git cat-file calls for recently validated snapshots
@@ -37,41 +41,75 @@ export namespace Snapshot {
   const validationCache = new Map<string, { valid: boolean; reason?: string; timestamp: number }>()
   const VALIDATION_CACHE_TTL = 60000 // 1 minute cache TTL
   const MAX_CACHE_SIZE = 100 // Maximum cache entries
-
+  
+  export function init() {
+    Scheduler.register({
+      id: "snapshot.cleanup",
+      interval: hour,
+      run: cleanup,
+      scope: "instance",
+    })
+  }
+  
+  export async function cleanup() {
+    if (Instance.project.vcs !== "git") return
+    const cfg = await Config.get()
+    if (cfg.snapshot === false) return
+    const git = gitdir()
+    const exists = await fs
+      .stat(git)
+      .then(() => true)
+      .catch(() => false)
+    if (!exists) return
+    const result = await $`git --git-dir ${git} --work-tree ${Instance.worktree} gc --prune=${prune}`
+      .quiet()
+      .cwd(Instance.directory)
+      .nothrow()
+    if (result.exitCode !== 0) {
+      log.warn("cleanup failed", {
+        exitCode: result.exitCode,
+        stderr: result.stderr.toString(),
+        stdout: result.stdout.toString(),
+      })
+      return
+    }
+    log.info("cleanup", { prune })
+  }
+  
   /**
    * Execute a git command with retry logic for transient failures.
    * Uses exponential backoff for retry attempts.
    */
   async function gitWithRetry(
-    command: TemplateStringsArray,
+    command: string,
     options: {
       maxRetries?: number
       baseDelay?: number
       cwd?: string
       timeout?: number
+      env?: Record<string, string>
     } = {}
   ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
     const { maxRetries = 3, baseDelay = 100, cwd, timeout = 30000 } = options
     let lastError: Error | null = null
-
+  
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         const controller = new AbortController()
         const timeoutId = setTimeout(() => controller.abort(), timeout)
-
+  
         const result = await $`git ${command}`
           .env({
             ...process.env,
             GIT_TERMINAL_PROMPT: "0", // Disable interactive prompts
             GIT_ASKPASS: "echo", // Don't ask for passwords
           })
-          .cwd(cwd)
+          .cwd(cwd || Instance.directory)
           .quiet()
           .nothrow()
-          .signal(controller.signal)
-
+  
         clearTimeout(timeoutId)
-
+  
         return {
           exitCode: result.exitCode,
           stdout: result.stdout.toString(),
@@ -79,7 +117,7 @@ export namespace Snapshot {
         }
       } catch (error) {
         lastError = error as Error
-
+  
         // Don't retry for certain error types
         if (error instanceof Error) {
           if (error.name === 'AbortError') {
@@ -90,7 +128,7 @@ export namespace Snapshot {
             throw error // Permission errors won't be fixed by retrying
           }
         }
-
+  
         if (attempt < maxRetries) {
           const delay = baseDelay * Math.pow(2, attempt - 1) // Exponential backoff
           log.warn(`git command failed on attempt ${attempt}/${maxRetries}, retrying in ${delay}ms`, {
@@ -100,14 +138,14 @@ export namespace Snapshot {
         }
       }
     }
-
+  
     // All retries exhausted
     log.error(`git command failed after ${maxRetries} attempts`, {
       error: String(lastError),
     })
     throw lastError
   }
-
+  
   export async function track() {
     // Allow snapshots for any project with a .git directory, even if vcs is not explicitly "git"
     // This fixes the issue where global projects or projects without commits don't get snapshots
@@ -142,12 +180,13 @@ export namespace Snapshot {
     // Initialize git if not already done with retry logic
     if (!gitInitialized) {
       try {
-        const initResult = await gitWithRetry`init`
-          .env({
-            ...process.env,
+        const initResult = await gitWithRetry("init", {
+          cwd: Instance.directory,
+          env: {
             GIT_DIR: gitNormalized,
             GIT_WORK_TREE: worktreeNormalized,
-          })
+          }
+        })
         
         if (initResult.exitCode !== 0) {
           log.error("failed to initialize git for snapshot", {
@@ -168,7 +207,7 @@ export namespace Snapshot {
       // win32 platform: This setting is particularly important for Windows (win32) compatibility
       // cross-platform: This ensures files look the same on Windows, Linux, and Mac
       try {
-        await gitWithRetry`--git-dir ${gitNormalized} config core.autocrlf false`
+        await gitWithRetry(`--git-dir ${gitNormalized} config core.autocrlf false`, { cwd: Instance.directory })
       } catch (error) {
         log.warn("failed to set core.autocrlf config", { error: String(error) })
       }
@@ -177,8 +216,7 @@ export namespace Snapshot {
     
     // Stage all files with retry logic
     try {
-      const addResult = await gitWithRetry`--git-dir ${gitNormalized} --work-tree ${worktreeNormalized} add .`
-        .cwd(Instance.directory)
+      const addResult = await gitWithRetry(`--git-dir ${gitNormalized} --work-tree ${worktreeNormalized} add .`, { cwd: Instance.directory })
       
       if (addResult.exitCode !== 0) {
         log.warn("git add failed", { exitCode: addResult.exitCode })
@@ -190,9 +228,10 @@ export namespace Snapshot {
     // Create snapshot (write-tree) with retry logic and timeout
     let writeTreeResult
     try {
-      writeTreeResult = await gitWithRetry`--git-dir ${gitNormalized} --work-tree ${worktreeNormalized} write-tree`
-        .cwd(Instance.directory)
-        .timeout(30000) // 30 second timeout
+      writeTreeResult = await gitWithRetry(`--git-dir ${gitNormalized} --work-tree ${worktreeNormalized} write-tree`, {
+        cwd: Instance.directory,
+        timeout: 30000 // 30 second timeout
+      })
     } catch (error) {
       log.error("failed to create snapshot", {
         error: String(error),
@@ -219,7 +258,7 @@ export namespace Snapshot {
     log.info("tracking", { hash, cwd: Instance.directory, git: gitNormalized })
     return hash
   }
-
+  
   /**
    * Validate that a snapshot hash exists and is valid.
    * Prevents restore operations from using corrupted or non-existent snapshots.
@@ -228,34 +267,35 @@ export namespace Snapshot {
     if (!hash || typeof hash !== 'string') {
       return { valid: false, reason: 'Invalid hash format' }
     }
-
+  
     if (hash.length < 40) {
       return { valid: false, reason: 'Hash too short' }
     }
-
+  
     // Check cache first for performance
     const cached = validationCache.get(hash)
     if (cached && Date.now() - cached.timestamp < VALIDATION_CACHE_TTL) {
       log.debug("using cached snapshot validation", { hash })
       return { valid: cached.valid, reason: cached.reason }
     }
-
+  
     const git = gitdir()
     const gitNormalized = Filesystem.normalizeGitPath(git, true)
     const worktreeNormalized = Filesystem.normalizeGitPath(Instance.worktree, true)
-
+  
     try {
       // Check if the hash exists in the git repository
-      const catResult = await gitWithRetry`--git-dir ${gitNormalized} --work-tree ${worktreeNormalized} cat-file -t ${hash}`
-        .cwd(Instance.directory)
-        .maxRetries(1)
-
+      const catResult = await gitWithRetry(`--git-dir ${gitNormalized} --work-tree ${worktreeNormalized} cat-file -t ${hash}`, {
+        cwd: Instance.directory,
+        maxRetries: 1
+      })
+    
       if (catResult.exitCode !== 0) {
         const result = { valid: false, reason: 'Snapshot hash not found in repository' }
         cacheValidation(hash, result)
         return result
       }
-
+  
       // Verify it's actually a tree object (snapshots are trees)
       const objectType = catResult.stdout.trim()
       if (objectType !== 'tree') {
@@ -263,7 +303,7 @@ export namespace Snapshot {
         cacheValidation(hash, result)
         return result
       }
-
+  
       const result = { valid: true }
       cacheValidation(hash, result)
       return result
@@ -273,7 +313,7 @@ export namespace Snapshot {
       return result
     }
   }
-
+  
   /**
    * Cache a snapshot validation result for performance optimization.
    */
@@ -281,22 +321,22 @@ export namespace Snapshot {
     // Prevent memory leaks by limiting cache size
     if (validationCache.size >= MAX_CACHE_SIZE) {
       // Remove oldest entry
-      const oldestKey = validationCache.keys().next().value
+      const oldestKey = validationCache.keys().next().value as string
       validationCache.delete(oldestKey)
     }
-
+  
     validationCache.set(hash, {
       ...result,
       timestamp: Date.now()
     })
   }
-
+  
   export const Patch = z.object({
     hash: z.string(),
     files: z.string().array(),
   })
   export type Patch = z.infer<typeof Patch>
-
+  
   export async function patch(hash: string): Promise<Patch> {
     const git = gitdir()
     const gitNormalized = Filesystem.normalizeGitPath(git, true)
@@ -323,7 +363,7 @@ export namespace Snapshot {
         .quiet()
         .cwd(Instance.directory)
         .nothrow()
-
+  
     // If git diff fails (common in repos without commits), fall back to checking what files exist
     if (result.exitCode !== 0 || !result.text().trim()) {
       log.warn("git diff failed or returned empty, checking file changes differently", { 
@@ -371,7 +411,7 @@ export namespace Snapshot {
         return { hash, files: [] }
       }
     }
-
+  
     const files = result.text()
     const normalizedFiles = files
       .trim()
@@ -389,7 +429,7 @@ export namespace Snapshot {
       files: normalizedFiles,
     }
   }
-
+  
   export async function restore(snapshot: string) {
     log.info("restore", { commit: snapshot })
     
@@ -408,9 +448,10 @@ export namespace Snapshot {
     const worktreeNormalized = Filesystem.normalizeGitPath(Instance.worktree, true)
     
     const result =
-      await gitWithRetry`--git-dir ${gitNormalized} --work-tree ${worktreeNormalized} read-tree ${snapshot}`
-        .cwd(worktreeNormalized)
-
+      await gitWithRetry(`--git-dir ${gitNormalized} --work-tree ${worktreeNormalized} read-tree ${snapshot}`, {
+        cwd: worktreeNormalized
+      })
+  
     if (result.exitCode !== 0) {
       log.error("failed to read snapshot", {
         snapshot,
@@ -422,9 +463,10 @@ export namespace Snapshot {
     }
     
     const checkoutResult =
-      await gitWithRetry`--git-dir ${gitNormalized} --work-tree ${worktreeNormalized} checkout-index -a -f`
-        .cwd(worktreeNormalized)
-
+      await gitWithRetry(`--git-dir ${gitNormalized} --work-tree ${worktreeNormalized} checkout-index -a -f`, {
+        cwd: worktreeNormalized
+      })
+  
     if (checkoutResult.exitCode !== 0) {
       log.error("failed to checkout files from snapshot", {
         snapshot,
@@ -433,7 +475,7 @@ export namespace Snapshot {
       })
     }
   }
-
+  
   export async function revert(patches: Patch[]) {
     const files = new Set<string>()
     const git = gitdir()
@@ -465,7 +507,7 @@ export namespace Snapshot {
               .nothrow()
           
           if (checkTree.exitCode === 0 && checkTree.text().trim()) {
-            log.info("file existed in snapshot but checkout failed, keeping", {
+            log.info("file existed in snapshot but checkout failed, keeping", { 
               file: normalizedFile,
             })
           } else {
@@ -484,7 +526,7 @@ export namespace Snapshot {
       }
     }
   }
-
+  
   export async function diff(hash: string) {
     const git = gitdir()
     const gitNormalized = Filesystem.normalizeGitPath(git, true)
@@ -508,7 +550,7 @@ export namespace Snapshot {
         .quiet()
         .cwd(worktreeNormalized)
         .nothrow()
-
+  
     if (result.exitCode !== 0) {
       log.warn("failed to get diff", {
         hash,
@@ -518,10 +560,10 @@ export namespace Snapshot {
       })
       return ""
     }
-
+  
     return result.text().trim()
   }
-
+  
   export const FileDiff = z
     .object({
       file: z.string(),
@@ -579,7 +621,7 @@ export namespace Snapshot {
             .quiet()
             .nothrow()
             .text()
-            
+          
           const afterSize = parseInt(afterSizeResult.trim()) || 0
           
           if (afterSize <= MAX_FILE_SIZE) {
@@ -593,8 +635,8 @@ export namespace Snapshot {
         } catch (error) {
           log.warn("failed to load file content in diffFull", { 
             file, 
-            error: String(error),
-            from,
+            error: String(error), 
+            from, 
             to 
           })
           // Continue with empty content
@@ -613,7 +655,7 @@ export namespace Snapshot {
     }
     return result
   }
-
+  
   function gitdir() {
     const project = Instance.project
     return path.join(Global.Path.data, "snapshot", project.id)
