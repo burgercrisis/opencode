@@ -86,7 +86,9 @@ export function Header() {
               <box
                 onMouseOver={() => setHover("parent")}
                 onMouseOut={() => setHover(null)}
-                onMouseUp={() => command.trigger("session.parent")}
+                onMouseUp={(e) => {
+                  if (e.button === 0) command.trigger("session.parent")
+                }}
                 backgroundColor={hover() === "parent" ? theme.backgroundElement : theme.backgroundPanel}
               >
                 <text fg={theme.text}>
@@ -96,7 +98,9 @@ export function Header() {
               <box
                 onMouseOver={() => setHover("prev")}
                 onMouseOut={() => setHover(null)}
-                onMouseUp={() => command.trigger("session.child.previous")}
+                onMouseUp={(e) => {
+                  if (e.button === 0) command.trigger("session.child.previous")
+                }}
                 backgroundColor={hover() === "prev" ? theme.backgroundElement : theme.backgroundPanel}
               >
                 <text fg={theme.text}>
@@ -106,7 +110,9 @@ export function Header() {
               <box
                 onMouseOver={() => setHover("next")}
                 onMouseOut={() => setHover(null)}
-                onMouseUp={() => command.trigger("session.child.next")}
+                onMouseUp={(e) => {
+                  if (e.button === 0) command.trigger("session.child.next")
+                }}
                 backgroundColor={hover() === "next" ? theme.backgroundElement : theme.backgroundPanel}
               >
                 <text fg={theme.text}>

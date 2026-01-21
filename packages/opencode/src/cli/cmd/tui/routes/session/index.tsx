@@ -293,6 +293,13 @@ export function Session() {
     }
   }
 
+  function goToParent() {
+    const parentID = session()?.parentID
+    if (parentID) {
+      navigate({ type: "session", sessionID: parentID })
+    }
+  }
+
   const command = useCommandDialog()
   command.register(() => [
     {
@@ -875,15 +882,9 @@ export function Session() {
       value: "session.parent",
       keybind: "session_parent",
       category: "Session",
-      hidden: true,
+      disabled: !session()?.parentID,
       onSelect: (dialog) => {
-        const parentID = session()?.parentID
-        if (parentID) {
-          navigate({
-            type: "session",
-            sessionID: parentID,
-          })
-        }
+        goToParent()
         dialog.clear()
       },
     },
