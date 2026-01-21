@@ -15,6 +15,7 @@ import { Config } from "@/config/config"
 import { SessionCompaction } from "./compaction"
 import { PermissionNext } from "@/permission/next"
 import { Question } from "@/question"
+import { Token } from "@/util/token"
 
 export namespace SessionProcessor {
   const DOOM_LOOP_THRESHOLD = 3
@@ -46,6 +47,9 @@ export namespace SessionProcessor {
         log.info("process")
         needsCompaction = false
         const shouldBreak = (await Config.get()).experimental?.continue_loop_on_deny !== true
+        // Initialize from existing estimates (convert tokens to characters) to accumulate across multiple process() calls
+        let reasoningTotal = Token.toCharCount(input.assistantMessage.reasoningEstimate ?? 0)
+        let textTotal = Token.toCharCount(input.assistantMessage.outputEstimate ?? 0)
         while (true) {
           try {
             let currentText: MessageV2.TextPart | undefined
@@ -110,7 +114,15 @@ export namespace SessionProcessor {
                     const part = reasoningMap[value.id]
                     part.text += value.text
                     if (value.providerMetadata) part.metadata = value.providerMetadata
-                    if (part.text) await Session.updatePart({ part, delta: value.text })
+                    if (part.text) {
+                      const active = Object.values(reasoningMap).reduce((sum, p) => sum + p.text.length, 0)
+                      const estimate = Token.toTokenEstimate(Math.max(0, reasoningTotal + active))
+                      if (input.assistantMessage.reasoningEstimate !== estimate) {
+                        input.assistantMessage.reasoningEstimate = estimate
+                        await Session.updateMessage(input.assistantMessage)
+                      }
+                      await Session.updatePart({ part, delta: value.text })
+                    }
                   }
                   break
 
@@ -124,6 +136,7 @@ export namespace SessionProcessor {
                       end: Date.now(),
                     }
                     if (value.providerMetadata) part.metadata = value.providerMetadata
+                    reasoningTotal += part.text.length
                     await Session.updatePart(part)
                     delete reasoningMap[value.id]
                   }
@@ -278,6 +291,8 @@ export namespace SessionProcessor {
                   input.assistantMessage.finish = value.finishReason
                   input.assistantMessage.cost += usage.cost
                   input.assistantMessage.tokens = usage.tokens
+                  input.assistantMessage.contextEstimate =
+                    usage.tokens.input + usage.tokens.cache.read + usage.tokens.cache.write
                   await Session.updatePart({
                     id: Identifier.ascending("part"),
                     reason: value.finishReason,
@@ -330,11 +345,17 @@ export namespace SessionProcessor {
                   if (currentText) {
                     currentText.text += value.text
                     if (value.providerMetadata) currentText.metadata = value.providerMetadata
-                    if (currentText.text)
+                    if (currentText.text) {
+                      const estimate = Token.toTokenEstimate(Math.max(0, textTotal + currentText.text.length))
+                      if (input.assistantMessage.outputEstimate !== estimate) {
+                        input.assistantMessage.outputEstimate = estimate
+                        await Session.updateMessage(input.assistantMessage)
+                      }
                       await Session.updatePart({
                         part: currentText,
                         delta: value.text,
                       })
+                    }
                   }
                   break
 
@@ -356,6 +377,7 @@ export namespace SessionProcessor {
                       end: Date.now(),
                     }
                     if (value.providerMetadata) currentText.metadata = value.providerMetadata
+                    textTotal += currentText.text.length
                     await Session.updatePart(currentText)
                   }
                   currentText = undefined
