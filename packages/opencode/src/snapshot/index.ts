@@ -11,17 +11,17 @@ import { Scheduler } from "../scheduler"
 
 /**
  * Snapshot System - Cross-Platform Implementation
- * 
+ *
  * This module provides snapshot, undo, and redo functionality across all platforms:
  * - Windows: Handles backslash paths, long paths, and UNC paths
  * - Linux: Standard Unix paths with case sensitivity considerations
  * - Mac: Case-insensitive filesystem compatibility
- * 
+ *
  * // cross-platform: All path operations use Filesystem for consistency utilities
  * // Consistent project ID: Uses canonical paths for ID generation
  * // Windows path handling: Separators converted via normalizeGitPath and normalizeNativePath
  * // process.platform checks: Platform detection for OS-specific behavior
- * 
+ *
  * Key Features:
  * - Retry logic with exponential backoff for transient git failures
  * - Validation caching for performance optimization
@@ -210,33 +210,6 @@ export namespace Snapshot {
         await gitWithRetry(`--git-dir ${gitNormalized} config core.autocrlf false`, {
           cwd: Instance.directory
         })
-      } catch (error) {
-        log.warn("failed to set core.autocrlf config", { error: String(error) })
-      }
-      log.info("initialized")
-    }
-        })
-        
-        if (initResult.exitCode !== 0) {
-          log.error("failed to initialize git for snapshot", {
-            exitCode: initResult.exitCode,
-            stderr: initResult.stderr,
-          })
-          return
-        }
-      } catch (error) {
-        log.error("failed to initialize git for snapshot", {
-          error: String(error),
-        })
-        return
-      }
-      
-      // Configure git to not convert line endings on Windows
-      // Windows path handling: core.autocrlf=false prevents line ending conversion issues
-      // win32 platform: This setting is particularly important for Windows (win32) compatibility
-      // cross-platform: This ensures files look the same on Windows, Linux, and Mac
-      try {
-        await gitWithRetry(`--git-dir ${gitNormalized} config core.autocrlf false`, { cwd: Instance.directory })
       } catch (error) {
         log.warn("failed to set core.autocrlf config", { error: String(error) })
       }

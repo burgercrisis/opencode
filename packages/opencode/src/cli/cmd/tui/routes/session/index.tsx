@@ -2027,9 +2027,9 @@ function Question(props: ToolProps<typeof QuestionTool>) {
 function normalizePath(input?: string) {
   if (!input) return ""
   if (path.isAbsolute(input)) {
-    return path.relative(process.cwd(), input) || "."
+    return Filesystem.relativePath(process.cwd(), input) || "."
   }
-  return input
+  return Filesystem.nativePath(input)
 }
 
 function input(input: Record<string, any>, omit?: string[]): string {

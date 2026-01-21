@@ -22,9 +22,8 @@ export const WriteTool = Tool.define("write", {
     filePath: z.string().describe("The absolute path to the file to write (must be absolute, not relative)"),
   }),
   async execute(params, ctx) {
-    // Use normalized paths for cross-platform consistency
-    const rawPath = path.isAbsolute(params.filePath) ? params.filePath : path.join(Instance.directory, params.filePath)
-    const filepath = Filesystem.normalizeNativePath(rawPath)
+    const nativePath = Filesystem.nativePath(params.filePath)
+    const filepath = path.isAbsolute(nativePath) ? nativePath : Filesystem.resolvePath(Instance.directory, nativePath)
     await assertExternalDirectory(ctx, filepath)
 
     const file = Bun.file(filepath)
@@ -35,7 +34,7 @@ export const WriteTool = Tool.define("write", {
     const diff = trimDiff(createTwoFilesPatch(filepath, filepath, contentOld, params.content))
     await ctx.ask({
       permission: "edit",
-      patterns: [path.relative(Instance.worktree, filepath)],
+      patterns: [Filesystem.relativePath(Instance.worktree, filepath)],
       always: ["*"],
       metadata: {
         filepath,
@@ -70,7 +69,7 @@ export const WriteTool = Tool.define("write", {
     }
 
     return {
-      title: path.relative(Instance.worktree, filepath),
+      title: Filesystem.relativePath(Instance.worktree, filepath),
       metadata: {
         diagnostics,
         filepath,

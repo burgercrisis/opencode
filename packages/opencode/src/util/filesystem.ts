@@ -1,5 +1,6 @@
 import { realpathSync } from "fs"
-import { dirname, join, relative, isAbsolute, resolve, normalize } from "path"
+import { Flag } from "@/flag/flag"
+import path from "path"
 
 export namespace Filesystem {
   export const exists = (p: string) =>
@@ -21,11 +22,12 @@ export namespace Filesystem {
   export function normalizePath(p: string): string {
     if (process.platform !== "win32") return p
     try {
-      return realpathSync.native(p)
+      return nativePath(realpathSync.native(p))
     } catch {
       return p
     }
   }
+
   
   /**
    * Cross-platform path normalization for git operations.
@@ -35,14 +37,14 @@ export namespace Filesystem {
    * @param forGit - If true, converts to forward slashes for git compatibility
    * @returns Normalized path suitable for the target platform and use case
    */
-  export function normalizeGitPath(path: string, forGit: boolean = true): string {
-    if (!path) return path
-    
+  export function normalizeGitPath(p: string, forGit: boolean = true): string {
+    if (!p) return p
+
     // Resolve to absolute path to eliminate relative components
-    let normalized = isAbsolute(path) ? path : resolve(path)
-    
+    let normalized = path.isAbsolute(p) ? p : path.resolve(p)
+
     // Normalize path separators for consistency
-    normalized = normalize(normalized)
+    normalized = path.normalize(normalized)
     
     // For git commands, always use forward slashes regardless of platform
     // Git internally always uses forward slashes
@@ -54,19 +56,35 @@ export namespace Filesystem {
   }
   
   /**
+   * On Windows, convert a path to its shell-native format.
+   * This is needed to match worktree path (`git rev-parse --show-toplevel`)
+   * and escaping issues in MSYS based shells (e.g. git bash).
+   */
+  export function nativePath(p: string): string {
+    if (process.platform !== "win32") return p
+    if (Flag.OPENCODE_EXPERIMENTAL_MSYS_PATHS) {
+      // Convert MSYS format /c/foo to C:/foo and normalize all separators to forward slashes
+      return p.replace(/^\/([a-zA-Z])\//, (_, d) => `${d.toUpperCase()}:/`).replace(/\\+/g, "/")
+    }
+    // Convert to backslashes for native Windows
+    // First handle MSYS format /c/foo -> C:\foo, then convert all forward slashes
+    return p.replace(/^\/([a-zA-Z])\//, (_, d) => `${d.toUpperCase()}:\\`).replace(/\//g, "\\")
+  }
+
+  /**
    * Normalize path for platform-native file operations.
    * Uses backslashes on Windows, forward slashes elsewhere.
    */
-  export function normalizeNativePath(path: string): string {
-    if (!path) return path
-    
-    const normalized = normalize(path)
-    
+  export function normalizeNativePath(p: string): string {
+    if (!p) return p
+
+    const normalized = path.normalize(p)
+
     // Convert to platform-native separators
     if (process.platform === "win32") {
       return normalized.replace(/\//g, "\\")
     }
-    
+
     return normalized
   }
   
@@ -74,13 +92,13 @@ export namespace Filesystem {
    * Get canonical project directory path for consistent project ID generation.
    * Handles different path representations (relative, absolute, network paths).
    */
-  export function getCanonicalPath(path: string): string {
-    if (!path) return path
-    
+  export function getCanonicalPath(p: string): string {
+    if (!p) return p
+
     try {
       // Resolve to absolute path and get real path (resolves symlinks, case, etc.)
-      const absolute = resolve(path)
-      
+      const absolute = path.resolve(p)
+
       if (process.platform === "win32") {
         // On Windows, use realpath to get canonical casing and resolve symlinks
         return realpathSync.native(absolute)
@@ -90,7 +108,7 @@ export namespace Filesystem {
       }
     } catch {
       // If realpath fails, fall back to absolute normalized path
-      return resolve(path)
+      return path.resolve(p)
     }
   }
   
@@ -181,18 +199,18 @@ export namespace Filesystem {
     }
     
     // Convert to absolute path
-    const absolutePath = isAbsolute(filepath) ? filepath : resolve(projectRoot, filepath)
-    
+    const absolutePath = path.isAbsolute(filepath) ? filepath : path.resolve(projectRoot, filepath)
+
     // Check if path is within project root (prevent directory traversal)
-    if (!contains(projectRoot, absolutePath)) {
+    if (!contains(absolutePath, projectRoot)) {
       return { valid: false, reason: 'Path outside project directory' }
     }
-    
+
     // Check for symbolic link loops (simplified check)
     if (filepath.includes('..')) {
       // Normalize and check again
-      const normalized = normalize(absolutePath)
-      if (!contains(projectRoot, normalized)) {
+      const normalized = path.normalize(absolutePath)
+      if (!contains(normalized, projectRoot)) {
         return { valid: false, reason: 'Symbolic link or path traversal detected' }
       }
     }
@@ -200,14 +218,30 @@ export namespace Filesystem {
     return { valid: true }
   }
   
+  export function relativePath(from: string, to: string) {
+    return nativePath(path.relative(nativePath(from), nativePath(to)))
+  }
+
+  export function resolvePath(...segments: string[]) {
+    return nativePath(path.resolve(...segments))
+  }
+
+  export function join(...segments: string[]) {
+    return nativePath(path.join(...segments))
+  }
+
+  export function dirname(p: string) {
+    return nativePath(path.dirname(p))
+  }
   export function overlaps(a: string, b: string) {
-    const relA = relative(a, b)
-    const relB = relative(b, a)
+    const relA = relativePath(a, b)
+    const relB = relativePath(b, a)
     return !relA || !relA.startsWith("..") || !relB || !relB.startsWith("..")
   }
 
   export function contains(parent: string, child: string) {
-    return !relative(parent, child).startsWith("..")
+    const path = relativePath(parent, child)
+    return !/^\.\.|.:/.test(path)
   }
 
   export async function findUp(target: string, start: string, stop?: string) {

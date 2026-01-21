@@ -133,17 +133,18 @@ describe("tool.bash permissions", () => {
             requests.push(req)
           },
         }
+        const tmpdir = process.platform === "win32" ? "C:\\Windows\\Temp" : "/tmp"
         await bash.execute(
           {
             command: "ls",
-            workdir: "/tmp",
+            workdir: tmpdir,
             description: "List /tmp",
           },
           testCtx,
         )
         const extDirReq = requests.find((r) => r.permission === "external_directory")
         expect(extDirReq).toBeDefined()
-        expect(extDirReq!.patterns).toContain("/tmp")
+        expect(extDirReq!.patterns).toContain(tmpdir)
       },
     })
   })

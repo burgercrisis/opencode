@@ -5,6 +5,7 @@ import DESCRIPTION from "./glob.txt"
 import { Ripgrep } from "../file/ripgrep"
 import { Instance } from "../project/instance"
 import { assertExternalDirectory } from "./external-directory"
+import { Filesystem } from "../util/filesystem"
 
 export const GlobTool = Tool.define("glob", {
   description: DESCRIPTION,
@@ -28,8 +29,8 @@ export const GlobTool = Tool.define("glob", {
       },
     })
 
-    let search = params.path ?? Instance.directory
-    search = path.isAbsolute(search) ? search : path.resolve(Instance.directory, search)
+    let search = params.path ? Filesystem.nativePath(params.path) : Instance.directory
+    search = path.isAbsolute(search) ? search : Filesystem.resolvePath(Instance.directory, search)
     await assertExternalDirectory(ctx, search, { kind: "directory" })
 
     const limit = 100
@@ -43,7 +44,7 @@ export const GlobTool = Tool.define("glob", {
         truncated = true
         break
       }
-      const full = path.resolve(search, file)
+      const full = Filesystem.resolvePath(search, file)
       const stats = await Bun.file(full)
         .stat()
         .then((x) => x.mtime.getTime())
@@ -66,7 +67,7 @@ export const GlobTool = Tool.define("glob", {
     }
 
     return {
-      title: path.relative(Instance.worktree, search),
+      title: Filesystem.relativePath(Instance.worktree, search),
       metadata: {
         count: files.length,
         truncated,
