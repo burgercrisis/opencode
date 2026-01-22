@@ -1,8 +1,12 @@
 import { BusEvent } from "@/bus/bus-event"
 import { Bus } from "@/bus"
 import { Log } from "../util/log"
+
 import { Filesystem } from "../util/filesystem"
 import { describeRoute, generateSpecs, validator, resolver, openAPIRouteHandler } from "hono-openapi"
+
+import { describeRoute, generateSpecs, validator, resolver } from "hono-openapi"
+
 import { Hono } from "hono"
 import { cors } from "hono/cors"
 import { streamSSE } from "hono/streaming"
@@ -13,7 +17,11 @@ import { Provider } from "../provider/provider"
 import { NamedError } from "@opencode-ai/util/error"
 import { LSP } from "../lsp"
 import { Format } from "../format"
+
 import { TuiRoutes } from "./routes/tui"
+
+import { MessageV2 } from "../session/message-v2"
+
 import { Instance } from "../project/instance"
 import { Vcs } from "../project/vcs"
 import { Agent } from "../agent/agent"
@@ -22,6 +30,7 @@ import { Auth } from "../auth"
 import { Flag } from "../flag/flag"
 import { Command } from "../command"
 import { Global } from "../global"
+
 import { ProjectRoutes } from "./routes/project"
 import { SessionRoutes } from "./routes/session"
 import { PtyRoutes } from "./routes/pty"
@@ -30,16 +39,39 @@ import { FileRoutes } from "./routes/file"
 import { ConfigRoutes } from "./routes/config"
 import { ExperimentalRoutes } from "./routes/experimental"
 import { ProviderRoutes } from "./routes/provider"
+
+import { ProjectRoute } from "./project"
+import { QuestionRoute } from "./question"
+import { ToolRegistry } from "../tool/registry"
+import { zodToJsonSchema } from "zod-to-json-schema"
+import { SessionPrompt } from "../session/prompt"
+import { SessionCompaction } from "../session/compaction"
+import { SessionRevert } from "../session/revert"
+
 import { lazy } from "../util/lazy"
 import { InstanceBootstrap } from "../project/bootstrap"
 import { Storage } from "../storage/storage"
 import type { ContentfulStatusCode } from "hono/utils/http-status"
+
 import { websocket } from "hono/bun"
 import { HTTPException } from "hono/http-exception"
 import { errors } from "./error"
 import { QuestionRoutes } from "./routes/question"
 import { PermissionRoutes } from "./routes/permission"
 import { GlobalRoutes } from "./routes/global"
+
+import { TuiEvent } from "@/cli/cmd/tui/event"
+import { Snapshot } from "@/snapshot"
+import { Identifier } from "@/id/id"
+import { SessionSummary } from "@/session/summary"
+import { SessionStatus } from "@/session/status"
+import { upgradeWebSocket, websocket } from "hono/bun"
+import { HTTPException } from "hono/http-exception"
+import { PartMismatchError, errors } from "./error"
+import { Pty } from "@/pty"
+import { PermissionNext } from "@/permission/next"
+import { Installation } from "@/installation"
+
 import { MDNS } from "./mdns"
 
 // @ts-ignore This global is needed to prevent ai-sdk from logging warnings to stdout https://github.com/vercel/ai/blob/2dc67e0ef538307f21368db32d5a12345d98831b/packages/ai/src/logger/log-warnings.ts#L85
@@ -55,6 +87,73 @@ export namespace Server {
     return _url ?? new URL("http://localhost:4096")
   }
 
+
+
+  export const Event = {
+    Connected: BusEvent.define("server.connected", z.object({})),
+    Disposed: BusEvent.define("global.disposed", z.object({})),
+    Heartbeat: BusEvent.define("server.heartbeat", z.object({})),
+  }
+
+  function decodeDirectory(input: string) {
+    const raw = input.trim()
+    if (!raw) return undefined
+    if (!raw.includes("%")) return raw
+
+    const segments = raw.split("%").slice(1)
+    const invalid = segments.some((part) => !/^[0-9A-Fa-f]{2}/.test(part))
+    if (invalid) return raw
+
+    return decodeURIComponent(raw)
+  }
+
+  const openapi500 = {
+    description: "Internal server error",
+    content: {
+      "application/json": {
+        schema: {
+          $ref: "#/components/schemas/UnknownError",
+        },
+      },
+    },
+  } as const
+
+  function isRecord(input: unknown): input is Record<string, unknown> {
+    return !!input && typeof input === "object" && !Array.isArray(input)
+  }
+
+  function addOpenapiDefaults(spec: unknown) {
+    if (!isRecord(spec)) return
+
+    const paths = spec["paths"]
+    if (!isRecord(paths)) return
+
+    for (const item of Object.values(paths)) {
+      if (!isRecord(item)) continue
+
+      for (const method of ["get", "post", "put", "patch", "delete"] as const) {
+        const op = item[method]
+        if (!isRecord(op)) continue
+
+        const raw = op["responses"]
+        const responses = isRecord(raw) ? raw : {}
+        if (!isRecord(raw)) {
+          op["responses"] = responses
+        }
+
+        if ("101" in responses) {
+          op["x-websocket"] = true
+        }
+
+        if ("500" in responses) continue
+        if ("default" in responses) continue
+
+        responses["500"] = openapi500
+      }
+    }
+  }
+
+
   const app = new Hono()
   export const App: () => Hono = lazy(
     () =>
@@ -67,6 +166,9 @@ export namespace Server {
           if (err instanceof NamedError) {
             let status: ContentfulStatusCode
             if (err instanceof Storage.NotFoundError) status = 404
+            else if (err instanceof Storage.InvalidKeyError) status = 400
+            else if (PartMismatchError.isInstance(err)) status = 400
+            else if (Session.BusyError.isInstance(err)) status = 409
             else if (err instanceof Provider.ModelNotFoundError) status = 400
             else if (err.name.startsWith("Worktree")) status = 400
             else status = 500
@@ -122,14 +224,154 @@ export namespace Server {
             },
           }),
         )
+
         .route("/global", GlobalRoutes())
+
+        .get(
+          "/global/health",
+          describeRoute({
+            summary: "Get health",
+            description: "Get health information about the OpenCode server.",
+            operationId: "global.health",
+            responses: {
+              200: {
+                description: "Health information",
+                content: {
+                  "application/json": {
+                    schema: resolver(z.object({ healthy: z.literal(true), version: z.string() })),
+                  },
+                },
+              },
+            },
+          }),
+          async (c) => {
+            return c.json({ healthy: true, version: Installation.VERSION })
+          },
+        )
+        .get(
+          "/global/event",
+          describeRoute({
+            summary: "Get global events",
+            description: "Subscribe to global events from the OpenCode system using server-sent events.",
+            operationId: "global.event",
+            responses: {
+              200: {
+                description: "Event stream",
+                content: {
+                  "text/event-stream": {
+                    schema: resolver(
+                      z
+                        .object({
+                          directory: z.string(),
+                          payload: BusEvent.payloads(),
+                        })
+                        .meta({
+                          ref: "GlobalEvent",
+                        }),
+                    ),
+                  },
+                },
+              },
+              ...errors(400),
+            },
+          }),
+          validator(
+            "query",
+            z.object({
+              directory: z.string().optional(),
+            }),
+          ),
+          async (c) => {
+            const headerDirectory = c.req.header("x-opencode-directory") ?? ""
+            const query = c.req.valid("query")
+            const requestedDirectory = query.directory ?? decodeDirectory(headerDirectory) ?? "global"
+            log.info("global event connected", { requestedDirectory })
+            return streamSSE(c, async (stream) => {
+              stream.writeSSE({
+                data: JSON.stringify({
+                  directory: "global",
+                  payload: {
+                    type: Event.Connected.type,
+                    properties: {},
+                  },
+                }),
+              })
+              async function handler(event: any) {
+                const dir = event?.directory
+                if (dir === undefined) {
+                  // Global (directory-less) events should always pass through
+                  await stream.writeSSE({
+                    data: JSON.stringify({ directory: "global", payload: event?.payload }),
+                  })
+                  return
+                }
+                if (requestedDirectory && dir !== requestedDirectory && dir !== "global") return
+                await stream.writeSSE({
+                  data: JSON.stringify(event),
+                })
+              }
+              GlobalBus.on("event", handler)
+
+              // Send heartbeat every 30s to prevent WKWebView timeout (60s default)
+              const heartbeat = setInterval(() => {
+                stream.writeSSE({
+                  data: JSON.stringify({
+                    directory: "global",
+                    payload: {
+                      type: Event.Heartbeat.type,
+                      properties: {},
+                    },
+                  }),
+                })
+              }, 30000)
+
+              await new Promise<void>((resolve) => {
+                stream.onAbort(() => {
+                  clearInterval(heartbeat)
+                  GlobalBus.off("event", handler)
+                  resolve()
+                  log.info("global event disconnected", { requestedDirectory })
+                })
+              })
+            })
+          },
+        )
+        .post(
+          "/global/dispose",
+          describeRoute({
+            summary: "Dispose instance",
+            description: "Clean up and dispose all OpenCode instances, releasing all resources.",
+            operationId: "global.dispose",
+            responses: {
+              200: {
+                description: "Global disposed",
+                content: {
+                  "application/json": {
+                    schema: resolver(z.boolean()),
+                  },
+                },
+              },
+            },
+          }),
+          async (c) => {
+            await Instance.disposeAll()
+            GlobalBus.emit("event", {
+              directory: "global",
+              payload: {
+                type: Event.Disposed.type,
+                properties: {},
+              },
+            })
+            return c.json(true)
+          },
+        )
+
         .use(async (c, next) => {
-          let directory = c.req.query("directory") || c.req.header("x-opencode-directory") || process.cwd()
-          try {
-            directory = decodeURIComponent(directory)
-          } catch {
-            // fallback to original value
-          }
+          const headerDirectory = c.req.header("x-opencode-directory")
+          const directory =
+            c.req.query("directory") ||
+            (headerDirectory ? decodeDirectory(headerDirectory) : undefined) ||
+            process.cwd()
           return Instance.provide({
             directory,
             init: InstanceBootstrap,
@@ -138,20 +380,11 @@ export namespace Server {
             },
           })
         })
-        .get(
-          "/doc",
-          openAPIRouteHandler(app, {
-            documentation: {
-              info: {
-                title: "opencode",
-                version: "0.0.3",
-                description: "opencode api",
-              },
-              openapi: "3.1.1",
-            },
-          }),
-        )
+        .get("/doc", async (c) => {
+          return c.json(await openapi())
+        })
         .use(validator("query", z.object({ directory: z.string().optional() })))
+
         .route("/project", ProjectRoutes())
         .route("/pty", PtyRoutes())
         .route("/config", ConfigRoutes())
@@ -163,6 +396,295 @@ export namespace Server {
         .route("/", FileRoutes())
         .route("/mcp", McpRoutes())
         .route("/tui", TuiRoutes())
+
+
+        .route("/project", ProjectRoute)
+        .route("/question", QuestionRoute)
+
+        .get(
+          "/pty",
+          describeRoute({
+            summary: "List PTY sessions",
+            description: "Get a list of all active pseudo-terminal (PTY) sessions managed by OpenCode.",
+            operationId: "pty.list",
+            responses: {
+              200: {
+                description: "List of sessions",
+                content: {
+                  "application/json": {
+                    schema: resolver(Pty.Info.array()),
+                  },
+                },
+              },
+            },
+          }),
+          async (c) => {
+            return c.json(Pty.list())
+          },
+        )
+        .post(
+          "/pty",
+          describeRoute({
+            summary: "Create PTY session",
+            description: "Create a new pseudo-terminal (PTY) session for running shell commands and processes.",
+            operationId: "pty.create",
+            responses: {
+              200: {
+                description: "Created session",
+                content: {
+                  "application/json": {
+                    schema: resolver(Pty.Info),
+                  },
+                },
+              },
+              ...errors(400),
+            },
+          }),
+          validator("json", Pty.CreateInput),
+          async (c) => {
+            const info = await Pty.create(c.req.valid("json"))
+            return c.json(info)
+          },
+        )
+        .get(
+          "/pty/:ptyID",
+          describeRoute({
+            summary: "Get PTY session",
+            description: "Retrieve detailed information about a specific pseudo-terminal (PTY) session.",
+            operationId: "pty.get",
+            responses: {
+              200: {
+                description: "Session info",
+                content: {
+                  "application/json": {
+                    schema: resolver(Pty.Info),
+                  },
+                },
+              },
+              ...errors(404),
+            },
+          }),
+          validator("param", z.object({ ptyID: z.string() })),
+          async (c) => {
+            const info = Pty.get(c.req.valid("param").ptyID)
+            if (!info) {
+              throw new Storage.NotFoundError({ message: "Session not found" })
+            }
+            return c.json(info)
+          },
+        )
+        .put(
+          "/pty/:ptyID",
+          describeRoute({
+            summary: "Update PTY session",
+            description: "Update properties of an existing pseudo-terminal (PTY) session.",
+            operationId: "pty.update",
+            responses: {
+              200: {
+                description: "Updated session",
+                content: {
+                  "application/json": {
+                    schema: resolver(Pty.Info),
+                  },
+                },
+              },
+              ...errors(400, 404),
+            },
+          }),
+          validator("param", z.object({ ptyID: z.string() })),
+          validator("json", Pty.UpdateInput),
+          async (c) => {
+            const ptyID = c.req.valid("param").ptyID
+            const info = await Pty.update(ptyID, c.req.valid("json"))
+            if (!info) {
+              throw new Storage.NotFoundError({ message: `PTY not found: ${ptyID}` })
+            }
+            return c.json(info)
+          },
+        )
+        .delete(
+          "/pty/:ptyID",
+          describeRoute({
+            summary: "Remove PTY session",
+            description: "Remove and terminate a specific pseudo-terminal (PTY) session.",
+            operationId: "pty.remove",
+            responses: {
+              200: {
+                description: "Session removed",
+                content: {
+                  "application/json": {
+                    schema: resolver(z.boolean()),
+                  },
+                },
+              },
+              ...errors(404),
+            },
+          }),
+          validator("param", z.object({ ptyID: z.string() })),
+          async (c) => {
+            const ptyID = c.req.valid("param").ptyID
+            if (!Pty.get(ptyID)) {
+              throw new Storage.NotFoundError({ message: `PTY not found: ${ptyID}` })
+            }
+            await Pty.remove(ptyID)
+            return c.json(true)
+          },
+        )
+        .get(
+          "/pty/:ptyID/connect",
+          describeRoute({
+            summary: "Connect to PTY session",
+            description:
+              "Establish a WebSocket connection to interact with a pseudo-terminal (PTY) session in real-time.",
+            operationId: "pty.connect",
+            responses: {
+              101: {
+                description: "Switching Protocols (WebSocket)",
+              },
+              ...errors(404),
+            },
+          }),
+          validator("param", z.object({ ptyID: z.string() })),
+          upgradeWebSocket((c) => {
+            const id = c.req.param("ptyID")
+            let handler: ReturnType<typeof Pty.connect>
+            if (!Pty.get(id)) throw new Storage.NotFoundError({ message: `PTY not found: ${id}` })
+            return {
+              onOpen(_event, ws) {
+                handler = Pty.connect(id, ws)
+              },
+              onMessage(event) {
+                handler?.onMessage(String(event.data))
+              },
+              onClose() {
+                handler?.onClose()
+              },
+            }
+          }),
+        )
+
+        .get(
+          "/config",
+          describeRoute({
+            summary: "Get configuration",
+            description: "Retrieve the current OpenCode configuration settings and preferences.",
+            operationId: "config.get",
+            responses: {
+              200: {
+                description: "Get config info",
+                content: {
+                  "application/json": {
+                    schema: resolver(Config.Info),
+                  },
+                },
+              },
+            },
+          }),
+          async (c) => {
+            return c.json(await Config.get())
+          },
+        )
+
+        .patch(
+          "/config",
+          describeRoute({
+            summary: "Update configuration",
+            description: "Update OpenCode configuration settings and preferences.",
+            operationId: "config.update",
+            responses: {
+              200: {
+                description: "Successfully updated config",
+                content: {
+                  "application/json": {
+                    schema: resolver(Config.Info),
+                  },
+                },
+              },
+              ...errors(400),
+            },
+          }),
+          validator("json", Config.Info),
+          async (c) => {
+            const config = c.req.valid("json")
+            await Config.update(config)
+            return c.json(config)
+          },
+        )
+        .get(
+          "/experimental/tool/ids",
+          describeRoute({
+            summary: "List tool IDs",
+            description:
+              "Get a list of all available tool IDs, including both built-in tools and dynamically registered tools.",
+            operationId: "tool.ids",
+            responses: {
+              200: {
+                description: "Tool IDs",
+                content: {
+                  "application/json": {
+                    schema: resolver(z.array(z.string()).meta({ ref: "ToolIDs" })),
+                  },
+                },
+              },
+              ...errors(400),
+            },
+          }),
+          async (c) => {
+            return c.json(await ToolRegistry.ids())
+          },
+        )
+        .get(
+          "/experimental/tool",
+          describeRoute({
+            summary: "List tools",
+            description:
+              "Get a list of available tools with their JSON schema parameters for a specific provider and model combination.",
+            operationId: "tool.list",
+            responses: {
+              200: {
+                description: "Tools",
+                content: {
+                  "application/json": {
+                    schema: resolver(
+                      z
+                        .array(
+                          z
+                            .object({
+                              id: z.string(),
+                              description: z.string(),
+                              parameters: z.any(),
+                            })
+                            .meta({ ref: "ToolListItem" }),
+                        )
+                        .meta({ ref: "ToolList" }),
+                    ),
+                  },
+                },
+              },
+              ...errors(400),
+            },
+          }),
+          validator(
+            "query",
+            z.object({
+              provider: z.string(),
+              model: z.string(),
+            }),
+          ),
+          async (c) => {
+            const { provider } = c.req.valid("query")
+            const tools = await ToolRegistry.tools(provider)
+            return c.json(
+              tools.map((t) => ({
+                id: t.id,
+                description: t.description,
+                // Handle both Zod schemas and plain JSON schemas
+                parameters: (t.parameters as any)?._def ? zodToJsonSchema(t.parameters as any) : t.parameters,
+              })),
+            )
+          },
+        )
+
         .post(
           "/instance/dispose",
           describeRoute({
@@ -277,12 +799,19 @@ export namespace Server {
                 .optional()
                 .meta({ description: "Filter sessions updated on or after this timestamp (milliseconds since epoch)" }),
               search: z.string().optional().meta({ description: "Filter sessions by title (case-insensitive)" }),
-              limit: z.coerce.number().optional().meta({ description: "Maximum number of sessions to return" }),
+              limit: z.coerce
+                .number()
+                .int()
+                .min(0)
+                .optional()
+                .meta({ description: "Maximum number of sessions to return" }),
             }),
           ),
           async (c) => {
             const query = c.req.valid("query")
+            if (query.limit === 0) return c.json([])
             const term = query.search?.toLowerCase()
+
             const sessions: Session.Info[] = []
             const normalizedQueryDir = query.directory ? Filesystem.nativePath(query.directory) : undefined
             for await (const session of Session.list()) {
@@ -295,6 +824,18 @@ export namespace Server {
               if (query.limit !== undefined && sessions.length >= query.limit) break
             }
             return c.json(sessions)
+
+
+            const sessions = await Session.listCached().catch(() => [])
+            const filtered = sessions.filter((session) => {
+              if (query.start !== undefined && session.time.updated < query.start) return false
+              if (term !== undefined && !session.title.toLowerCase().includes(term)) return false
+              return true
+            })
+            const sorted = filtered.toSorted((a, b) => b.time.updated - a.time.updated)
+            const limited = query.limit !== undefined ? sorted.slice(0, query.limit) : sorted
+            return c.json(limited)
+
           },
         )
         .get(
@@ -342,12 +883,12 @@ export namespace Server {
           validator(
             "param",
             z.object({
-              sessionID: Session.get.schema,
+              sessionID: Identifier.schema("session").meta({ description: "Session ID" }),
             }),
           ),
+
           async (c) => {
             const sessionID = c.req.valid("param").sessionID
-            log.info("SEARCH", { url: c.req.url })
             const session = await Session.get(sessionID)
             return c.json(session)
           },
@@ -398,13 +939,13 @@ export namespace Server {
                   },
                 },
               },
-              ...errors(400, 404),
+              ...errors(400),
             },
           }),
           validator(
             "param",
             z.object({
-              sessionID: z.string().meta({ description: "Session ID" }),
+              sessionID: Identifier.schema("session").meta({ description: "Session ID" }),
             }),
           ),
           async (c) => {
@@ -489,7 +1030,7 @@ export namespace Server {
           validator(
             "param",
             z.object({
-              sessionID: z.string(),
+              sessionID: Identifier.schema("session").meta({ description: "Session ID" }),
             }),
           ),
           validator(
@@ -539,7 +1080,7 @@ export namespace Server {
           validator(
             "param",
             z.object({
-              sessionID: z.string().meta({ description: "Session ID" }),
+              sessionID: Identifier.schema("session").meta({ description: "Session ID" }),
             }),
           ),
           validator("json", Session.initialize.schema.omit({ sessionID: true })),
@@ -596,13 +1137,13 @@ export namespace Server {
                   },
                 },
               },
-              ...errors(400, 404),
+              ...errors(400),
             },
           }),
           validator(
             "param",
             z.object({
-              sessionID: z.string(),
+              sessionID: Identifier.schema("session").meta({ description: "Session ID" }),
             }),
           ),
           async (c) => {
@@ -632,7 +1173,7 @@ export namespace Server {
           validator(
             "param",
             z.object({
-              sessionID: z.string(),
+              sessionID: Identifier.schema("session").meta({ description: "Session ID" }),
             }),
           ),
           async (c) => {
@@ -640,45 +1181,6 @@ export namespace Server {
             await Session.share(sessionID)
             const session = await Session.get(sessionID)
             return c.json(session)
-          },
-        )
-        .get(
-          "/session/:sessionID/diff",
-          describeRoute({
-            summary: "Get message diff",
-            description: "Get the file changes (diff) that resulted from a specific user message in the session.",
-            operationId: "session.diff",
-            responses: {
-              200: {
-                description: "Successfully retrieved diff",
-                content: {
-                  "application/json": {
-                    schema: resolver(Snapshot.FileDiff.array()),
-                  },
-                },
-              },
-            },
-          }),
-          validator(
-            "param",
-            z.object({
-              sessionID: SessionSummary.diff.schema.shape.sessionID,
-            }),
-          ),
-          validator(
-            "query",
-            z.object({
-              messageID: SessionSummary.diff.schema.shape.messageID,
-            }),
-          ),
-          async (c) => {
-            const query = c.req.valid("query")
-            const params = c.req.valid("param")
-            const result = await SessionSummary.diff({
-              sessionID: params.sessionID,
-              messageID: query.messageID,
-            })
-            return c.json(result)
           },
         )
         .delete(
@@ -733,7 +1235,7 @@ export namespace Server {
           validator(
             "param",
             z.object({
-              sessionID: z.string().meta({ description: "Session ID" }),
+              sessionID: Identifier.schema("session").meta({ description: "Session ID" }),
             }),
           ),
           validator(
@@ -786,13 +1288,13 @@ export namespace Server {
                   },
                 },
               },
-              ...errors(400, 404),
+              ...errors(400),
             },
           }),
           validator(
             "param",
             z.object({
-              sessionID: z.string().meta({ description: "Session ID" }),
+              sessionID: Identifier.schema("session").meta({ description: "Session ID" }),
             }),
           ),
           validator(
@@ -825,13 +1327,13 @@ export namespace Server {
                   },
                 },
               },
-              ...errors(400, 404),
+              ...errors(400),
             },
           }),
           validator(
             "param",
             z.object({
-              sessionID: z.string().meta({ description: "Session ID" }),
+              sessionID: Identifier.schema("session").meta({ description: "Session ID" }),
             }),
           ),
           async (c) => {
@@ -865,8 +1367,8 @@ export namespace Server {
           validator(
             "param",
             z.object({
-              sessionID: z.string().meta({ description: "Session ID" }),
-              messageID: z.string().meta({ description: "Message ID" }),
+              sessionID: Identifier.schema("session").meta({ description: "Session ID" }),
+              messageID: Identifier.schema("message").meta({ description: "Message ID" }),
             }),
           ),
           async (c) => {
@@ -892,15 +1394,15 @@ export namespace Server {
                   },
                 },
               },
-              ...errors(400, 404),
+              ...errors(400, 404, 409),
             },
           }),
           validator(
             "param",
             z.object({
-              sessionID: z.string().meta({ description: "Session ID" }),
-              messageID: z.string().meta({ description: "Message ID" }),
-              partID: z.string().meta({ description: "Part ID" }),
+              sessionID: Identifier.schema("session").meta({ description: "Session ID" }),
+              messageID: Identifier.schema("message").meta({ description: "Message ID" }),
+              partID: Identifier.schema("part").meta({ description: "Part ID" }),
             }),
           ),
           async (c) => {
@@ -927,15 +1429,15 @@ export namespace Server {
                   },
                 },
               },
-              ...errors(400, 404),
+              ...errors(400, 404, 409),
             },
           }),
           validator(
             "param",
             z.object({
-              sessionID: z.string().meta({ description: "Session ID" }),
-              messageID: z.string().meta({ description: "Message ID" }),
-              partID: z.string().meta({ description: "Part ID" }),
+              sessionID: Identifier.schema("session").meta({ description: "Session ID" }),
+              messageID: Identifier.schema("message").meta({ description: "Message ID" }),
+              partID: Identifier.schema("part").meta({ description: "Part ID" }),
             }),
           ),
           validator("json", MessageV2.Part),
@@ -947,9 +1449,18 @@ export namespace Server {
               body.messageID !== params.messageID ||
               body.sessionID !== params.sessionID
             ) {
-              throw new Error(
-                `Part mismatch: body.id='${body.id}' vs partID='${params.partID}', body.messageID='${body.messageID}' vs messageID='${params.messageID}', body.sessionID='${body.sessionID}' vs sessionID='${params.sessionID}'`,
-              )
+              throw new PartMismatchError({
+                expected: {
+                  sessionID: params.sessionID,
+                  messageID: params.messageID,
+                  partID: params.partID,
+                },
+                received: {
+                  sessionID: body.sessionID,
+                  messageID: body.messageID,
+                  partID: body.id,
+                },
+              })
             }
             const part = await Session.updatePart(body)
             return c.json(part)
@@ -981,7 +1492,7 @@ export namespace Server {
           validator(
             "param",
             z.object({
-              sessionID: z.string().meta({ description: "Session ID" }),
+              sessionID: Identifier.schema("session").meta({ description: "Session ID" }),
             }),
           ),
           validator("json", SessionPrompt.PromptInput.omit({ sessionID: true })),
@@ -1013,7 +1524,7 @@ export namespace Server {
           validator(
             "param",
             z.object({
-              sessionID: z.string().meta({ description: "Session ID" }),
+              sessionID: Identifier.schema("session").meta({ description: "Session ID" }),
             }),
           ),
           validator("json", SessionPrompt.PromptInput.omit({ sessionID: true })),
@@ -1053,7 +1564,7 @@ export namespace Server {
           validator(
             "param",
             z.object({
-              sessionID: z.string().meta({ description: "Session ID" }),
+              sessionID: Identifier.schema("session").meta({ description: "Session ID" }),
             }),
           ),
           validator("json", SessionPrompt.CommandInput.omit({ sessionID: true })),
@@ -1079,13 +1590,13 @@ export namespace Server {
                   },
                 },
               },
-              ...errors(400, 404),
+              ...errors(400, 404, 409),
             },
           }),
           validator(
             "param",
             z.object({
-              sessionID: z.string().meta({ description: "Session ID" }),
+              sessionID: Identifier.schema("session").meta({ description: "Session ID" }),
             }),
           ),
           validator("json", SessionPrompt.ShellInput.omit({ sessionID: true })),
@@ -1112,13 +1623,13 @@ export namespace Server {
                   },
                 },
               },
-              ...errors(400, 404),
+              ...errors(400, 404, 409),
             },
           }),
           validator(
             "param",
             z.object({
-              sessionID: z.string(),
+              sessionID: Identifier.schema("session").meta({ description: "Session ID" }),
             }),
           ),
           validator("json", SessionRevert.RevertInput.omit({ sessionID: true })),
@@ -1147,13 +1658,13 @@ export namespace Server {
                   },
                 },
               },
-              ...errors(400, 404),
+              ...errors(400, 404, 409),
             },
           }),
           validator(
             "param",
             z.object({
-              sessionID: z.string(),
+              sessionID: Identifier.schema("session").meta({ description: "Session ID" }),
             }),
           ),
           async (c) => {
@@ -1184,7 +1695,7 @@ export namespace Server {
           validator(
             "param",
             z.object({
-              sessionID: z.string(),
+              sessionID: Identifier.schema("session").meta({ description: "Session ID" }),
               permissionID: z.string(),
             }),
           ),
@@ -1256,7 +1767,6 @@ export namespace Server {
             return c.json(permissions)
           },
         )
-        .route("/question", QuestionRoute)
         .get(
           "/command",
           describeRoute({
@@ -1279,6 +1789,384 @@ export namespace Server {
             return c.json(commands)
           },
         )
+
+
+        .get(
+          "/config/providers",
+          describeRoute({
+            summary: "List config providers",
+            description: "Get a list of all configured AI providers and their default models.",
+            operationId: "config.providers",
+            responses: {
+              200: {
+                description: "List of providers",
+                content: {
+                  "application/json": {
+                    schema: resolver(
+                      z.object({
+                        providers: Provider.Info.array(),
+                        default: z.record(z.string(), z.string()),
+                      }),
+                    ),
+                  },
+                },
+              },
+            },
+          }),
+          async (c) => {
+            using _ = log.time("providers")
+            const providers = await Provider.list().then((x) => mapValues(x, (item) => item))
+            // DEBUG: Log all providers and their models
+            for (const [id, provider] of Object.entries(providers)) {
+              log.info("provider", {
+                id,
+                modelCount: Object.keys(provider.models).length,
+                models: Object.keys(provider.models),
+              })
+            }
+            return c.json({
+              providers: Object.values(providers),
+              default: mapValues(providers, (item) => Provider.sort(Object.values(item.models))[0].id),
+            })
+          },
+        )
+        .get(
+          "/provider",
+          describeRoute({
+            summary: "List providers",
+            description: "Get a list of all available AI providers, including both available and connected ones.",
+            operationId: "provider.list",
+            responses: {
+              200: {
+                description: "List of providers",
+                content: {
+                  "application/json": {
+                    schema: resolver(
+                      z.object({
+                        all: ModelsDev.Provider.array(),
+                        default: z.record(z.string(), z.string()),
+                        connected: z.array(z.string()),
+                      }),
+                    ),
+                  },
+                },
+              },
+            },
+          }),
+          async (c) => {
+            const config = await Config.get()
+            const disabled = new Set(config.disabled_providers ?? [])
+            const enabled = config.enabled_providers ? new Set(config.enabled_providers) : undefined
+
+            const allProviders = await ModelsDev.get()
+            const filteredProviders: Record<string, (typeof allProviders)[string]> = {}
+            for (const [key, value] of Object.entries(allProviders)) {
+              if ((enabled ? enabled.has(key) : true) && !disabled.has(key)) {
+                filteredProviders[key] = value
+              }
+            }
+
+            const connected = await Provider.list()
+            const providers = Object.assign(
+              mapValues(filteredProviders, (x) => Provider.fromModelsDevProvider(x)),
+              connected,
+            )
+            return c.json({
+              all: Object.values(providers),
+              default: mapValues(providers, (item) => Provider.sort(Object.values(item.models))[0].id),
+              connected: Object.keys(connected),
+            })
+          },
+        )
+        .get(
+          "/provider/auth",
+          describeRoute({
+            summary: "Get provider auth methods",
+            description: "Retrieve available authentication methods for all AI providers.",
+            operationId: "provider.auth",
+            responses: {
+              200: {
+                description: "Provider auth methods",
+                content: {
+                  "application/json": {
+                    schema: resolver(z.record(z.string(), z.array(ProviderAuth.Method))),
+                  },
+                },
+              },
+            },
+          }),
+          async (c) => {
+            return c.json(await ProviderAuth.methods())
+          },
+        )
+        .post(
+          "/provider/:providerID/oauth/authorize",
+          describeRoute({
+            summary: "OAuth authorize",
+            description: "Initiate OAuth authorization for a specific AI provider to get an authorization URL.",
+            operationId: "provider.oauth.authorize",
+            responses: {
+              200: {
+                description: "Authorization URL and method",
+                content: {
+                  "application/json": {
+                    schema: resolver(ProviderAuth.Authorization.optional()),
+                  },
+                },
+              },
+              ...errors(400),
+            },
+          }),
+          validator(
+            "param",
+            z.object({
+              providerID: z.string().meta({ description: "Provider ID" }),
+            }),
+          ),
+          validator(
+            "json",
+            z.object({
+              method: z.number().meta({ description: "Auth method index" }),
+            }),
+          ),
+          async (c) => {
+            const providerID = c.req.valid("param").providerID
+            const { method } = c.req.valid("json")
+            const result = await ProviderAuth.authorize({
+              providerID,
+              method,
+            })
+            return c.json(result)
+          },
+        )
+        .post(
+          "/provider/:providerID/oauth/callback",
+          describeRoute({
+            summary: "OAuth callback",
+            description: "Handle the OAuth callback from a provider after user authorization.",
+            operationId: "provider.oauth.callback",
+            responses: {
+              200: {
+                description: "OAuth callback processed successfully",
+                content: {
+                  "application/json": {
+                    schema: resolver(z.boolean()),
+                  },
+                },
+              },
+              ...errors(400),
+            },
+          }),
+          validator(
+            "param",
+            z.object({
+              providerID: z.string().meta({ description: "Provider ID" }),
+            }),
+          ),
+          validator(
+            "json",
+            z.object({
+              method: z.number().meta({ description: "Auth method index" }),
+              code: z.string().optional().meta({ description: "OAuth authorization code" }),
+            }),
+          ),
+          async (c) => {
+            const providerID = c.req.valid("param").providerID
+            const { method, code } = c.req.valid("json")
+            await ProviderAuth.callback({
+              providerID,
+              method,
+              code,
+            })
+            return c.json(true)
+          },
+        )
+        .get(
+          "/find",
+          describeRoute({
+            summary: "Find text",
+            description: "Search for text patterns across files in the project using ripgrep.",
+            operationId: "find.text",
+            responses: {
+              200: {
+                description: "Matches",
+                content: {
+                  "application/json": {
+                    schema: resolver(Ripgrep.Match.shape.data.array()),
+                  },
+                },
+              },
+            },
+          }),
+          validator(
+            "query",
+            z.object({
+              pattern: z.string(),
+            }),
+          ),
+          async (c) => {
+            const pattern = c.req.valid("query").pattern
+            const result = await Ripgrep.search({
+              cwd: Instance.directory,
+              pattern,
+              limit: 10,
+            })
+            return c.json(result)
+          },
+        )
+        .get(
+          "/find/file",
+          describeRoute({
+            summary: "Find files",
+            description: "Search for files or directories by name or pattern in the project directory.",
+            operationId: "find.files",
+            responses: {
+              200: {
+                description: "File paths",
+                content: {
+                  "application/json": {
+                    schema: resolver(z.string().array()),
+                  },
+                },
+              },
+            },
+          }),
+          validator(
+            "query",
+            z.object({
+              query: z.string(),
+              dirs: z.enum(["true", "false"]).optional(),
+              type: z.enum(["file", "directory"]).optional(),
+              limit: z.coerce.number().int().min(1).max(200).optional(),
+            }),
+          ),
+          async (c) => {
+            const query = c.req.valid("query").query
+            const dirs = c.req.valid("query").dirs
+            const type = c.req.valid("query").type
+            const limit = c.req.valid("query").limit
+            const results = await File.search({
+              query,
+              limit: limit ?? 10,
+              dirs: dirs !== "false",
+              type,
+            })
+            return c.json(results)
+          },
+        )
+        .get(
+          "/find/symbol",
+          describeRoute({
+            summary: "Find symbols",
+            description: "Search for workspace symbols like functions, classes, and variables using LSP.",
+            operationId: "find.symbols",
+            responses: {
+              200: {
+                description: "Symbols",
+                content: {
+                  "application/json": {
+                    schema: resolver(LSP.Symbol.array()),
+                  },
+                },
+              },
+            },
+          }),
+          validator(
+            "query",
+            z.object({
+              query: z.string(),
+            }),
+          ),
+          async (c) => {
+            /*
+          const query = c.req.valid("query").query
+          const result = await LSP.workspaceSymbol(query)
+          return c.json(result)
+          */
+            return c.json([])
+          },
+        )
+        .get(
+          "/file",
+          describeRoute({
+            summary: "List files",
+            description: "List files and directories in a specified path.",
+            operationId: "file.list",
+            responses: {
+              200: {
+                description: "Files and directories",
+                content: {
+                  "application/json": {
+                    schema: resolver(File.Node.array()),
+                  },
+                },
+              },
+            },
+          }),
+          validator(
+            "query",
+            z.object({
+              path: z.string(),
+            }),
+          ),
+          async (c) => {
+            const path = c.req.valid("query").path
+            const content = await File.list(path)
+            return c.json(content)
+          },
+        )
+        .get(
+          "/file/content",
+          describeRoute({
+            summary: "Read file",
+            description: "Read the content of a specified file.",
+            operationId: "file.read",
+            responses: {
+              200: {
+                description: "File content",
+                content: {
+                  "application/json": {
+                    schema: resolver(File.Content),
+                  },
+                },
+              },
+            },
+          }),
+          validator(
+            "query",
+            z.object({
+              path: z.string(),
+            }),
+          ),
+          async (c) => {
+            const path = c.req.valid("query").path
+            const content = await File.read(path)
+            return c.json(content)
+          },
+        )
+        .get(
+          "/file/status",
+          describeRoute({
+            summary: "Get file status",
+            description: "Get the git status of all files in the project.",
+            operationId: "file.status",
+            responses: {
+              200: {
+                description: "File status",
+                content: {
+                  "application/json": {
+                    schema: resolver(File.Info.array()),
+                  },
+                },
+              },
+            },
+          }),
+          async (c) => {
+            const content = await File.status()
+            return c.json(content)
+          },
+        )
+
         .post(
           "/log",
           describeRoute({
@@ -1371,8 +2259,244 @@ export namespace Server {
             },
           }),
           async (c) => {
+
             const skills = await Skill.all()
             return c.json(skills)
+
+            return c.json(await MCP.status())
+          },
+        )
+        .post(
+          "/mcp",
+          describeRoute({
+            summary: "Add MCP server",
+            description: "Dynamically add a new Model Context Protocol (MCP) server to the system.",
+            operationId: "mcp.add",
+            responses: {
+              200: {
+                description: "MCP server added successfully",
+                content: {
+                  "application/json": {
+                    schema: resolver(z.record(z.string(), MCP.Status)),
+                  },
+                },
+              },
+              ...errors(400),
+            },
+          }),
+          validator(
+            "json",
+            z.object({
+              name: z.string(),
+              config: Config.Mcp,
+            }),
+          ),
+          async (c) => {
+            const { name, config } = c.req.valid("json")
+            const result = await MCP.add(name, config)
+            return c.json(result.status)
+          },
+        )
+        .post(
+          "/mcp/:name/auth",
+          describeRoute({
+            summary: "Start MCP OAuth",
+            description: "Start OAuth authentication flow for a Model Context Protocol (MCP) server.",
+            operationId: "mcp.auth.start",
+            responses: {
+              200: {
+                description: "OAuth flow started",
+                content: {
+                  "application/json": {
+                    schema: resolver(
+                      z.object({
+                        authorizationUrl: z.string().describe("URL to open in browser for authorization"),
+                      }),
+                    ),
+                  },
+                },
+              },
+              ...errors(400, 404),
+            },
+          }),
+          async (c) => {
+            const name = c.req.param("name")
+            const supportsOAuth = await MCP.supportsOAuth(name)
+            if (!supportsOAuth) {
+              return c.json({ error: `MCP server ${name} does not support OAuth` }, 400)
+            }
+            const result = await MCP.startAuth(name)
+            return c.json(result)
+          },
+        )
+        .post(
+          "/mcp/:name/auth/callback",
+          describeRoute({
+            summary: "Complete MCP OAuth",
+            description:
+              "Complete OAuth authentication for a Model Context Protocol (MCP) server using the authorization code.",
+            operationId: "mcp.auth.callback",
+            responses: {
+              200: {
+                description: "OAuth authentication completed",
+                content: {
+                  "application/json": {
+                    schema: resolver(MCP.Status),
+                  },
+                },
+              },
+              ...errors(400, 404),
+            },
+          }),
+          validator(
+            "json",
+            z.object({
+              code: z.string().describe("Authorization code from OAuth callback"),
+            }),
+          ),
+          async (c) => {
+            const name = c.req.param("name")
+            const { code } = c.req.valid("json")
+            const status = await MCP.finishAuth(name, code)
+            return c.json(status)
+          },
+        )
+        .post(
+          "/mcp/:name/auth/authenticate",
+          describeRoute({
+            summary: "Authenticate MCP OAuth",
+            description: "Start OAuth flow and wait for callback (opens browser)",
+            operationId: "mcp.auth.authenticate",
+            responses: {
+              200: {
+                description: "OAuth authentication completed",
+                content: {
+                  "application/json": {
+                    schema: resolver(MCP.Status),
+                  },
+                },
+              },
+              ...errors(400, 404),
+            },
+          }),
+          async (c) => {
+            const name = c.req.param("name")
+            const supportsOAuth = await MCP.supportsOAuth(name)
+            if (!supportsOAuth) {
+              return c.json({ error: `MCP server ${name} does not support OAuth` }, 400)
+            }
+            const status = await MCP.authenticate(name)
+            return c.json(status)
+          },
+        )
+        .delete(
+          "/mcp/:name/auth",
+          describeRoute({
+            summary: "Remove MCP OAuth",
+            description: "Remove OAuth credentials for an MCP server",
+            operationId: "mcp.auth.remove",
+            responses: {
+              200: {
+                description: "OAuth credentials removed",
+                content: {
+                  "application/json": {
+                    schema: resolver(z.object({ success: z.literal(true) })),
+                  },
+                },
+              },
+              ...errors(404),
+            },
+          }),
+          async (c) => {
+            const name = c.req.param("name")
+            await MCP.removeAuth(name)
+            return c.json({ success: true as const })
+          },
+        )
+        .post(
+          "/mcp/:name/connect",
+          describeRoute({
+            description: "Connect an MCP server",
+            operationId: "mcp.connect",
+            responses: {
+              200: {
+                description: "MCP server connected successfully",
+                content: {
+                  "application/json": {
+                    schema: resolver(z.boolean()),
+                  },
+                },
+              },
+            },
+          }),
+          validator("param", z.object({ name: z.string() })),
+          async (c) => {
+            const { name } = c.req.valid("param")
+            await MCP.connect(name)
+            return c.json(true)
+          },
+        )
+        .post(
+          "/mcp/:name/disconnect",
+          describeRoute({
+            description: "Disconnect an MCP server",
+            operationId: "mcp.disconnect",
+            responses: {
+              200: {
+                description: "MCP server disconnected successfully",
+                content: {
+                  "application/json": {
+                    schema: resolver(z.boolean()),
+                  },
+                },
+              },
+            },
+          }),
+          validator("param", z.object({ name: z.string() })),
+          async (c) => {
+            const { name } = c.req.valid("param")
+            await MCP.disconnect(name)
+            return c.json(true)
+          },
+        )
+        .get(
+          "/experimental/resource",
+          describeRoute({
+            summary: "Get MCP resources",
+            description: "Get all available MCP resources from connected servers. Optionally filter by name.",
+            operationId: "experimental.resource.list",
+            responses: {
+              200: {
+                description: "MCP resources",
+                content: {
+                  "application/json": {
+                    schema: resolver(z.record(z.string(), MCP.Resource)),
+                  },
+                },
+              },
+            },
+          }),
+          validator(
+            "query",
+            z.object({
+              search: z.string().optional().meta({ description: "Filter resources by name (case-insensitive)" }),
+            }),
+          ),
+          async (c) => {
+            const query = c.req.valid("query")
+            const term = query.search?.toLowerCase()
+            const resources = await MCP.resources()
+            if (!term) return c.json(resources)
+
+            const filtered = Object.fromEntries(
+              Object.entries(resources).filter(([key, value]) => {
+                if (key.toLowerCase().includes(term)) return true
+                return value.name.toLowerCase().includes(term)
+              }),
+            )
+
+            return c.json(filtered)
+
           },
         )
         .get(
@@ -1417,6 +2541,303 @@ export namespace Server {
             return c.json(await Format.status())
           },
         )
+
+
+        .post(
+          "/tui/append-prompt",
+          describeRoute({
+            summary: "Append TUI prompt",
+            description: "Append prompt to the TUI",
+            operationId: "tui.appendPrompt",
+            responses: {
+              200: {
+                description: "Prompt processed successfully",
+                content: {
+                  "application/json": {
+                    schema: resolver(z.boolean()),
+                  },
+                },
+              },
+              ...errors(400),
+            },
+          }),
+          validator("json", TuiEvent.PromptAppend.properties),
+          async (c) => {
+            await Bus.publish(TuiEvent.PromptAppend, c.req.valid("json"))
+            return c.json(true)
+          },
+        )
+        .post(
+          "/tui/open-help",
+          describeRoute({
+            summary: "Open help dialog",
+            description: "Open the help dialog in the TUI to display user assistance information.",
+            operationId: "tui.openHelp",
+            responses: {
+              200: {
+                description: "Help dialog opened successfully",
+                content: {
+                  "application/json": {
+                    schema: resolver(z.boolean()),
+                  },
+                },
+              },
+            },
+          }),
+          async (c) => {
+            // TODO: open dialog
+            return c.json(true)
+          },
+        )
+        .post(
+          "/tui/open-sessions",
+          describeRoute({
+            summary: "Open sessions dialog",
+            description: "Open the session dialog",
+            operationId: "tui.openSessions",
+            responses: {
+              200: {
+                description: "Session dialog opened successfully",
+                content: {
+                  "application/json": {
+                    schema: resolver(z.boolean()),
+                  },
+                },
+              },
+            },
+          }),
+          async (c) => {
+            await Bus.publish(TuiEvent.CommandExecute, {
+              command: "session.list",
+            })
+            return c.json(true)
+          },
+        )
+        .post(
+          "/tui/open-themes",
+          describeRoute({
+            summary: "Open themes dialog",
+            description: "Open the theme dialog",
+            operationId: "tui.openThemes",
+            responses: {
+              200: {
+                description: "Theme dialog opened successfully",
+                content: {
+                  "application/json": {
+                    schema: resolver(z.boolean()),
+                  },
+                },
+              },
+            },
+          }),
+          async (c) => {
+            await Bus.publish(TuiEvent.CommandExecute, {
+              command: "session.list",
+            })
+            return c.json(true)
+          },
+        )
+        .post(
+          "/tui/open-models",
+          describeRoute({
+            summary: "Open models dialog",
+            description: "Open the model dialog",
+            operationId: "tui.openModels",
+            responses: {
+              200: {
+                description: "Model dialog opened successfully",
+                content: {
+                  "application/json": {
+                    schema: resolver(z.boolean()),
+                  },
+                },
+              },
+            },
+          }),
+          async (c) => {
+            await Bus.publish(TuiEvent.CommandExecute, {
+              command: "model.list",
+            })
+            return c.json(true)
+          },
+        )
+        .post(
+          "/tui/submit-prompt",
+          describeRoute({
+            summary: "Submit TUI prompt",
+            description: "Submit the prompt",
+            operationId: "tui.submitPrompt",
+            responses: {
+              200: {
+                description: "Prompt submitted successfully",
+                content: {
+                  "application/json": {
+                    schema: resolver(z.boolean()),
+                  },
+                },
+              },
+            },
+          }),
+          async (c) => {
+            await Bus.publish(TuiEvent.CommandExecute, {
+              command: "prompt.submit",
+            })
+            return c.json(true)
+          },
+        )
+        .post(
+          "/tui/clear-prompt",
+          describeRoute({
+            summary: "Clear TUI prompt",
+            description: "Clear the prompt",
+            operationId: "tui.clearPrompt",
+            responses: {
+              200: {
+                description: "Prompt cleared successfully",
+                content: {
+                  "application/json": {
+                    schema: resolver(z.boolean()),
+                  },
+                },
+              },
+            },
+          }),
+          async (c) => {
+            await Bus.publish(TuiEvent.CommandExecute, {
+              command: "prompt.clear",
+            })
+            return c.json(true)
+          },
+        )
+        .post(
+          "/tui/execute-command",
+          describeRoute({
+            summary: "Execute TUI command",
+            description: "Execute a TUI command (e.g. agent_cycle)",
+            operationId: "tui.executeCommand",
+            responses: {
+              200: {
+                description: "Command executed successfully",
+                content: {
+                  "application/json": {
+                    schema: resolver(z.boolean()),
+                  },
+                },
+              },
+              ...errors(400),
+            },
+          }),
+          validator("json", z.object({ command: z.string() })),
+          async (c) => {
+            const command = c.req.valid("json").command
+            await Bus.publish(TuiEvent.CommandExecute, {
+              // @ts-expect-error
+              command: {
+                session_new: "session.new",
+                session_share: "session.share",
+                session_interrupt: "session.interrupt",
+                session_compact: "session.compact",
+                messages_page_up: "session.page.up",
+                messages_page_down: "session.page.down",
+                messages_half_page_up: "session.half.page.up",
+                messages_half_page_down: "session.half.page.down",
+                messages_first: "session.first",
+                messages_last: "session.last",
+                agent_cycle: "agent.cycle",
+              }[command],
+            })
+            return c.json(true)
+          },
+        )
+        .post(
+          "/tui/show-toast",
+          describeRoute({
+            summary: "Show TUI toast",
+            description: "Show a toast notification in the TUI",
+            operationId: "tui.showToast",
+            responses: {
+              200: {
+                description: "Toast notification shown successfully",
+                content: {
+                  "application/json": {
+                    schema: resolver(z.boolean()),
+                  },
+                },
+              },
+            },
+          }),
+          validator("json", TuiEvent.ToastShow.properties),
+          async (c) => {
+            await Bus.publish(TuiEvent.ToastShow, c.req.valid("json"))
+            return c.json(true)
+          },
+        )
+        .post(
+          "/tui/publish",
+          describeRoute({
+            summary: "Publish TUI event",
+            description: "Publish a TUI event",
+            operationId: "tui.publish",
+            responses: {
+              200: {
+                description: "Event published successfully",
+                content: {
+                  "application/json": {
+                    schema: resolver(z.boolean()),
+                  },
+                },
+              },
+              ...errors(400),
+            },
+          }),
+          validator(
+            "json",
+            z.union(
+              Object.values(TuiEvent).map((def) => {
+                return z
+                  .object({
+                    type: z.literal(def.type),
+                    properties: def.properties,
+                  })
+                  .meta({
+                    ref: "Event" + "." + def.type,
+                  })
+              }),
+            ),
+          ),
+          async (c) => {
+            const evt = c.req.valid("json")
+            await Bus.publish(Object.values(TuiEvent).find((def) => def.type === evt.type)!, evt.properties)
+            return c.json(true)
+          },
+        )
+        .post(
+          "/tui/select-session",
+          describeRoute({
+            summary: "Select session",
+            description: "Navigate the TUI to display the specified session.",
+            operationId: "tui.selectSession",
+            responses: {
+              200: {
+                description: "Session selected successfully",
+                content: {
+                  "application/json": {
+                    schema: resolver(z.boolean()),
+                  },
+                },
+              },
+              ...errors(400, 404),
+            },
+          }),
+          validator("json", TuiEvent.SessionSelect.properties),
+          async (c) => {
+            const { sessionID } = c.req.valid("json")
+            await Session.get(sessionID)
+            await Bus.publish(TuiEvent.SessionSelect, { sessionID })
+            return c.json(true)
+          },
+        )
+
         .put(
           "/auth/:providerID",
           describeRoute({
@@ -1471,7 +2892,7 @@ export namespace Server {
             return streamSSE(c, async (stream) => {
               stream.writeSSE({
                 data: JSON.stringify({
-                  type: "server.connected",
+                  type: Event.Connected.type,
                   properties: {},
                 }),
               })
@@ -1488,7 +2909,7 @@ export namespace Server {
               const heartbeat = setInterval(() => {
                 stream.writeSSE({
                   data: JSON.stringify({
-                    type: "server.heartbeat",
+                    type: Event.Heartbeat.type,
                     properties: {},
                   }),
                 })
@@ -1523,17 +2944,17 @@ export namespace Server {
   )
 
   export async function openapi() {
-    // Cast to break excessive type recursion from long route chains
-    const result = await generateSpecs(App() as Hono, {
+    const result = await generateSpecs(App(), {
       documentation: {
         info: {
           title: "opencode",
-          version: "1.0.0",
+          version: Installation.VERSION,
           description: "opencode api",
         },
         openapi: "3.1.1",
       },
     })
+    addOpenapiDefaults(result)
     return result
   }
 

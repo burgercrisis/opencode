@@ -19,6 +19,19 @@ import { assertExternalDirectory } from "./external-directory"
 
 const MAX_DIAGNOSTICS_PER_FILE = 20
 
+type Diagnostic = Parameters<typeof LSP.Diagnostic.pretty>[0]
+
+function selectDiagnostics(issues: Diagnostic[], limit: number) {
+  const errors = issues.filter((item) => (item.severity ?? 1) === 1)
+  const warnings = issues.filter((item) => item.severity === 2)
+  const selected = [...errors, ...warnings].slice(0, limit)
+  const remaining = errors.length + warnings.length - selected.length
+  return {
+    selected,
+    remaining,
+  }
+}
+
 function normalizeLineEndings(text: string): string {
   return text.replaceAll("\r\n", "\n")
 }
@@ -71,7 +84,14 @@ export const EditTool = Tool.define("edit", {
         await Bus.publish(File.Event.Edited, {
           file: filePath,
         })
-        FileTime.read(ctx.sessionID, filePath)
+
+        const fileAfter = Bun.file(filePath)
+        const statsAfter = await fileAfter.stat()
+        contentNew = await fileAfter.text()
+        diff = trimDiff(
+          createTwoFilesPatch(filePath, filePath, normalizeLineEndings(contentOld), normalizeLineEndings(contentNew)),
+        )
+        FileTime.read(ctx.sessionID, filePath, FileTime.stamp(statsAfter.mtime, contentNew))
         return
       }
 
@@ -104,7 +124,8 @@ export const EditTool = Tool.define("edit", {
       diff = trimDiff(
         createTwoFilesPatch(filePath, filePath, normalizeLineEndings(contentOld), normalizeLineEndings(contentNew)),
       )
-      FileTime.read(ctx.sessionID, filePath)
+      const statsAfter = await file.stat()
+      FileTime.read(ctx.sessionID, filePath, FileTime.stamp(statsAfter.mtime, contentNew))
     })
 
     const filediff: Snapshot.FileDiff = {
@@ -132,17 +153,17 @@ export const EditTool = Tool.define("edit", {
     const diagnostics = await LSP.diagnostics()
     const normalizedFilePath = Filesystem.normalizePath(filePath)
     const issues = diagnostics[normalizedFilePath] ?? []
-    const errors = issues.filter((item) => item.severity === 1)
-    if (errors.length > 0) {
-      const limited = errors.slice(0, MAX_DIAGNOSTICS_PER_FILE)
-      const suffix =
-        errors.length > MAX_DIAGNOSTICS_PER_FILE ? `\n... and ${errors.length - MAX_DIAGNOSTICS_PER_FILE} more` : ""
-      output += `\n\nLSP errors detected in this file, please fix:\n<diagnostics file="${filePath}">\n${limited.map(LSP.Diagnostic.pretty).join("\n")}${suffix}\n</diagnostics>`
+    const selected = selectDiagnostics(issues, MAX_DIAGNOSTICS_PER_FILE)
+    const savedDiagnostics: Record<string, Diagnostic[]> = {}
+    if (selected.selected.length > 0) {
+      savedDiagnostics[normalizedFilePath] = selected.selected
+      const suffix = selected.remaining > 0 ? `\n... and ${selected.remaining} more` : ""
+      output += `\n\nLSP diagnostics detected in this file:\n<diagnostics file="${filePath}">\n${selected.selected.map(LSP.Diagnostic.pretty).join("\n")}${suffix}\n</diagnostics>`
     }
 
     return {
       metadata: {
-        diagnostics,
+        diagnostics: savedDiagnostics,
         diff,
         filediff,
       },

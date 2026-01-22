@@ -4,6 +4,8 @@ import { createStore } from "solid-js/store"
 import { useTheme } from "../../context/theme"
 import { useRoute } from "../../context/route"
 import { Locale } from "@/util/locale"
+import { truncateMiddle, cols } from "@tui/lib/cols"
+import { useRenderer } from "@opentui/solid"
 import path from "path"
 import type { AssistantMessage, ToolPart } from "@opencode-ai/sdk/v2"
 import { Global } from "@/global"
@@ -11,11 +13,15 @@ import { Installation } from "@/installation"
 import { useDirectory } from "../../context/directory"
 import { useKV } from "../../context/kv"
 import { TodoItem } from "../../component/todo-item"
+import { computeCacheStats, updateCacheStatsState, type CacheStatsState } from "../../lib/cache-stats"
+import "opentui-spinner/solid"
 
 export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
   const sync = useSync()
   const route = useRoute()
   const { theme } = useTheme()
+  const { navigate } = useRoute()
+  const renderer = useRenderer()
   const session = createMemo(() => sync.session.get(props.sessionID)!)
   const diff = createMemo(() => sync.data.session_diff[props.sessionID] ?? [])
   const todo = createMemo(() => sync.data.todo[props.sessionID] ?? [])
@@ -81,8 +87,20 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
     }).format(total)
   })
 
+  const cache = createMemo<CacheStatsState | undefined>((prev) => updateCacheStatsState(prev, messages()), undefined)
+
+  const lastAssistant = createMemo(
+    () => messages().findLast((x) => x.role === "assistant" && x.tokens.output > 0) as AssistantMessage | undefined,
+  )
+
+  const lastCache = createMemo(() => {
+    const last = lastAssistant()
+    if (!last) return
+    return computeCacheStats([last])
+  })
+
   const context = createMemo(() => {
-    const last = messages().findLast((x) => x.role === "assistant" && x.tokens.output > 0) as AssistantMessage
+    const last = lastAssistant()
     if (!last) return
     const total =
       last.tokens.input + last.tokens.output + last.tokens.reasoning + last.tokens.cache.read + last.tokens.cache.write
@@ -129,6 +147,12 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
               </text>
               <text fg={theme.textMuted}>{context()?.tokens ?? 0} tokens</text>
               <text fg={theme.textMuted}>{context()?.percentage ?? 0}% used</text>
+              <text fg={theme.textMuted}>
+                {`Session cache: ${cache()?.stats.hitPercentage ?? 0}% r${Locale.number(cache()?.stats.readTokens ?? 0)} w${Locale.number(cache()?.stats.writeTokens ?? 0)}`}
+              </text>
+              <text fg={theme.textMuted}>
+                {`Last step cache: ${lastCache()?.hitPercentage ?? 0}% r${Locale.number(lastCache()?.readTokens ?? 0)} w${Locale.number(lastCache()?.writeTokens ?? 0)}`}
+              </text>
               <text fg={theme.textMuted}>{cost()} spent</text>
             </box>
             <Show when={mcpEntries().length > 0}>
@@ -342,10 +366,21 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
                 <Show when={diff().length <= 2 || expanded.diff}>
                   <For each={diff() || []}>
                     {(item) => {
+                      const file = createMemo(() => {
+                        const splits = item.file.split(path.sep).filter(Boolean)
+                        const last = splits.at(-1)!
+                        const rest = splits.slice(0, -1).join(path.sep)
+                        if (!rest) return last
+                        const tail = "/" + last
+                        const tailw = cols(renderer.widthMethod, tail)
+                        const restMax = Math.max(0, 30 - tailw)
+                        const head = truncateMiddle({ method: renderer.widthMethod, text: rest, max: restMax })
+                        return head + tail
+                      })
                       return (
                         <box flexDirection="row" gap={1} justifyContent="space-between">
                           <text fg={theme.textMuted} wrapMode="none">
-                            {item.file}
+                            {file()}
                           </text>
                           <box flexDirection="row" gap={1} flexShrink={0}>
                             <Show when={item.additions}>

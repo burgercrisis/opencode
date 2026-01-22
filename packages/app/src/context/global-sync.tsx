@@ -137,6 +137,7 @@ function createGlobalSync() {
 
   function ensureChild(directory: string) {
     if (!directory) console.error("No directory provided")
+    if (directory) globalSDK.subscribe(directory)
     if (!children[directory]) {
       const cache = runWithOwner(owner, () =>
         persisted(
@@ -431,18 +432,13 @@ function createGlobalSync() {
       }
       case "session.created": {
         const result = Binary.search(store.session, event.properties.info.id, (s) => s.id)
-        if (result.found) {
-          setStore("session", result.index, reconcile(event.properties.info))
-          break
-        }
-        setStore(
-          "session",
-          produce((draft) => {
-            draft.splice(result.index, 0, event.properties.info)
-          }),
-        )
-        if (!event.properties.info.parentID) {
-          setStore("sessionTotal", store.sessionTotal + 1)
+        if (!result.found) {
+          setStore(
+            "session",
+            produce((draft) => {
+              draft.splice(result.index, 0, event.properties.info)
+            }),
+          )
         }
         break
       }

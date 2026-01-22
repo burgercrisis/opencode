@@ -8,20 +8,20 @@ import { useServer } from "./server"
 export const { use: useGlobalSDK, provider: GlobalSDKProvider } = createSimpleContext({
   name: "GlobalSDK",
   init: () => {
-    const server = useServer()
     const platform = usePlatform()
-    const abort = new AbortController()
+    const server = useServer()
 
-    const eventSdk = createOpencodeClient({
-      baseUrl: server.url,
-      signal: abort.signal,
-      fetch: platform.fetch,
-    })
     const emitter = createGlobalEmitter<{
       [key: string]: Event
     }>()
 
     type Queued = { directory: string; payload: Event }
+
+    const eventSdk = createOpencodeClient({
+      baseUrl: server.url,
+      fetch: platform.fetch,
+      throwOnError: true,
+    })
 
     let queue: Array<Queued | undefined> = []
     const coalesced = new Map<string, number>()
@@ -65,33 +65,48 @@ export const { use: useGlobalSDK, provider: GlobalSDKProvider } = createSimpleCo
       flush()
     }
 
-    void (async () => {
-      const events = await eventSdk.global.event()
-      let yielded = Date.now()
-      for await (const event of events.stream) {
-        const directory = event.directory ?? "global"
-        const payload = event.payload
-        const k = key(directory, payload)
-        if (k) {
-          const i = coalesced.get(k)
-          if (i !== undefined) {
-            queue[i] = undefined
-          }
-          coalesced.set(k, queue.length)
-        }
-        queue.push({ directory, payload })
-        schedule()
+    const streams = new Map<string, AbortController>()
+    const subscribe = (directory: string) => {
+      if (!directory) return
+      if (streams.has(directory)) return
 
-        if (Date.now() - yielded < 8) continue
-        yielded = Date.now()
-        await new Promise<void>((resolve) => setTimeout(resolve, 0))
-      }
-    })()
-      .finally(stop)
-      .catch(() => undefined)
+      const abort = new AbortController()
+      streams.set(directory, abort)
+
+      eventSdk.global
+        .event({ directory }, { signal: abort.signal })
+        .then(async (events) => {
+          let yielded = Date.now()
+          for await (const event of events.stream) {
+            const dir = event.directory ?? "global"
+            const payload = event.payload
+            const k = key(dir, payload)
+            if (k) {
+              const i = coalesced.get(k)
+              if (i !== undefined) {
+                queue[i] = undefined
+              }
+              coalesced.set(k, queue.length)
+            }
+            queue.push({ directory: dir, payload })
+            schedule()
+
+            if (Date.now() - yielded < 8) continue
+            yielded = Date.now()
+            await new Promise<void>((resolve) => setTimeout(resolve, 0))
+          }
+        })
+        .catch(() => {})
+        .finally(() => {
+          streams.delete(directory)
+        })
+    }
 
     onCleanup(() => {
-      abort.abort()
+      for (const ctrl of streams.values()) {
+        ctrl.abort()
+      }
+      streams.clear()
       stop()
     })
 
@@ -101,6 +116,6 @@ export const { use: useGlobalSDK, provider: GlobalSDKProvider } = createSimpleCo
       throwOnError: true,
     })
 
-    return { url: server.url, client: sdk, event: emitter }
+    return { url: server.url, client: sdk, event: emitter, subscribe }
   },
 })

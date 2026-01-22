@@ -238,6 +238,8 @@ export namespace Worktree {
       throw new CreateFailedError({ message: errorText(created) || "Failed to create git worktree" })
     }
 
+    void Project.addSandbox(Instance.project.id, info.directory).catch(() => {})
+
     const cmd = input?.startCommand?.trim()
     if (!cmd) return info
 

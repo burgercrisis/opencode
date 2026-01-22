@@ -142,7 +142,7 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
         textarea?.setText("")
         return
       }
-      if (evt.name === "return") {
+      if (evt.name === "return" && !evt.meta) {
         evt.preventDefault()
         const text = textarea?.plainText?.trim() ?? ""
         const prev = store.custom[store.tab]
@@ -205,7 +205,7 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
     }
 
     if (confirm()) {
-      if (evt.name === "return") {
+      if (evt.name === "return" && !evt.meta) {
         evt.preventDefault()
         submit()
       }
@@ -237,7 +237,7 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
         moveTo((store.selected + 1) % total)
       }
 
-      if (evt.name === "return") {
+      if (evt.name === "return" && !evt.meta) {
         evt.preventDefault()
         selectOption()
       }

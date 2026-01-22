@@ -492,6 +492,7 @@
     "tree-sitter-bash",
   ],
   "patchedDependencies": {
+    "@opentui/core@0.1.74": "patches/opentui-core@0.1.74.patch",
     "ghostty-web@0.3.0": "patches/ghostty-web@0.3.0.patch",
   },
   "overrides": {

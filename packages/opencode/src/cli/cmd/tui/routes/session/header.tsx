@@ -4,16 +4,17 @@ import { useSync } from "@tui/context/sync"
 import { pipe, sumBy } from "remeda"
 import { useTheme } from "@tui/context/theme"
 import { SplitBorder } from "@tui/component/border"
-import type { AssistantMessage, Session } from "@opencode-ai/sdk/v2"
+import type { AssistantMessage } from "@opencode-ai/sdk/v2"
 import { useCommandDialog } from "@tui/component/dialog-command"
 import { useKeybind } from "../../context/keybind"
 import { Installation } from "@/installation"
+import { useTerminalDimensions } from "@opentui/solid"
 
-const Title = (props: { session: Accessor<Session> }) => {
+const Title = (props: { title: Accessor<string>; truncate?: boolean }) => {
   const { theme } = useTheme()
   return (
-    <text fg={theme.text}>
-      <span style={{ bold: true }}>#</span> <span style={{ bold: true }}>{props.session().title}</span>
+    <text fg={theme.text} wrapMode={props.truncate ? "none" : undefined} flexShrink={props.truncate ? 1 : 0}>
+      <span style={{ bold: true }}>#</span> <span style={{ bold: true }}>{props.title()}</span>
     </text>
   )
 }
@@ -62,13 +63,22 @@ export function Header() {
   const { theme } = useTheme()
   const keybind = useKeybind()
   const command = useCommandDialog()
-  const [hover, setHover] = createSignal<"parent" | "prev" | "next" | null>(null)
+  const [hover, setHover] = createSignal<"parent" | "prev" | "next" | "list" | null>(null)
+
+  const dimensions = useTerminalDimensions()
+  const tall = createMemo(() => dimensions().height > 40)
+
+  const displayTitle = createMemo(() => {
+    const current = session()
+    if (!current) return ""
+    return current.title
+  })
 
   return (
     <box flexShrink={0}>
       <box
-        paddingTop={1}
-        paddingBottom={1}
+        paddingTop={tall() ? 1 : 0}
+        paddingBottom={tall() ? 1 : 0}
         paddingLeft={2}
         paddingRight={1}
         {...SplitBorder}
@@ -80,7 +90,8 @@ export function Header() {
         <Switch>
           <Match when={session()?.parentID}>
             <box flexDirection="row" gap={2}>
-              <text fg={theme.text}>
+              <Title title={displayTitle} truncate={!tall()} />
+              <text fg={theme.textMuted}>
                 <b>Subagent session</b>
               </text>
               <box
@@ -119,6 +130,16 @@ export function Header() {
                   Next <span style={{ fg: theme.textMuted }}>{keybind.print("session_child_cycle")}</span>
                 </text>
               </box>
+              <box
+                onMouseOver={() => setHover("list")}
+                onMouseOut={() => setHover(null)}
+                onMouseUp={() => command.trigger("session.child.list")}
+                backgroundColor={hover() === "list" ? theme.backgroundElement : theme.backgroundPanel}
+              >
+                <text fg={theme.text}>
+                  List <span style={{ fg: theme.textMuted }}>{keybind.print("session_child_list")}</span>
+                </text>
+              </box>
               <box flexGrow={1} flexShrink={1} />
               <box flexDirection="row" gap={1} flexShrink={0}>
                 <ContextInfo context={context} cost={cost} />
@@ -128,7 +149,7 @@ export function Header() {
           </Match>
           <Match when={true}>
             <box flexDirection="row" justifyContent="space-between" gap={1}>
-              <Title session={session} />
+              <Title title={displayTitle} truncate={!tall()} />
               <box flexDirection="row" gap={1} flexShrink={0}>
                 <ContextInfo context={context} cost={cost} />
                 <text fg={theme.textMuted}>v{Installation.VERSION}</text>

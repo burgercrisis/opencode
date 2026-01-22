@@ -5,6 +5,7 @@ permissions:
 
 on:
   workflow_dispatch:
+<<<<<<< HEAD
   push:
     paths:
       - "bun.lock"
@@ -19,6 +20,8 @@ on:
       - "packages/*/package.json"
       - "flake.lock"
       - ".github/workflows/update-nix-hashes.yml"
+=======
+>>>>>>> f80a44a65c2ede170c003d9f8600368cecc7a7ba
 
 jobs:
   update-node-modules-hashes:

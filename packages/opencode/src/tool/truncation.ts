@@ -42,9 +42,9 @@ export namespace Truncate {
     }
   }
 
-  function hasTaskTool(agent?: Agent.Info): boolean {
+  function hasSubagentTool(agent?: Agent.Info): boolean {
     if (!agent?.permission) return false
-    const rule = PermissionNext.evaluate("task", "*", agent.permission)
+    const rule = PermissionNext.evaluate("subagent_spawn", "*", agent.permission)
     return rule.action !== "deny"
   }
 

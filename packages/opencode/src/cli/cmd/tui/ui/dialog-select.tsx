@@ -3,13 +3,14 @@ import { useTheme, selectedForeground } from "@tui/context/theme"
 import { entries, filter, flatMap, groupBy, pipe, take } from "remeda"
 import { batch, createEffect, createMemo, For, Show, type JSX, on } from "solid-js"
 import { createStore } from "solid-js/store"
-import { useKeyboard, useTerminalDimensions } from "@opentui/solid"
+import { useKeyboard, useTerminalDimensions, useRenderer } from "@opentui/solid"
 import * as fuzzysort from "fuzzysort"
 import { isDeepEqual } from "remeda"
 import { useDialog, type DialogContext } from "@tui/ui/dialog"
 import { useKeybind } from "@tui/context/keybind"
 import { Keybind } from "@/util/keybind"
 import { Locale } from "@/util/locale"
+import { truncateEnd } from "@tui/lib/cols"
 
 export interface DialogSelectProps<T> {
   title: string
@@ -76,12 +77,11 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
       return props.options.filter((x) => x.disabled !== true)
     }
     const needle = store.filter.toLowerCase()
-    const result = pipe(
+    return pipe(
       props.options,
       filter((x) => x.disabled !== true),
       (x) => (!needle ? x : fuzzysort.go(needle, x, { keys: ["title", "category"] }).map((x) => x.obj)),
     )
-    return result
   })
 
   // When the filter changes due to how TUI works, the mousemove might still be triggered
@@ -92,15 +92,13 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
     setStore("input", "keyboard")
   })
 
-  const grouped = createMemo(() => {
-    const result = pipe(
+  const grouped = createMemo(() =>
+    pipe(
       filtered(),
       groupBy((x) => x.category ?? ""),
-      // mapValues((x) => x.sort((a, b) => a.title.localeCompare(b.title))),
       entries(),
-    )
-    return result
-  })
+    ),
+  )
 
   const flat = createMemo(() => {
     return pipe(
@@ -361,7 +359,10 @@ function Option(props: {
         wrapMode="none"
         paddingLeft={3}
       >
-        {Locale.truncate(props.title, 61)}
+        {(() => {
+          const renderer = useRenderer()
+          return truncateEnd({ method: renderer.widthMethod, text: props.title, max: 61 })
+        })()}
         <Show when={props.description}>
           <span style={{ fg: props.active ? fg : theme.textMuted }}> {props.description}</span>
         </Show>

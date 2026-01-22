@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { SessionRetry } from "../../src/session/retry"
 import { MessageV2 } from "../../src/session/message-v2"
+import { NamedError } from "@opencode-ai/util/error"
+import { JSONParseError, TypeValidationError } from "ai"
 
 function apiError(headers?: Record<string, string>): MessageV2.APIError {
   return new MessageV2.APIError({
@@ -80,6 +82,48 @@ describe("session.retry.delay", () => {
   })
 })
 
+describe("session.retry.retryable", () => {
+  test("retries common socket close errors", () => {
+    const err = new NamedError.Unknown({ message: "SocketError: socket closed" }).toObject()
+    expect(SessionRetry.retryable(err)).toBe("Network error")
+  })
+
+  test("retries unknown certificate verification errors", () => {
+    const err = new NamedError.Unknown({ message: "Error: unknown certificate verification error" }).toObject()
+    expect(SessionRetry.retryable(err)).toBe("Network error (TLS)")
+  })
+
+  test("retries common TLS verification errors", () => {
+    const errors = [
+      "Error: self signed certificate",
+      "Error: self signed certificate in certificate chain",
+      "Error: unable to get local issuer certificate",
+      "Error: unable to verify the first certificate",
+      "Error: certificate has expired",
+      "Error: ERR_TLS_CERT_ALTNAME_INVALID fetching https://example.com",
+    ]
+
+    for (const message of errors) {
+      const err = new NamedError.Unknown({ message }).toObject()
+      expect(SessionRetry.retryable(err)).toBe("Network error (TLS)")
+    }
+  })
+
+  test("retries TLS errors even when APIError isRetryable is false", () => {
+    const err = new MessageV2.APIError({
+      message: "unknown certificate verification error",
+      isRetryable: false,
+    }).toObject()
+
+    expect(SessionRetry.retryable(err)).toBe("unknown certificate verification error")
+  })
+
+  test("does not retry unrelated unknown errors", () => {
+    const err = new NamedError.Unknown({ message: "TypeError: undefined is not a function" }).toObject()
+    expect(SessionRetry.retryable(err)).toBeUndefined()
+  })
+})
+
 describe("session.message-v2.fromError", () => {
   test.concurrent(
     "converts ECONNRESET socket errors to retryable APIError",
@@ -87,7 +131,7 @@ describe("session.message-v2.fromError", () => {
       using server = Bun.serve({
         port: 0,
         idleTimeout: 8,
-        async fetch(req) {
+        async fetch(_req) {
           return new Response(
             new ReadableStream({
               async pull(controller) {
@@ -127,5 +171,108 @@ describe("session.message-v2.fromError", () => {
     const retryable = SessionRetry.retryable(error)
     expect(retryable).toBeDefined()
     expect(retryable).toBe("Connection reset by server")
+  })
+
+  test("marks streamed OpenAI rate-limit errors retryable", () => {
+    const chunk = {
+      type: "error",
+      sequence_number: 2,
+      error: {
+        type: "too_many_requests",
+        code: "rate_limit_exceeded",
+        message: "Rate limit exceeded.",
+        param: "input",
+      },
+    }
+
+    const error = MessageV2.fromError(chunk, { providerID: "openai" })
+
+    expect(MessageV2.APIError.isInstance(error)).toBe(true)
+    expect((error as MessageV2.APIError).data.isRetryable).toBe(true)
+  })
+
+  test("marks OpenAI stream_error chunks retryable", () => {
+    const chunk = {
+      type: "error",
+      error: {
+        type: "stream_error",
+        message: "SSE stream closed before receiving response.completed",
+      },
+    }
+
+    const error = MessageV2.fromError(chunk, { providerID: "openai" })
+
+    expect(MessageV2.APIError.isInstance(error)).toBe(true)
+    expect((error as MessageV2.APIError).data.isRetryable).toBe(true)
+  })
+
+  test("marks JSONParseError retryable", () => {
+    const err = new JSONParseError({
+      text: '{"a":1}{"b":2}',
+      cause: new Error("Unexpected token"),
+    })
+
+    const error = MessageV2.fromError(err, { providerID: "openai" })
+
+    expect(MessageV2.APIError.isInstance(error)).toBe(true)
+    expect((error as MessageV2.APIError).data.isRetryable).toBe(true)
+    expect((error as MessageV2.APIError).data.metadata?.type).toBe("json_parse_error")
+  })
+
+  test("does not retry streamed OpenAI context-length errors", () => {
+    const chunk = {
+      type: "error",
+      sequence_number: 2,
+      error: {
+        type: "invalid_request_error",
+        code: "context_length_exceeded",
+        message: "Your input exceeds the context window of this model.",
+        param: "input",
+      },
+    }
+
+    const error = MessageV2.fromError(chunk, { providerID: "openai" })
+
+    expect(MessageV2.APIError.isInstance(error)).toBe(true)
+    expect((error as MessageV2.APIError).data.isRetryable).toBe(false)
+  })
+
+  test("converts gateway-style Responses errors in TypeValidationError.value to retryable APIError", () => {
+    const error = new TypeValidationError({
+      value: {
+        error: {
+          message: "stream error: stream ID 137; INTERNAL_ERROR; received from peer",
+          type: "server_error",
+          code: "internal_server_error",
+        },
+      },
+      cause: new Error("schema mismatch"),
+    })
+
+    const result = MessageV2.fromError(error, { providerID: "openai" })
+
+    expect(MessageV2.APIError.isInstance(result)).toBe(true)
+    expect((result as MessageV2.APIError).data.isRetryable).toBe(true)
+    expect((result as MessageV2.APIError).data.message).toInclude("received from peer")
+    expect((result as MessageV2.APIError).data.metadata?.code).toBe("internal_server_error")
+    expect((result as MessageV2.APIError).data.metadata?.type).toBe("server_error")
+  })
+
+  test("does not retry gateway-style context-length errors in TypeValidationError.value", () => {
+    const error = new TypeValidationError({
+      value: {
+        error: {
+          message: "This model's maximum context length is 8192 tokens.",
+          type: "invalid_request_error",
+          code: "context_length_exceeded",
+        },
+      },
+      cause: new Error("schema mismatch"),
+    })
+
+    const result = MessageV2.fromError(error, { providerID: "openai" })
+
+    expect(MessageV2.APIError.isInstance(result)).toBe(true)
+    expect((result as MessageV2.APIError).data.isRetryable).toBe(false)
   })
 })

@@ -110,12 +110,19 @@ export const Terminal = (props: TerminalProps) => {
     const mod = await import("ghostty-web")
     ghostty = await mod.Ghostty.load()
 
-    const url = new URL(sdk.url + `/pty/${local.pty.id}/connect?directory=${encodeURIComponent(sdk.directory)}`)
+    const url = new URL(sdk.url)
+    if (url.protocol === "https:") url.protocol = "wss:"
+    if (url.protocol === "http:") url.protocol = "ws:"
+    const root = url.pathname.endsWith("/") ? url.pathname.slice(0, -1) : url.pathname
+    url.pathname = root + `/pty/${local.pty.id}/connect`
+    url.searchParams.set("directory", sdk.directory)
+
     if (window.__OPENCODE__?.serverPassword) {
       url.username = "opencode"
       url.password = window.__OPENCODE__?.serverPassword
     }
-    const socket = new WebSocket(url)
+
+    const socket = new WebSocket(url.toString())
     ws = socket
 
     const t = new mod.Terminal({
@@ -233,7 +240,7 @@ export const Terminal = (props: TerminalProps) => {
       }
     })
     t.onKey((key) => {
-      if (key.key == "Enter") {
+      if (key.key === "Enter") {
         props.onSubmit?.()
       }
     })

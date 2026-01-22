@@ -99,10 +99,47 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       mcp_resource: {},
       formatter: [],
       vcs: undefined,
-      path: { state: "", config: "", worktree: "", directory: "" },
+      path: { state: "", config: "", worktree: "", directory: "", home: "" },
     })
 
     const sdk = useSDK()
+
+    const timeoutSignal = (ms: number, message: string) => {
+      const abort = new AbortController()
+      const err = new Error(message)
+      err.name = "TimeoutError"
+
+      const onAbort = () => abort.abort()
+      sdk.signal.addEventListener("abort", onAbort)
+
+      let timer: NodeJS.Timeout | undefined
+      const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          abort.abort()
+          reject(err)
+        }, ms).unref()
+      })
+
+      return {
+        signal: abort.signal,
+        timeout,
+        cleanup: () => {
+          if (timer) clearTimeout(timer)
+          sdk.signal.removeEventListener("abort", onAbort)
+        },
+      }
+    }
+
+    const pins = (permission: typeof store.permission) => {
+      const out = new Set<string>()
+      for (const list of Object.values(permission)) {
+        for (const req of list) {
+          const id = req.tool?.messageID
+          if (id) out.add(id)
+        }
+      }
+      return out
+    }
 
     sdk.event.listen((e) => {
       const event = e.details
@@ -193,6 +230,19 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           setStore("session_diff", event.properties.sessionID, event.properties.diff)
           break
 
+        case "session.created": {
+          const result = Binary.search(store.session, event.properties.info.id, (s) => s.id)
+          if (!result.found) {
+            setStore(
+              "session",
+              produce((draft) => {
+                draft.splice(result.index, 0, event.properties.info)
+              }),
+            )
+          }
+          break
+        }
+
         case "session.deleted": {
           const result = Binary.search(store.session, event.properties.info.id, (s) => s.id)
           if (result.found) {
@@ -236,64 +286,85 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
             setStore("message", event.properties.info.sessionID, result.index, reconcile(event.properties.info))
             break
           }
-          setStore(
-            "message",
-            event.properties.info.sessionID,
-            produce((draft) => {
-              draft.splice(result.index, 0, event.properties.info)
-            }),
-          )
-          const updated = store.message[event.properties.info.sessionID]
-          if (updated.length > 100) {
-            const oldest = updated[0]
-            batch(() => {
-              setStore(
-                "message",
-                event.properties.info.sessionID,
-                produce((draft) => {
-                  draft.shift()
-                }),
-              )
-              setStore(
-                "part",
-                produce((draft) => {
-                  delete draft[oldest.id]
-                }),
-              )
-            })
-          }
+          const gone: { id?: string } = {}
+
+          const protectedIDs = pins(store.permission)
+
+          batch(() => {
+            setStore(
+              "message",
+              event.properties.info.sessionID,
+              produce((draft) => {
+                draft.splice(result.index, 0, event.properties.info)
+                if (draft.length <= 100) return
+                gone.id = draft.shift()?.id
+              }),
+            )
+
+            const id = gone.id
+            if (!id) return
+            if (protectedIDs.has(id)) return
+
+            setStore(
+              produce((draft) => {
+                delete draft.part[id]
+              }),
+            )
+          })
           break
         }
         case "message.removed": {
           const messages = store.message[event.properties.sessionID]
-          const result = Binary.search(messages, event.properties.messageID, (m) => m.id)
-          if (result.found) {
+          const result = messages ? Binary.search(messages, event.properties.messageID, (m) => m.id) : undefined
+
+          const protectedIDs = pins(store.permission)
+
+          batch(() => {
+            if (result?.found) {
+              setStore(
+                "message",
+                event.properties.sessionID,
+                produce((draft) => {
+                  draft.splice(result.index, 1)
+                }),
+              )
+            }
+
+            if (protectedIDs.has(event.properties.messageID)) return
+
             setStore(
-              "message",
-              event.properties.sessionID,
               produce((draft) => {
-                draft.splice(result.index, 1)
+                delete draft.part[event.properties.messageID]
               }),
             )
-          }
+          })
           break
         }
         case "message.part.updated": {
-          const parts = store.part[event.properties.part.messageID]
+          const part = event.properties.part
+
+          const protectedIDs = pins(store.permission)
+
+          const messages = store.message[part.sessionID] ?? []
+          const live = messages.some((m) => m.id === part.messageID) || protectedIDs.has(part.messageID)
+
+          if (!live) break
+
+          const parts = store.part[part.messageID]
           if (!parts) {
-            setStore("part", event.properties.part.messageID, [event.properties.part])
+            setStore("part", part.messageID, [part])
             break
           }
-          const result = Binary.search(parts, event.properties.part.id, (p) => p.id)
+          const result = Binary.search(parts, part.id, (p) => p.id)
           if (result.found) {
-            setStore("part", event.properties.part.messageID, result.index, reconcile(event.properties.part))
+            setStore("part", part.messageID, result.index, reconcile(part))
             break
           }
           setStore(
             "part",
-            event.properties.part.messageID,
+            part.messageID,
             produce((draft) => {
-              draft.splice(result.index, 0, event.properties.part)
+              draft.splice(result.index, 0, part)
             }),
           )
           break
@@ -322,6 +393,11 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           setStore("vcs", { branch: event.properties.branch })
           break
         }
+
+        default: {
+          // Handle events not in the type union.
+          break
+        }
       }
     })
 
@@ -329,7 +405,6 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
     const args = useArgs()
 
     async function bootstrap() {
-      console.log("bootstrapping")
       const start = Date.now() - 30 * 24 * 60 * 60 * 1000
       const sessionListPromise = sdk.client.session
         .list({ start: start })
@@ -389,6 +464,8 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
     })
 
     const fullSyncedSessions = new Set<string>()
+    const fullSyncInFlight = new Map<string, Promise<void>>()
+    const sessionInfoInFlight = new Map<string, Promise<void>>()
     const result = {
       data: store,
       set: setStore,
@@ -400,9 +477,9 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       },
       session: {
         get(sessionID: string) {
-          const match = Binary.search(store.session, sessionID, (s) => s.id)
-          if (match.found) return store.session[match.index]
-          return undefined
+          // Use .find() for better SolidJS reactivity tracking
+          // Binary.search may not track all accessed indices properly
+          return store.session.find((s) => s.id === sessionID)
         },
         status(sessionID: string) {
           const session = result.session.get(sessionID)
@@ -414,28 +491,128 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           if (last.role === "user") return "working"
           return last.time.completed ? "idle" : "working"
         },
+        async info(sessionID: string) {
+          if (result.session.get(sessionID)) return
+          const fullInFlight = fullSyncInFlight.get(sessionID)
+          if (fullInFlight) return fullInFlight
+          const inFlight = sessionInfoInFlight.get(sessionID)
+          if (inFlight) return inFlight
+
+          const t = timeoutSignal(15_000, `Timed out loading session: ${sessionID}`)
+          const req = sdk.client.session.get(
+            { sessionID },
+            {
+              throwOnError: true,
+              signal: t.signal,
+            },
+          )
+          void req.catch(() => {})
+
+          const promise = Promise.race([req, t.timeout])
+            .then((session) => {
+              setStore(
+                produce((draft) => {
+                  const match = Binary.search(draft.session, sessionID, (s) => s.id)
+                  if (match.found) draft.session[match.index] = session.data!
+                  if (!match.found) draft.session.splice(match.index, 0, session.data!)
+                }),
+              )
+            })
+            .finally(() => {
+              t.cleanup()
+              sessionInfoInFlight.delete(sessionID)
+            })
+
+          sessionInfoInFlight.set(sessionID, promise)
+          return promise
+        },
         async sync(sessionID: string) {
           if (fullSyncedSessions.has(sessionID)) return
-          const [session, messages, todo, diff] = await Promise.all([
-            sdk.client.session.get({ sessionID }, { throwOnError: true }),
-            sdk.client.session.messages({ sessionID, limit: 100 }),
-            sdk.client.session.todo({ sessionID }),
-            sdk.client.session.diff({ sessionID }),
+          const inFlight = fullSyncInFlight.get(sessionID)
+          if (inFlight) return inFlight
+
+          const t = timeoutSignal(60_000, `Timed out syncing session: ${sessionID}`)
+          const req = Promise.all([
+            sdk.client.session.get(
+              { sessionID },
+              {
+                throwOnError: true,
+                signal: t.signal,
+              },
+            ),
+            sdk.client.session.messages(
+              { sessionID, limit: 100 },
+              {
+                throwOnError: true,
+                signal: t.signal,
+              },
+            ),
+            sdk.client.session.todo(
+              { sessionID },
+              {
+                throwOnError: true,
+                signal: t.signal,
+              },
+            ),
+            sdk.client.session.diff(
+              { sessionID },
+              {
+                throwOnError: true,
+                signal: t.signal,
+              },
+            ),
           ])
+          void req.catch(() => {})
+
+          const promise = Promise.race([req, t.timeout])
+            .then(([session, messages, todo, diff]) => {
+              const protectedIDs = pins(store.permission)
+
+              setStore(
+                produce((draft) => {
+                  const match = Binary.search(draft.session, sessionID, (s) => s.id)
+                  if (match.found) draft.session[match.index] = session.data!
+                  if (!match.found) draft.session.splice(match.index, 0, session.data!)
+                  draft.todo[sessionID] = todo.data ?? []
+
+                  const previous = new Set((draft.message[sessionID] ?? []).map((m) => m.id))
+                  const next = new Set(messages.data!.map((x) => x.info.id))
+
+                  draft.message[sessionID] = messages.data!.map((x) => x.info)
+                  for (const message of messages.data!) {
+                    draft.part[message.info.id] = message.parts
+                  }
+
+                  for (const id of previous) {
+                    if (next.has(id)) continue
+                    if (protectedIDs.has(id)) continue
+                    delete draft.part[id]
+                  }
+
+                  draft.session_diff[sessionID] = diff.data ?? []
+                }),
+              )
+              fullSyncedSessions.add(sessionID)
+            })
+            .finally(() => {
+              t.cleanup()
+              fullSyncInFlight.delete(sessionID)
+            })
+
+          fullSyncInFlight.set(sessionID, promise)
+          return promise
+        },
+        // Add a session to the store (used when creating a new session to avoid waiting for SSE event)
+        add(session: (typeof store.session)[number]) {
           setStore(
+            "session",
             produce((draft) => {
-              const match = Binary.search(draft.session, sessionID, (s) => s.id)
-              if (match.found) draft.session[match.index] = session.data!
-              if (!match.found) draft.session.splice(match.index, 0, session.data!)
-              draft.todo[sessionID] = todo.data ?? []
-              draft.message[sessionID] = messages.data!.map((x) => x.info)
-              for (const message of messages.data!) {
-                draft.part[message.info.id] = message.parts
+              const result = Binary.search(draft, session.id, (s) => s.id)
+              if (!result.found) {
+                draft.splice(result.index, 0, session)
               }
-              draft.session_diff[sessionID] = diff.data ?? []
             }),
           )
-          fullSyncedSessions.add(sessionID)
         },
       },
       bootstrap,

@@ -6,6 +6,7 @@ import {
   streamText,
   wrapLanguageModel,
   type ModelMessage,
+  type StopCondition,
   type StreamTextResult,
   type Tool,
   type ToolSet,
@@ -22,8 +23,11 @@ import type { MessageV2 } from "./message-v2"
 import { Plugin } from "@/plugin"
 import { SystemPrompt } from "./system"
 import { Flag } from "@/flag/flag"
+import { Wildcard } from "@/util/wildcard"
+import { SessionToolOverrides } from "./tool-overrides"
 import { PermissionNext } from "@/permission/next"
 import { Auth } from "@/auth"
+import { LLMConcurrencyMachine } from "./llm-concurrency-machine"
 
 export namespace LLM {
   const log = Log.create({ service: "llm" })
@@ -41,6 +45,7 @@ export namespace LLM {
     small?: boolean
     tools: Record<string, Tool>
     retries?: number
+    stopWhen?: StopCondition<ToolSet> | StopCondition<ToolSet>[]
   }
 
   export type StreamOutput = StreamTextResult<ToolSet, unknown>
@@ -57,6 +62,7 @@ export namespace LLM {
       modelID: input.model.id,
       providerID: input.model.providerID,
     })
+
     const [language, cfg, provider, auth] = await Promise.all([
       Provider.getLanguage(input.model),
       Config.get(),
@@ -64,6 +70,10 @@ export namespace LLM {
       Auth.get(input.model.providerID),
     ])
     const isCodex = provider.id === "openai" && auth?.type === "oauth"
+
+    const [language, cfg] = await Promise.all([Provider.getLanguage(input.model), Config.get()])
+    const limits = LLMConcurrencyMachine.limits(cfg)
+
 
     const system = SystemPrompt.header(input.model.providerID)
     system.push(
@@ -92,6 +102,14 @@ export namespace LLM {
       system.length = 0
       system.push(header, rest.join("\n"))
     }
+
+
+
+    const provider = await Provider.getProvider(input.model.providerID)
+    const auth = await Auth.get(input.model.providerID)
+    const isCodex = provider.id === "openai" && auth?.type === "oauth"
+    const sess = input.sessionID.replace(/^ses_/, "sess_")
+
 
     const variant =
       !input.small && input.model.variants && input.user.variant ? input.model.variants[input.user.variant] : {}
@@ -142,6 +160,7 @@ export namespace LLM {
 
     const tools = await resolveTools(input)
 
+
     // LiteLLM and some Anthropic proxies require the tools parameter to be present
     // when message history contains tool calls, even if no tools are being used.
     // Add a dummy tool that is never called to satisfy this validation.
@@ -169,6 +188,10 @@ export namespace LLM {
         })
       },
       async experimental_repairToolCall(failed) {
+
+    const args = {
+      async experimental_repairToolCall(failed: any) {
+
         const lower = failed.toolCall.toolName.toLowerCase()
         if (lower !== failed.toolCall.toolName && tools[lower]) {
           l.info("repairing tool call", {
@@ -198,11 +221,18 @@ export namespace LLM {
       maxOutputTokens,
       abortSignal: input.abort,
       headers: {
+        ...(input.model.api.npm === "@ai-sdk/openai"
+          ? {
+              "x-session-id": sess,
+              session_id: sess,
+            }
+          : undefined),
         ...(isCodex
           ? {
               originator: "opencode",
               "User-Agent": `opencode/${Installation.VERSION} (${os.platform()} ${os.release()}; ${os.arch()})`,
-              session_id: input.sessionID,
+              session_id: sess,
+              "x-session-id": sess,
             }
           : undefined),
         ...(input.model.providerID.startsWith("opencode")
@@ -220,6 +250,7 @@ export namespace LLM {
         ...input.model.headers,
       },
       maxRetries: input.retries ?? 0,
+      stopWhen: input.stopWhen,
       messages: [
         ...(isCodex
           ? [
@@ -252,16 +283,88 @@ export namespace LLM {
         ],
       }),
       experimental_telemetry: { isEnabled: cfg.experimental?.openTelemetry },
+    }
+
+    if (!limits) {
+      return streamText({
+        onError(error) {
+          l.error("stream error", {
+            error,
+          })
+        },
+        ...args,
+      })
+    }
+
+    const lease = await LLMConcurrencyMachine.enter({
+      limits,
+      providerID: input.model.providerID,
+      modelName: input.model.api.id,
+      sessionID: input.sessionID,
     })
+
+    const releaseState = { promise: undefined as Promise<void> | undefined }
+    const release = () => {
+      if (releaseState.promise) return releaseState.promise
+      releaseState.promise = lease?.release().catch(() => {}) ?? Promise.resolve()
+      return releaseState.promise
+    }
+
+    const stream = await Promise.resolve()
+      .then(() =>
+        streamText({
+          onError(error) {
+            release()
+            l.error("stream error", {
+              error,
+            })
+          },
+          onFinish() {
+            release()
+          },
+          ...args,
+        }),
+      )
+      .catch(async (error) => {
+        await release()
+        throw error
+      })
+
+    return {
+      ...stream,
+      fullStream: (async function* () {
+        try {
+          for await (const item of stream.fullStream) {
+            yield item
+          }
+        } finally {
+          await release()
+        }
+      })(),
+      text: stream.text.finally(() => {
+        return release()
+      }),
+    }
   }
 
-  async function resolveTools(input: Pick<StreamInput, "tools" | "agent" | "user">) {
-    const disabled = PermissionNext.disabled(Object.keys(input.tools), input.agent.permission)
+  async function resolveTools(input: Pick<StreamInput, "tools" | "agent" | "user" | "sessionID">) {
+    const overrides = await SessionToolOverrides.get(input.sessionID)
+    const denied = PermissionNext.disabled(Object.keys(input.tools), input.agent.permission)
+
     for (const tool of Object.keys(input.tools)) {
-      if (input.user.tools?.[tool] === false || disabled.has(tool)) {
+      if (tool === "invalid") continue
+      if (denied.has(tool)) {
         delete input.tools[tool]
+        continue
       }
+
+      const override = Wildcard.all(tool, overrides)
+      const allowed = input.user.tools ? Wildcard.all(tool, input.user.tools) !== false : true
+      if (allowed) continue
+      if (override === true) continue
+      delete input.tools[tool]
     }
+
     return input.tools
   }
 

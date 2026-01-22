@@ -46,40 +46,14 @@ export namespace Config {
 
   export const state = Instance.state(async () => {
     const auth = await Auth.all()
+    let result = await global()
 
-    // Load remote/well-known config first as the base layer (lowest precedence)
-    // This allows organizations to provide default configs that users can override
-    let result: Info = {}
-    for (const [key, value] of Object.entries(auth)) {
-      if (value.type === "wellknown") {
-        process.env[value.key] = value.token
-        log.debug("fetching remote config", { url: `${key}/.well-known/opencode` })
-        const response = await fetch(`${key}/.well-known/opencode`)
-        if (!response.ok) {
-          throw new Error(`failed to fetch remote config from ${key}: ${response.status}`)
-        }
-        const wellknown = (await response.json()) as any
-        const remoteConfig = wellknown.config ?? {}
-        // Add $schema to prevent load() from trying to write back to a non-existent file
-        if (!remoteConfig.$schema) remoteConfig.$schema = "https://opencode.ai/config.json"
-        result = mergeConfigConcatArrays(
-          result,
-          await load(JSON.stringify(remoteConfig), `${key}/.well-known/opencode`),
-        )
-        log.debug("loaded remote config from well-known", { url: key })
-      }
-    }
-
-    // Global user config overrides remote config
-    result = mergeConfigConcatArrays(result, await global())
-
-    // Custom config path overrides global
+    // Override with custom config if provided
     if (Flag.OPENCODE_CONFIG) {
       result = mergeConfigConcatArrays(result, await loadFile(Flag.OPENCODE_CONFIG))
       log.debug("loaded custom config", { path: Flag.OPENCODE_CONFIG })
     }
 
-    // Project config has highest precedence (overrides global and remote)
     for (const file of ["opencode.jsonc", "opencode.json"]) {
       const found = await Filesystem.findUp(file, Instance.directory, Instance.worktree)
       for (const resolved of found.toReversed()) {
@@ -87,10 +61,38 @@ export namespace Config {
       }
     }
 
-    // Inline config content has highest precedence
     if (Flag.OPENCODE_CONFIG_CONTENT) {
       result = mergeConfigConcatArrays(result, JSON.parse(Flag.OPENCODE_CONFIG_CONTENT))
       log.debug("loaded custom config from OPENCODE_CONFIG_CONTENT")
+    }
+
+    for (const [key, value] of Object.entries(auth)) {
+      if (value.type !== "wellknown") continue
+      process.env[value.key] = value.token
+
+      const url = `${key}/.well-known/opencode`
+      const response = await fetch(url).catch(() => undefined)
+      if (!response || !response.ok) {
+        log.warn("failed to fetch remote config from well-known", {
+          url: key,
+          status: response?.status,
+        })
+        continue
+      }
+
+      const wellknown = (await response.json().catch(() => undefined)) as any
+      const remote = wellknown?.config ?? {}
+      const loaded = await load(JSON.stringify(remote), url).catch((err) => {
+        log.warn("failed to load remote config from well-known", {
+          url: key,
+          error: err instanceof Error ? err.message : String(err),
+        })
+        return undefined
+      })
+      if (!loaded) continue
+
+      result = mergeConfigConcatArrays(loaded, result)
+      log.debug("loaded remote config from well-known", { url: key })
     }
 
     result.agent = result.agent || {}
@@ -206,12 +208,11 @@ export namespace Config {
     const hasGitIgnore = await Bun.file(gitignore).exists()
     if (!hasGitIgnore) await Bun.write(gitignore, ["node_modules", "package.json", "bun.lock", ".gitignore"].join("\n"))
 
-    await BunProc.run(
-      ["add", "@opencode-ai/plugin@" + (Installation.isLocal() ? "latest" : Installation.VERSION), "--exact"],
-      {
-        cwd: dir,
-      },
-    ).catch(() => {})
+    // Use "latest" for local dev and preview/feature branches since those versions don't exist on npm
+    const pluginVersion = Installation.isLocal() || Installation.isPreview() ? "latest" : Installation.VERSION
+    await BunProc.run(["add", `@opencode-ai/plugin@${pluginVersion}`, "--exact"], {
+      cwd: dir,
+    }).catch(() => {})
 
     // Install any additional dependencies defined in the package.json
     // This allows local plugins and custom tools to use external packages
@@ -296,14 +297,20 @@ export namespace Config {
       const file = rel(item, patterns) ?? path.basename(item)
       const agentName = trim(file)
 
+      if ("name" in md.data) {
+        throw new InvalidError({
+          path: item,
+          message: `Agent frontmatter must not set "name"; agent id is derived from file path.`,
+        })
+      }
+
       const config = {
-        name: agentName,
         ...md.data,
         prompt: md.content.trim(),
       }
       const parsed = Agent.safeParse(config)
       if (parsed.success) {
-        result[config.name] = parsed.data
+        result[agentName] = parsed.data
         continue
       }
       throw new InvalidError({ path: item, issues: parsed.error.issues }, { cause: parsed.error })
@@ -331,14 +338,21 @@ export namespace Config {
       })
       if (!md) continue
 
+      if ("name" in md.data) {
+        throw new InvalidError({
+          path: item,
+          message: `Mode frontmatter must not set "name"; mode id is derived from file path.`,
+        })
+      }
+
+      const name = path.basename(item, ".md")
       const config = {
-        name: path.basename(item, ".md"),
         ...md.data,
         prompt: md.content.trim(),
       }
       const parsed = Agent.safeParse(config)
       if (parsed.success) {
-        result[config.name] = {
+        result[name] = {
           ...parsed.data,
           mode: "primary" as const,
         }
@@ -429,7 +443,9 @@ export namespace Config {
         .int()
         .positive()
         .optional()
-        .describe("Timeout in ms for MCP server requests. Defaults to 5000 (5 seconds) if not specified."),
+        .describe(
+          "Timeout in ms for fetching tools from the MCP server. Defaults to 30000 (30 seconds) if not specified.",
+        )
     })
     .strict()
     .meta({
@@ -468,7 +484,9 @@ export namespace Config {
         .int()
         .positive()
         .optional()
-        .describe("Timeout in ms for MCP server requests. Defaults to 5000 (5 seconds) if not specified."),
+        .describe(
+          "Timeout in ms for fetching tools from the MCP server. Defaults to 30000 (30 seconds) if not specified.",
+        )
     })
     .strict()
     .meta({
@@ -493,52 +511,21 @@ export namespace Config {
   })
   export type PermissionRule = z.infer<typeof PermissionRule>
 
-  // Capture original key order before zod reorders, then rebuild in original order
-  const permissionPreprocess = (val: unknown) => {
-    if (typeof val === "object" && val !== null && !Array.isArray(val)) {
-      return { __originalKeys: Object.keys(val), ...val }
-    }
-    return val
+  const PermissionEntry = z.tuple([z.string(), PermissionRule])
+
+  function permissionPreprocess(input: unknown) {
+    if (!input || typeof input !== "object" || Array.isArray(input)) return input
+    return Object.entries(input)
   }
 
-  const permissionTransform = (x: unknown): Record<string, PermissionRule> => {
-    if (typeof x === "string") return { "*": x as PermissionAction }
-    const obj = x as { __originalKeys?: string[] } & Record<string, unknown>
-    const { __originalKeys, ...rest } = obj
-    if (!__originalKeys) return rest as Record<string, PermissionRule>
-    const result: Record<string, PermissionRule> = {}
-    for (const key of __originalKeys) {
-      if (key in rest) result[key] = rest[key] as PermissionRule
-    }
-    return result
+  function permissionTransform(input: unknown): Record<string, PermissionRule> {
+    if (typeof input === "string") return { "*": input as PermissionAction }
+    if (Array.isArray(input)) return Object.fromEntries(input as Array<[string, PermissionRule]>)
+    return input as Record<string, PermissionRule>
   }
 
   export const Permission = z
-    .preprocess(
-      permissionPreprocess,
-      z
-        .object({
-          __originalKeys: z.string().array().optional(),
-          read: PermissionRule.optional(),
-          edit: PermissionRule.optional(),
-          glob: PermissionRule.optional(),
-          grep: PermissionRule.optional(),
-          list: PermissionRule.optional(),
-          bash: PermissionRule.optional(),
-          task: PermissionRule.optional(),
-          external_directory: PermissionRule.optional(),
-          todowrite: PermissionAction.optional(),
-          todoread: PermissionAction.optional(),
-          question: PermissionAction.optional(),
-          webfetch: PermissionAction.optional(),
-          websearch: PermissionAction.optional(),
-          codesearch: PermissionAction.optional(),
-          lsp: PermissionRule.optional(),
-          doom_loop: PermissionAction.optional(),
-        })
-        .catchall(PermissionRule)
-        .or(PermissionAction),
-    )
+    .preprocess(permissionPreprocess, z.union([PermissionAction, z.array(PermissionEntry)]))
     .transform(permissionTransform)
     .meta({
       ref: "PermissionConfig",
@@ -564,10 +551,6 @@ export namespace Config {
       disable: z.boolean().optional(),
       description: z.string().optional().describe("Description of when to use the agent"),
       mode: z.enum(["subagent", "primary", "all"]).optional(),
-      hidden: z
-        .boolean()
-        .optional()
-        .describe("Hide this subagent from the @ autocomplete menu (default: false, only applies to mode: subagent)"),
       options: z.record(z.string(), z.any()).optional(),
       color: z
         .string()
@@ -586,14 +569,12 @@ export namespace Config {
     .catchall(z.any())
     .transform((agent, ctx) => {
       const knownKeys = new Set([
-        "name",
         "model",
         "prompt",
         "description",
         "temperature",
         "top_p",
         "mode",
-        "hidden",
         "color",
         "steps",
         "maxSteps",
@@ -781,6 +762,7 @@ export namespace Config {
         .describe("Delete word backward in input"),
       history_previous: z.string().optional().default("up").describe("Previous history item"),
       history_next: z.string().optional().default("down").describe("Next history item"),
+      session_child_list: z.string().optional().default("<leader>j").describe("List child/subagent sessions"),
       session_child_cycle: z.string().optional().default("<leader>right").describe("Next child session"),
       session_child_cycle_reverse: z.string().optional().default("<leader>left").describe("Previous child session"),
       session_parent: z.string().optional().default("<leader>up").describe("Go to parent session"),
@@ -1034,10 +1016,23 @@ export namespace Config {
         })
         .optional(),
       compaction: z
-        .object({
-          auto: z.boolean().optional().describe("Enable automatic compaction when context is full (default: true)"),
-          prune: z.boolean().optional().describe("Enable pruning of old tool outputs (default: true)"),
-        })
+        .preprocess(
+          (input) => {
+            if (typeof input === "string" || typeof input === "boolean") {
+              return { auto: input }
+            }
+            return input
+          },
+          z.object({
+            auto: z
+              .union([PermissionAction, z.boolean()])
+              .optional()
+              .describe(
+                "Automatic compaction policy when context is full: allow|deny|ask (or true/false). Defaults to allow.",
+              ),
+            prune: z.boolean().optional().describe("Enable pruning of old tool outputs (default: true)"),
+          }),
+        )
         .optional(),
       experimental: z
         .object({
@@ -1070,11 +1065,41 @@ export namespace Config {
             .boolean()
             .optional()
             .describe("Enable OpenTelemetry spans for AI SDK calls (using the 'experimental_telemetry' flag)"),
+          llmConcurrency: z
+            .object({
+              global: z
+                .object({
+                  limits: z
+                    .record(z.string(), z.number().int().positive())
+                    .describe(
+                      "Global (machine-wide) max concurrent LLM streams using pattern keys. Keys match providerID/model.api.id (e.g. openai/gpt-5) and may be globs (openai/*) or regex prefixed with re:.",
+                    ),
+                  staleMs: z
+                    .number()
+                    .int()
+                    .positive()
+                    .min(1000)
+                    .optional()
+                    .describe(
+                      "Lease expiry for crash-recovery in milliseconds (min 1000). Used to prune stale global concurrency leases.",
+                    ),
+                })
+                .optional()
+                .describe("Global (machine-wide) concurrency limits for LLM streaming."),
+            })
+            .optional()
+            .describe("Optional concurrency limits for LLM streaming."),
           primary_tools: z
             .array(z.string())
             .optional()
             .describe("Tools that should only be available to primary agents."),
           continue_loop_on_deny: z.boolean().optional().describe("Continue the agent loop when a tool call is denied"),
+          allowFileRefsOutsideWorktree: z
+            .boolean()
+            .optional()
+            .describe(
+              "Allow @file references to paths outside the worktree (e.g., ~/foo or /abs/path). Default is false for security.",
+            ),
           mcp_timeout: z
             .number()
             .int()
@@ -1200,9 +1225,10 @@ export namespace Config {
     if (parsed.success) {
       if (!parsed.data.$schema) {
         parsed.data.$schema = "https://opencode.ai/config.json"
-        // Write the $schema to the original text to preserve variables like {env:VAR}
-        const updated = original.replace(/^\s*\{/, '{\n  "$schema": "https://opencode.ai/config.json",')
-        await Bun.write(configFilepath, updated).catch(() => {})
+        const ext = path.extname(configFilepath)
+        if (ext === ".json" || ext === ".jsonc") {
+          await Bun.write(configFilepath, JSON.stringify(parsed.data, null, 2)).catch(() => {})
+        }
       }
       const data = parsed.data
       if (data.plugin) {

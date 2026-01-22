@@ -1,4 +1,4 @@
-import type { APICallError, ModelMessage } from "ai"
+import type { APICallError, ModelMessage, ToolCallPart, ToolResultPart } from "ai"
 import { unique } from "remeda"
 import type { JSONSchema } from "zod/v4/core"
 import type { Provider } from "./provider"
@@ -161,6 +161,83 @@ export namespace ProviderTransform {
     return msgs
   }
 
+  function isToolCallPart(part: unknown): part is ToolCallPart {
+    if (!part || typeof part !== "object") return false
+    const obj = part as Record<string, unknown>
+    if (obj["type"] !== "tool-call") return false
+    if (typeof obj["toolCallId"] !== "string") return false
+    if (typeof obj["toolName"] !== "string") return false
+    return true
+  }
+
+  function isToolResultPart(part: unknown): part is ToolResultPart {
+    if (!part || typeof part !== "object") return false
+    const obj = part as Record<string, unknown>
+    if (obj["type"] !== "tool-result") return false
+    if (typeof obj["toolCallId"] !== "string") return false
+    if (typeof obj["toolName"] !== "string") return false
+    return true
+  }
+
+  function ensureToolResults(msgs: ModelMessage[]): ModelMessage[] {
+    const out: ModelMessage[] = []
+    const output: ToolResultPart["output"] = {
+      type: "error-text",
+      value:
+        "Tool result missing. The previous tool call did not complete (session may have been interrupted). Please retry.",
+    }
+
+    for (let i = 0; i < msgs.length; i++) {
+      const msg = msgs[i]
+      out.push(msg)
+
+      if (msg.role !== "assistant") continue
+      if (!Array.isArray(msg.content)) continue
+
+      const calls = msg.content.filter((part): part is ToolCallPart => {
+        if (!isToolCallPart(part)) return false
+        return part.providerExecuted !== true
+      })
+      if (calls.length === 0) continue
+
+      const next = msgs[i + 1]
+      if (next && next.role === "tool" && Array.isArray(next.content)) {
+        const existing = new Set(
+          next.content.filter((part): part is ToolResultPart => isToolResultPart(part)).map((part) => part.toolCallId),
+        )
+        const missing = calls.filter((call) => !existing.has(call.toolCallId))
+        if (missing.length === 0) continue
+
+        out.push({
+          ...next,
+          content: [
+            ...next.content,
+            ...missing.map((call) => ({
+              type: "tool-result" as const,
+              toolCallId: call.toolCallId,
+              toolName: call.toolName,
+              output,
+            })),
+          ],
+        })
+        i++
+        continue
+      }
+
+      out.push({
+        role: "tool",
+        content: calls.map((call) => ({
+          type: "tool-result" as const,
+          toolCallId: call.toolCallId,
+          toolName: call.toolName,
+          output,
+        })),
+      } as ModelMessage)
+    }
+
+    return out
+  }
+
   function applyCaching(msgs: ModelMessage[], providerID: string): ModelMessage[] {
     const system = msgs.filter((msg) => msg.role === "system").slice(0, 2)
     const final = msgs.filter((msg) => msg.role !== "system").slice(-2)
@@ -241,15 +318,71 @@ export namespace ProviderTransform {
     })
   }
 
-  export function message(msgs: ModelMessage[], model: Provider.Model, options: Record<string, unknown>) {
+  function sanitizeOpenAIOrphanReasoning(msgs: ModelMessage[], model: Provider.Model): ModelMessage[] {
+    const isOpenAI = model.api.npm === "@ai-sdk/openai"
+    const isOpenAICompatibleGPT5 = model.api.npm === "@ai-sdk/openai-compatible" && model.api.id.includes("gpt-5")
+    if (!isOpenAI && !isOpenAICompatibleGPT5) return msgs
+
+    const out: ModelMessage[] = []
+
+    for (const msg of msgs) {
+      if (msg.role !== "assistant") {
+        out.push(msg)
+        continue
+      }
+
+      if (!Array.isArray(msg.content)) {
+        out.push(msg)
+        continue
+      }
+
+      const reasoning = msg.content.filter((part) => part.type === "reasoning")
+      if (reasoning.length === 0) {
+        out.push(msg)
+        continue
+      }
+
+      const nonReasoning = msg.content.filter((part) => part.type !== "reasoning")
+      if (nonReasoning.length > 0) {
+        out.push(msg)
+        continue
+      }
+
+      const summary = reasoning
+        .map((part) => (part as { text?: unknown }).text)
+        .filter((t): t is string => typeof t === "string")
+        .join("")
+        .trim()
+
+      const text = summary
+        ? `[Recovery note] Previous generation was interrupted after emitting a reasoning summary, but no final output/tool call was produced. The original reasoning item cannot be replayed safely. Partial summary (for context only):\n\n${summary}`
+        : "[Recovery note] Previous generation was interrupted during reasoning. No usable summary was captured."
+
+      out.push({
+        ...msg,
+        content: [
+          {
+            type: "text",
+            text,
+          },
+        ],
+      })
+    }
+
+    return out
+  }
+
+  export function message(msgs: ModelMessage[], model: Provider.Model) {
     msgs = unsupportedParts(msgs, model)
-    msgs = normalizeMessages(msgs, model, options)
+    msgs = normalizeMessages(msgs, model)
+    msgs = sanitizeOpenAIOrphanReasoning(msgs, model)
     if (
       model.providerID === "anthropic" ||
       model.api.id.includes("anthropic") ||
       model.api.id.includes("claude") ||
       model.api.npm === "@ai-sdk/anthropic"
     ) {
+      msgs = ensureToolResults(msgs)
       msgs = applyCaching(msgs, model.providerID)
     }
 
@@ -525,7 +658,11 @@ export namespace ProviderTransform {
     return {}
   }
 
-  export function options(input: {
+  export function options({
+    model,
+    sessionID,
+    providerOptions,
+  }: {
     model: Provider.Model
     sessionID: string
     providerOptions?: Record<string, any>
@@ -564,8 +701,8 @@ export namespace ProviderTransform {
       }
     }
 
-    if (input.model.providerID === "openai" || input.providerOptions?.setCacheKey) {
-      result["promptCacheKey"] = input.sessionID
+    if (model.providerID === "openai" || providerOptions?.setCacheKey) {
+      result["promptCacheKey"] = sessionID.replace(/^ses_/, "sess_")
     }
 
     if (input.model.api.npm === "@ai-sdk/google" || input.model.api.npm === "@ai-sdk/google-vertex") {
@@ -590,8 +727,13 @@ export namespace ProviderTransform {
         result["textVerbosity"] = "low"
       }
 
+
       if (input.model.providerID.startsWith("opencode")) {
         result["promptCacheKey"] = input.sessionID
+
+      if (model.providerID.startsWith("opencode")) {
+        result["promptCacheKey"] = sessionID.replace(/^ses_/, "sess_")
+
         result["include"] = ["reasoning.encrypted_content"]
         result["reasoningSummary"] = "auto"
       }

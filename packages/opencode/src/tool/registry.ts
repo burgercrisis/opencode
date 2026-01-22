@@ -1,16 +1,19 @@
-import { QuestionTool } from "./question"
 import { BashTool } from "./bash"
 import { EditTool } from "./edit"
 import { GlobTool } from "./glob"
 import { GrepTool } from "./grep"
 import { BatchTool } from "./batch"
 import { ReadTool } from "./read"
-import { TaskTool } from "./task"
 import { TodoWriteTool, TodoReadTool } from "./todo"
 import { WebFetchTool } from "./webfetch"
 import { WriteTool } from "./write"
 import { InvalidTool } from "./invalid"
 import { SkillTool } from "./skill"
+import { LspTool } from "./lsp"
+import { SubagentSpawnTool } from "./subagent-spawn"
+import { SendAgentMessageTool } from "./send-agent-message"
+import { WaitAgentMessageTool } from "./wait-agent-message"
+import { QuestionTool } from "./question"
 import type { Agent } from "../agent/agent"
 import { Tool } from "./tool"
 import { Instance } from "../project/instance"
@@ -23,7 +26,7 @@ import { WebSearchTool } from "./websearch"
 import { CodeSearchTool } from "./codesearch"
 import { Flag } from "@/flag/flag"
 import { Log } from "@/util/log"
-import { LspTool } from "./lsp"
+import { sortEntries, sortPaths } from "./lib/registry-order"
 import { Truncate } from "./truncation"
 import { PlanExitTool, PlanEnterTool } from "./plan"
 import { ApplyPatchTool } from "./apply_patch"
@@ -36,15 +39,22 @@ export namespace ToolRegistry {
     const glob = new Bun.Glob("{tool,tools}/*.{js,ts}")
 
     for (const dir of await Config.directories()) {
-      for await (const match of glob.scan({
-        cwd: dir,
-        absolute: true,
-        followSymlinks: true,
-        dot: true,
-      })) {
+      const matches = sortPaths(
+        await Array.fromAsync(
+          glob.scan({
+            cwd: dir,
+            absolute: true,
+            followSymlinks: true,
+            dot: true,
+          }),
+        ),
+      )
+
+      for (const match of matches) {
         const namespace = path.basename(match, path.extname(match))
         const mod = await import(match)
-        for (const [id, def] of Object.entries<ToolDefinition>(mod)) {
+        const entries = sortEntries(Object.entries<ToolDefinition>(mod))
+        for (const [id, def] of entries) {
           custom.push(fromPlugin(id === "default" ? namespace : `${namespace}_${id}`, def))
         }
       }
@@ -52,7 +62,8 @@ export namespace ToolRegistry {
 
     const plugins = await Plugin.list()
     for (const plugin of plugins) {
-      for (const [id, def] of Object.entries(plugin.tool ?? {})) {
+      const entries = sortEntries(Object.entries(plugin.tool ?? {}))
+      for (const [id, def] of entries) {
         custom.push(fromPlugin(id, def))
       }
     }
@@ -102,7 +113,9 @@ export namespace ToolRegistry {
       GrepTool,
       EditTool,
       WriteTool,
-      TaskTool,
+      SubagentSpawnTool,
+      SendAgentMessageTool,
+      WaitAgentMessageTool,
       WebFetchTool,
       TodoWriteTool,
       TodoReadTool,
@@ -121,13 +134,12 @@ export namespace ToolRegistry {
     return all().then((x) => x.map((t) => t.id))
   }
 
-  export async function tools(
-    model: {
-      providerID: string
-      modelID: string
-    },
-    agent?: Agent.Info,
-  ) {
+  export async function enabled(_agent?: Agent.Info): Promise<Record<string, boolean>> {
+    const cfg = await Config.get()
+    return cfg.tools ?? {}
+  }
+
+  export async function tools(providerID: string, agent?: Agent.Info) {
     const tools = await all()
     const result = await Promise.all(
       tools

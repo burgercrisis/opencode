@@ -8,8 +8,8 @@ import { useSync } from "@tui/context/sync"
 import { useTheme, selectedForeground } from "@tui/context/theme"
 import { SplitBorder } from "@tui/component/border"
 import { useCommandDialog } from "@tui/component/dialog-command"
-import { useTerminalDimensions } from "@opentui/solid"
-import { Locale } from "@/util/locale"
+import { useTerminalDimensions, useRenderer } from "@opentui/solid"
+import { truncateMiddle } from "@tui/lib/cols"
 import type { PromptInfo } from "./history"
 import { useFrecency } from "./frecency"
 
@@ -79,6 +79,7 @@ export function Autocomplete(props: {
   const command = useCommandDialog()
   const { theme } = useTheme()
   const dimensions = useTerminalDimensions()
+  const renderer = useRenderer()
   const frecency = useFrecency()
 
   const [store, setStore] = createStore({
@@ -141,9 +142,9 @@ export function Autocomplete(props: {
     const input = props.input()
     const currentCursorOffset = input.cursorOffset
 
-    const charAfterCursor = props.value.at(currentCursorOffset)
-    const needsSpace = charAfterCursor !== " "
-    const append = "@" + text + (needsSpace ? " " : "")
+    const after = input.getTextRange(currentCursorOffset, currentCursorOffset + 1)
+    const needsSpace = after !== " "
+    const virtualText = "@" + text
 
     input.cursorOffset = store.index
     const startCursor = input.logicalCursor
@@ -151,11 +152,15 @@ export function Autocomplete(props: {
     const endCursor = input.logicalCursor
 
     input.deleteRange(startCursor.row, startCursor.col, endCursor.row, endCursor.col)
-    input.insertText(append)
+    input.cursorOffset = store.index
+    input.insertText(virtualText)
 
-    const virtualText = "@" + text
     const extmarkStart = store.index
-    const extmarkEnd = extmarkStart + Bun.stringWidth(virtualText)
+    const extmarkEnd = input.visualCursor.offset
+
+    if (needsSpace) {
+      input.insertText(" ")
+    }
 
     const styleId = part.type === "file" ? props.fileStyleId : part.type === "agent" ? props.agentStyleId : undefined
 
@@ -250,7 +255,7 @@ export function Autocomplete(props: {
 
             const isDir = item.endsWith("/")
             return {
-              display: Locale.truncateMiddle(filename, width),
+              display: truncateMiddle({ method: renderer.widthMethod, text: filename, max: width }),
               value: filename,
               isDirectory: isDir,
               path: item,
@@ -292,7 +297,7 @@ export function Autocomplete(props: {
     for (const res of Object.values(sync.data.mcp_resource)) {
       const text = `${res.name} (${res.uri})`
       options.push({
-        display: Locale.truncateMiddle(text, width),
+        display: truncateMiddle({ method: renderer.widthMethod, text, max: width }),
         value: text,
         description: res.description,
         onSelect: () => {
@@ -353,7 +358,6 @@ export function Autocomplete(props: {
           const cursor = props.input().logicalCursor
           props.input().deleteRange(0, 0, cursor.row, cursor.col)
           props.input().insertText(newText)
-          props.input().cursorOffset = Bun.stringWidth(newText)
         },
       })
     }
@@ -508,22 +512,26 @@ export function Autocomplete(props: {
         if (offset === 0) return
 
         // Check for "/" at position 0 - reopen slash commands
-        if (value.startsWith("/") && !value.slice(0, offset).match(/\s/)) {
+        if (value.startsWith("/") && !props.input().getTextRange(0, offset).match(/\s/)) {
           show("/")
           setStore("index", 0)
           return
         }
 
         // Check for "@" trigger - find the nearest "@" before cursor with no whitespace between
-        const text = value.slice(0, offset)
-        const idx = text.lastIndexOf("@")
-        if (idx === -1) return
+        const at = (() => {
+          const low = Math.max(0, offset - 200)
+          for (let o = offset - 1; o >= low; o--) {
+            const char = props.input().getTextRange(o, o + 1)
+            if (char === "") continue
+            if (/\s/.test(char)) return
+            if (char === "@") return o
+          }
+        })()
 
-        const between = text.slice(idx)
-        const before = idx === 0 ? undefined : value[idx - 1]
-        if ((before === undefined || /\s/.test(before)) && !between.match(/\s/)) {
+        if (at !== undefined) {
           show("@")
-          setStore("index", idx)
+          setStore("index", at)
         }
       },
       onKeyDown(e: KeyEvent) {
@@ -604,7 +612,9 @@ export function Autocomplete(props: {
       borderColor={theme.border}
     >
       <scrollbox
-        ref={(r: ScrollBoxRenderable) => (scroll = r)}
+        ref={(r: ScrollBoxRenderable) => {
+          scroll = r
+        }}
         backgroundColor={theme.backgroundMenu}
         height={height()}
         scrollbarOptions={{ visible: false }}
@@ -618,6 +628,8 @@ export function Autocomplete(props: {
           }
         >
           {(option, index) => (
+            // biome-ignore lint/a11y/noStaticElementInteractions: TUI mouse support
+            // biome-ignore lint/a11y/useKeyWithMouseEvents: TUI mouse support
             <box
               paddingLeft={1}
               paddingRight={1}

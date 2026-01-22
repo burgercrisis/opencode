@@ -24,7 +24,7 @@ export const ReadTool = Tool.define("read", {
   async execute(params, ctx) {
     let filepath = Filesystem.nativePath(params.filePath)
     if (!path.isAbsolute(filepath)) {
-      filepath = Filesystem.join(process.cwd(), filepath)
+      filepath = path.resolve(Instance.directory, filepath)
     }
     const title = Filesystem.relativePath(Instance.worktree, filepath)
 
@@ -92,7 +92,9 @@ export const ReadTool = Tool.define("read", {
 
     const limit = params.limit ?? DEFAULT_READ_LIMIT
     const offset = params.offset || 0
-    const lines = await file.text().then((text) => text.split("\n"))
+    const stats = await file.stat()
+    const text = await file.text()
+    const lines = text.split("\n")
 
     const raw: string[] = []
     let bytes = 0
@@ -132,7 +134,7 @@ export const ReadTool = Tool.define("read", {
 
     // just warms the lsp client
     LSP.touchFile(filepath, false)
-    FileTime.read(ctx.sessionID, filepath)
+    FileTime.read(ctx.sessionID, filepath, FileTime.stamp(stats.mtime, text))
 
     return {
       title,

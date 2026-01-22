@@ -8,10 +8,12 @@ import { SessionSummary } from "./summary"
 import { Bus } from "@/bus"
 import { SessionRetry } from "./retry"
 import { SessionStatus } from "./status"
+import { SessionMessage } from "./message-routing"
 import { Plugin } from "@/plugin"
 import type { Provider } from "@/provider/provider"
 import { LLM } from "./llm"
 import { Config } from "@/config/config"
+import { Storage } from "@/storage/storage"
 import { SessionCompaction } from "./compaction"
 import { PermissionNext } from "@/permission/next"
 import { Question } from "@/question"
@@ -31,28 +33,110 @@ export namespace SessionProcessor {
     abort: AbortSignal
   }) {
     const toolcalls: Record<string, MessageV2.ToolPart> = {}
+    const waits = new Map<string, number>()
     let snapshot: string | undefined
     let blocked = false
     let attempt = 0
     let needsCompaction = false
+    let compactionRequest: { reason: "context_length"; fallbackError: MessageV2.Assistant["error"] } | undefined
 
     const result = {
       get message() {
         return input.assistantMessage
       },
+      get compactionRequest() {
+        return compactionRequest
+      },
       partFromToolCall(toolCallID: string) {
         return toolcalls[toolCallID]
+      },
+      waitSince(toolCallID: string) {
+        return waits.get(toolCallID)
       },
       async process(streamInput: LLM.StreamInput) {
         log.info("process")
         needsCompaction = false
+
         const shouldBreak = (await Config.get()).experimental?.continue_loop_on_deny !== true
         // Initialize from existing estimates (convert tokens to characters) to accumulate across multiple process() calls
         let reasoningTotal = Token.toCharCount(input.assistantMessage.reasoningEstimate ?? 0)
         let textTotal = Token.toCharCount(input.assistantMessage.outputEstimate ?? 0)
+
+        compactionRequest = undefined
+        const config = await Config.get()
+        const shouldBreak = config.experimental?.continue_loop_on_deny !== true
+
+        let ignoredOpenAIReasoning = false
+
+        const ignoreOpenAIReasoning = async () => {
+          if (ignoredOpenAIReasoning) return
+          ignoredOpenAIReasoning = true
+
+          const msgs = await Session.messages({ sessionID: input.sessionID })
+
+          for (const msg of msgs) {
+            for (const part of msg.parts) {
+              if (part.type !== "reasoning") continue
+              if (part.messageID === input.assistantMessage.id) continue
+              if (part.ignored) continue
+              if (!part.metadata) continue
+              const openai = (part.metadata as { openai?: unknown }).openai
+              if (!openai || typeof openai !== "object") continue
+
+              part.ignored = true
+              await Session.updatePart(part)
+            }
+          }
+        }
+
+        const mergeMetadata = (a?: Record<string, unknown>, b?: Record<string, unknown>) => {
+          if (!a) return b
+          if (!b) return a
+
+          const result = {
+            ...a,
+            ...b,
+          } as Record<string, unknown>
+
+          const ao = (a as { openai?: unknown }).openai
+          const bo = (b as { openai?: unknown }).openai
+
+          if (ao && typeof ao === "object" && bo && typeof bo === "object") {
+            result.openai = {
+              ...(ao as Record<string, unknown>),
+              ...(bo as Record<string, unknown>),
+            }
+          }
+
+          return result
+        }
+
+        const cleanup = async (preserve: Set<string>) => {
+          snapshot = undefined
+          for (const key of Object.keys(toolcalls)) {
+            delete toolcalls[key]
+          }
+
+          const parts = await MessageV2.parts(input.assistantMessage.id)
+          for (const part of parts) {
+            if (preserve.has(part.id)) continue
+            await Storage.remove(["part", input.assistantMessage.id, part.id])
+            await Bus.publish(MessageV2.Event.PartRemoved, {
+              sessionID: input.assistantMessage.sessionID,
+              messageID: input.assistantMessage.id,
+              partID: part.id,
+            })
+          }
+        }
+
+
         while (true) {
+          const preserve = new Set((await MessageV2.parts(input.assistantMessage.id)).map((p) => p.id))
+          let retrySafe = true
+
           try {
             let currentText: MessageV2.TextPart | undefined
+            const storeReasoning = streamInput.agent.name !== "compaction"
             let reasoningMap: Record<string, MessageV2.ReasoningPart> = {}
             const stream = await LLM.stream(streamInput)
 
@@ -71,11 +155,28 @@ export namespace SessionProcessor {
                 // Still try to complete current operation
               }
               switch (value.type) {
+                case "stream-start" as any: {
+                  const warnings = (value as { warnings?: unknown }).warnings
+                  if (!Array.isArray(warnings)) break
+
+                  const dropped = warnings.some((w) => {
+                    const msg = (w as { message?: unknown }).message
+                    if (typeof msg !== "string") return false
+                    return msg.includes("Dropped previous reasoning context after OpenAI rejected it")
+                  })
+
+                  if (dropped) {
+                    await ignoreOpenAIReasoning()
+                  }
+                  break
+                }
+
                 case "start":
                   SessionStatus.set(input.sessionID, { type: "busy" })
                   break
 
                 case "reasoning-start":
+                  if (!storeReasoning) break
                   if (value.id in reasoningMap) {
                     continue
                   }
@@ -110,9 +211,11 @@ export namespace SessionProcessor {
                   break
 
                 case "reasoning-delta":
+                  if (!storeReasoning) break
                   if (value.id in reasoningMap) {
                     const part = reasoningMap[value.id]
                     part.text += value.text
+
                     if (value.providerMetadata) part.metadata = value.providerMetadata
                     if (part.text) {
                       const active = Object.values(reasoningMap).reduce((sum, p) => sum + p.text.length, 0)
@@ -123,10 +226,15 @@ export namespace SessionProcessor {
                       }
                       await Session.updatePart({ part, delta: value.text })
                     }
+
+                    if (value.providerMetadata) part.metadata = mergeMetadata(part.metadata, value.providerMetadata)
+                    if (part.text) await Session.updatePart({ part, delta: value.text })
+
                   }
                   break
 
                 case "reasoning-end":
+                  if (!storeReasoning) break
                   if (value.id in reasoningMap) {
                     const part = reasoningMap[value.id]
                     part.text = part.text.trimEnd()
@@ -135,14 +243,18 @@ export namespace SessionProcessor {
                       ...part.time,
                       end: Date.now(),
                     }
+
                     if (value.providerMetadata) part.metadata = value.providerMetadata
                     reasoningTotal += part.text.length
+
+                    if (value.providerMetadata) part.metadata = mergeMetadata(part.metadata, value.providerMetadata)
+
                     await Session.updatePart(part)
                     delete reasoningMap[value.id]
                   }
                   break
 
-                case "tool-input-start":
+                case "tool-input-start": {
                   const part = await Session.updatePart({
                     id: toolcalls[value.id]?.id ?? Identifier.ascending("part"),
                     messageID: input.assistantMessage.id,
@@ -156,8 +268,17 @@ export namespace SessionProcessor {
                       raw: "",
                     },
                   })
+
                   toolcalls[value.id] = part as MessageV2.ToolPart
+
+                  // Tool args can stream in over time; snapshot a baseline at the moment a wait call begins.
+                  // This avoids a lost-wake when an agent message arrives before the wait tool executes.
+                  if (value.toolName === "wait_agent_message") {
+                    waits.set(value.id, SessionMessage.nowSeq())
+                  }
+
                   break
+                }
 
                 case "tool-input-delta":
                   break
@@ -166,6 +287,9 @@ export namespace SessionProcessor {
                   break
 
                 case "tool-call": {
+                  if (streamInput.tools[value.toolName]) {
+                    retrySafe = false
+                  }
                   const match = toolcalls[value.toolCallId]
                   if (match) {
                     const part = await Session.updatePart({
@@ -282,7 +406,7 @@ export namespace SessionProcessor {
                   })
                   break
 
-                case "finish-step":
+                case "finish-step": {
                   const usage = Session.getUsage({
                     model: input.model,
                     usage: value.usage,
@@ -326,6 +450,7 @@ export namespace SessionProcessor {
                     needsCompaction = true
                   }
                   break
+                }
 
                 case "text-start":
                   currentText = {
@@ -372,6 +497,12 @@ export namespace SessionProcessor {
                       { text: currentText.text },
                     )
                     currentText.text = textOutput.text
+                    if (streamInput.agent.name === "compaction") {
+                      currentText.text = currentText.text
+                        .replace(/<think>[\s\S]*?<\/think>\s*/g, "")
+                        .replace(/<analysis>[\s\S]*?<\/analysis>\s*/g, "")
+                        .trim()
+                    }
                     currentText.time = {
                       start: Date.now(),
                       end: Date.now(),
@@ -400,24 +531,47 @@ export namespace SessionProcessor {
               stack: JSON.stringify(e.stack),
             })
             const error = MessageV2.fromError(e, { providerID: input.model.providerID })
+            const cfg = config
             const retry = SessionRetry.retryable(error)
-            if (retry !== undefined) {
-              attempt++
-              const delay = SessionRetry.delay(attempt, error.name === "APIError" ? error : undefined)
-              SessionStatus.set(input.sessionID, {
-                type: "retry",
-                attempt,
-                message: retry,
-                next: Date.now() + delay,
-              })
-              await SessionRetry.sleep(delay, input.abort).catch(() => {})
-              continue
+
+            if (retry !== undefined && retrySafe) {
+              const max = cfg.experimental?.chatMaxRetries ?? 3
+              const limited = attempt >= max
+              if (!limited) {
+                attempt++
+                const delay = SessionRetry.delay(attempt, error.name === "APIError" ? error : undefined)
+                SessionStatus.set(input.sessionID, {
+                  type: "retry",
+                  attempt,
+                  message: retry,
+                  next: Date.now() + delay,
+                })
+                await cleanup(preserve).catch(() => {})
+                await SessionRetry.sleep(delay, input.abort).catch(() => {})
+                continue
+              }
             }
-            input.assistantMessage.error = error
-            Bus.publish(Session.Event.Error, {
-              sessionID: input.assistantMessage.sessionID,
-              error: input.assistantMessage.error,
-            })
+
+            const compactOnContextLengthError = await (async () => {
+              if (streamInput.agent.name === "compaction") return false
+              if (!isContextLengthError(error)) return false
+              if (SessionCompaction.autoPolicy(cfg.compaction?.auto) === "deny") return false
+              if (await isReplayPrompt(streamInput.user.id)) return false
+              return true
+            })()
+
+            if (compactOnContextLengthError) {
+              needsCompaction = true
+              compactionRequest = { reason: "context_length", fallbackError: error }
+            }
+
+            if (!compactOnContextLengthError) {
+              input.assistantMessage.error = error
+              Bus.publish(Session.Event.Error, {
+                sessionID: input.assistantMessage.sessionID,
+                error: input.assistantMessage.error,
+              })
+            }
           }
           if (snapshot) {
             const patch = await Snapshot.patch(snapshot)
@@ -460,5 +614,82 @@ export namespace SessionProcessor {
       },
     }
     return result
+  }
+
+  async function isReplayPrompt(messageID: string) {
+    const parts = await MessageV2.parts(messageID)
+    for (const part of parts) {
+      if (part.type !== "text") continue
+      if (!isRecord(part.metadata)) continue
+      const oc = part.metadata["opencode"]
+      if (!isRecord(oc)) continue
+      if (oc["replay"] === true) return true
+    }
+    return false
+  }
+
+  function isContextLengthError(error: unknown) {
+    const info = apiErrorInfo(error)
+    if (!info) return false
+
+    const code = apiErrorCode(info.responseBody)?.toLowerCase()
+    if (code && code.includes("context_length")) return true
+
+    const msg = info.message.toLowerCase()
+    if (msg.includes("maximum context length")) return true
+    if (msg.includes("context length") && msg.includes("exceed")) return true
+    if (msg.includes("too many tokens")) return true
+    if (msg.includes("prompt is too long")) return true
+    if (msg.includes("input is too long")) return true
+    if (msg.includes("context window") && (msg.includes("exceed") || msg.includes("too large"))) return true
+
+    return false
+  }
+
+  function apiErrorInfo(error: unknown): { message: string; responseBody?: string } | undefined {
+    if (!isRecord(error)) return
+    if (error["name"] !== "APIError") return
+    const data = error["data"]
+    if (!isRecord(data)) return
+    const message = data["message"]
+    if (typeof message !== "string") return
+    const responseBody = data["responseBody"]
+    return {
+      message,
+      responseBody: typeof responseBody === "string" ? responseBody : undefined,
+    }
+  }
+
+  function apiErrorCode(responseBody?: string): string | undefined {
+    if (!responseBody) return
+    const parsed = safeJsonParse(responseBody)
+    if (!isRecord(parsed)) return
+
+    const error = parsed["error"]
+    if (isRecord(error)) {
+      const code = error["code"]
+      if (typeof code === "string") return code
+      if (typeof code === "number") return String(code)
+      const type = error["type"]
+      if (typeof type === "string") return type
+    }
+
+    const code = parsed["code"]
+    if (typeof code === "string") return code
+    if (typeof code === "number") return String(code)
+
+    return
+  }
+
+  function safeJsonParse(text: string): unknown {
+    try {
+      return JSON.parse(text)
+    } catch {
+      return undefined
+    }
+  }
+
+  function isRecord(value: unknown): value is Record<string, unknown> {
+    return !!value && typeof value === "object" && !Array.isArray(value)
   }
 }

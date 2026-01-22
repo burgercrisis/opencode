@@ -736,11 +736,7 @@ export function Session() {
       value: "session.message.next",
       keybind: "messages_next",
       category: "Session",
-<<<<<<< HEAD
-      hidden: true,
-=======
       disabled: true,
->>>>>>> af214d35c (Add keybindable commands to navigate between user messages (#5078))
       onSelect: (dialog) => scrollToMessage("next", dialog),
     },
     {
@@ -748,11 +744,7 @@ export function Session() {
       value: "session.message.previous",
       keybind: "messages_previous",
       category: "Session",
-<<<<<<< HEAD
-      hidden: true,
-=======
       disabled: true,
->>>>>>> af214d35c (Add keybindable commands to navigate between user messages (#5078))
       onSelect: (dialog) => scrollToMessage("prev", dialog),
     },
     {

@@ -308,6 +308,50 @@ test("migrates autoshare to share field", async () => {
   })
 })
 
+test("accepts tri-state compaction.auto policies", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, "opencode.json"),
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          compaction: {
+            auto: "ask",
+          },
+        }),
+      )
+    },
+  })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const config = await Config.get()
+      expect(config.compaction?.auto).toBe("ask")
+    },
+  })
+})
+
+test("accepts compaction shorthand strings", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, "opencode.json"),
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          compaction: "deny",
+        }),
+      )
+    },
+  })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const config = await Config.get()
+      expect(config.compaction?.auto).toBe("deny")
+    },
+  })
+})
+
 test("migrates mode field to agent field", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {
@@ -363,7 +407,6 @@ Test agent prompt`,
       const config = await Config.get()
       expect(config.agent?.["test"]).toEqual(
         expect.objectContaining({
-          name: "test",
           model: "test/model",
           prompt: "Test agent prompt",
         }),
@@ -407,14 +450,12 @@ Nested agent prompt`,
       const config = await Config.get()
 
       expect(config.agent?.["helper"]).toMatchObject({
-        name: "helper",
         model: "test/model",
         mode: "subagent",
         prompt: "Helper agent prompt",
       })
 
       expect(config.agent?.["nested/child"]).toMatchObject({
-        name: "nested/child",
         model: "test/model",
         mode: "subagent",
         prompt: "Nested agent prompt",
@@ -665,7 +706,6 @@ Helper subagent prompt`,
     fn: async () => {
       const config = await Config.get()
       expect(config.agent?.["helper"]).toMatchObject({
-        name: "helper",
         model: "test/model",
         mode: "subagent",
         prompt: "Helper subagent prompt",
