@@ -69,8 +69,8 @@ import { upgradeWebSocket, websocket } from "hono/bun"
 import { HTTPException } from "hono/http-exception"
 import { PartMismatchError, errors } from "./error"
 import { Pty } from "@/pty"
-import { PermissionNext } from "@/permission/next"
 import { Installation } from "@/installation"
+import { PermissionNext } from "@/permission/next"
 
 import { MDNS } from "./mdns"
 

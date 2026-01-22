@@ -12,6 +12,7 @@ import { defer } from "@/util/defer"
 import { Config } from "../config/config"
 import { PermissionNext } from "@/permission/next"
 
+
 const parameters = z.object({
   description: z.string().describe("A short (3-5 words) description of the task"),
   prompt: z.string().describe("The task for the agent to perform"),
@@ -21,6 +22,11 @@ const parameters = z.object({
 })
 
 export const TaskTool = Tool.define("task", async (ctx) => {
+
+export { DESCRIPTION as TASK_DESCRIPTION }
+
+export const TaskTool = Tool.define("task", async () => {
+
   const agents = await Agent.list().then((x) => x.filter((a) => a.mode !== "primary"))
 
   // Filter agents by permissions if agent provided

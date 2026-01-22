@@ -2,52 +2,51 @@ import path from "path"
 import os from "os"
 import fs from "fs/promises"
 import z from "zod"
-import { Identifier } from "../id/id"
+import { Identifier } from "@/id/id"
 import { MessageV2 } from "./message-v2"
-import { Log } from "../util/log"
+import { Log } from "@/util/log"
 import { SessionRevert } from "./revert"
 import { Session } from "."
-import { Agent } from "../agent/agent"
-import { Provider } from "../provider/provider"
+import { Agent } from "@/agent/agent"
+import { Provider } from "@/provider/provider"
 import { type Tool as AITool, tool, jsonSchema, type ToolCallOptions } from "ai"
 import { SessionCompaction } from "./compaction"
 import { SessionRetry } from "./retry"
-import { Instance } from "../project/instance"
-import { Bus } from "../bus"
-import { TuiEvent } from "../cli/cmd/tui/event"
-import { ProviderTransform } from "../provider/transform"
+import { Instance } from "@/project/instance"
+import { Bus } from "@/bus"
+import { TuiEvent } from "@/cli/cmd/tui/event"
+import { ProviderTransform } from "@/provider/transform"
 import { SystemPrompt } from "./system"
-import { Plugin } from "../plugin"
+import { Plugin } from "@/plugin"
 import PROMPT_PLAN from "../session/prompt/plan.txt"
 import BUILD_SWITCH from "../session/prompt/build-switch.txt"
 import MAX_STEPS from "../session/prompt/max-steps.txt"
-import { defer } from "../util/defer"
+import { defer } from "@/util/defer"
 import { clone } from "remeda"
-import { ToolRegistry } from "../tool/registry"
-import { Tool } from "../tool/tool"
-import { MCP } from "../mcp"
-import { LSP } from "../lsp"
-import { ReadTool } from "../tool/read"
-import { ListTool } from "../tool/ls"
-import { FileTime } from "../file/time"
-import { Flag } from "../flag/flag"
+import { ToolRegistry } from "@/tool/registry"
+import { Tool } from "@/tool/tool"
+import { MCP } from "@/mcp"
+import { LSP } from "@/lsp"
+import { ReadTool } from "@/tool/read"
+import { ListTool } from "@/tool/ls"
+import { FileTime } from "@/file/time"
+import { Flag } from "@/flag/flag"
 import { ulid } from "ulid"
 import { spawn } from "child_process"
-import { Command } from "../command"
+import { Command } from "@/command"
 import { $, fileURLToPath } from "bun"
-import { ConfigMarkdown } from "../config/markdown"
+import { ConfigMarkdown } from "@/config/markdown"
 import { SessionSummary } from "./summary"
 import { NamedError } from "@opencode-ai/util/error"
 import { fn } from "@/util/fn"
 import { SessionProcessor } from "./processor"
 import { PermissionNext } from "@/permission/next"
 import { SessionStatus } from "./status"
-import { Config } from "../config/config"
+import { Config } from "@/config/config"
 import { Shell } from "@/shell/shell"
-
-import { Truncate } from "@/tool/truncation"
 import { Token } from "@/util/token"
 
+import { Truncate } from "@/tool/truncation"
 import { LLM } from "./llm"
 import { LLMConcurrencyMachine } from "./llm-concurrency-machine"
 import { iife } from "@/util/iife"
@@ -55,7 +54,6 @@ import { SessionMessage } from "./message-routing"
 import { WaitNotice } from "./wait-notice"
 import { WaitPolicy } from "./wait-policy"
 import { MessageParser } from "./message-parser"
-
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -910,7 +908,10 @@ export namespace SessionPrompt {
         since: policy.since,
       })
 
-      const result = WaitPolicy.evaluate({ policy, respondedFromSources })
+      const result = WaitPolicy.evaluate({
+        policy,
+        respondedFromSources,
+      })
 
       if (!result.ready) return
 
@@ -1990,7 +1991,7 @@ export namespace SessionPrompt {
           {
             tool: key,
             sessionID: ctx.sessionID,
-            callID: opts.toolCallId,
+            callID: opts.callID,
           },
           result,
         )
@@ -2447,24 +2448,41 @@ export namespace SessionPrompt {
       },
     )
 
-    const userText = parts
-      .filter((p) => p.type === "text" && !p.ignored)
-      .map((p) => (p as MessageV2.TextPart).text)
-      .join("")
+    // Calculate sentEstimate for user messages - tokens in user's text parts
+    const sentEstimate = parts
+      .filter((p): p is MessageV2.TextPart => p.type === "text" && !p.ignored)
+      .reduce((sum, p) => sum + Token.estimate(p.text), 0)
+    info.sentEstimate = sentEstimate
 
-    // Calculate user message tokens
-    let sentTokens = Token.estimate(userText)
-
-    // Add tokens from tool results that will be sent with this message
-    // Tool results from the previous assistant message are included in the API request
+    // Calculate contextEstimate - includes prior context plus current user message
     const msgs = await MessageV2.filterCompacted(MessageV2.stream(input.sessionID))
-    const lastAssistant = msgs.findLast((m) => m.info.role === "assistant")
-    if (lastAssistant) {
-      sentTokens += Token.calculateToolResultTokens(lastAssistant.parts)
-    }
+    const lastAssistantMsg = msgs.findLast((m) => m.info.role === "assistant")?.info as MessageV2.Assistant | undefined
+    const priorContext = lastAssistantMsg?.contextEstimate ?? lastAssistantMsg?.tokens?.input ?? 0
+    // Calculate tool result tokens from the last assistant's tool parts
+    const lastAssistantParts = lastAssistantMsg
+      ? (msgs.find((m) => m.info.id === lastAssistantMsg.id)?.parts.filter((p) => p.type === "tool") ?? [])
+      : []
+    const toolResultTokens = Token.calculateToolResultTokens(lastAssistantParts)
+    info.contextEstimate = priorContext + sentEstimate + toolResultTokens
+>>>>>>> 2d0af957f51fcfdc093c8ab6b5075c8c8fea5a2d
+=======
+// Calculate sentEstimate for user messages - tokens in user's text parts
+    const sentEstimate = parts
+      .filter((p): p is MessageV2.TextPart => p.type === "text" && !p.ignored)
+      .reduce((sum, p) => sum + Token.estimate(p.text), 0)
+    info.sentEstimate = sentEstimate
 
-    info.sentEstimate = sentTokens
-    info.contextEstimate = sentTokens
+    // Calculate contextEstimate - includes prior context plus current user message
+    const msgs = await MessageV2.filterCompacted(MessageV2.stream(input.sessionID))
+    const lastAssistantMsg = msgs.findLast((m) => m.info.role === "assistant")?.info as MessageV2.Assistant | undefined
+    const priorContext = lastAssistantMsg?.contextEstimate ?? lastAssistantMsg?.tokens?.input ?? 0
+    // Calculate tool result tokens from the last assistant's tool parts
+    const lastAssistantParts = lastAssistantMsg
+      ? (msgs.find((m) => m.info.id === lastAssistantMsg.id)?.parts.filter((p) => p.type === "tool") ?? [])
+      : []
+    const toolResultTokens = Token.calculateToolResultTokens(lastAssistantParts)
+    info.contextEstimate = priorContext + sentEstimate + toolResultTokens
+>>>>>>> 2d0af957f51fcfdc093c8ab6b5075c8c8fea5a2d
 
     await Session.updateMessage(info)
     for (const part of parts) {
@@ -2898,7 +2916,59 @@ NOTE: At any point in time through this workflow you should feel free to ask the
   export async function command(input: CommandInput) {
     log.info("command", input)
     const command = await Command.get(input.command)
-    const agentName = command.agent ?? input.agent ?? (await Agent.defaultAgent())
+    const agentName = command?.agent ?? input.agent ?? "build"
+
+    const plugins = await Plugin.list()
+    for (const plugin of plugins) {
+      const pluginCommands = plugin["plugin.command"]
+      const pluginCommand = pluginCommands?.[input.command]
+      if (!pluginCommand) continue
+
+      const client = await Plugin.client()
+      try {
+        await pluginCommand.execute({ sessionID: input.sessionID, client })
+      } catch (error) {
+        log.error("plugin command failed", {
+          command: input.command,
+          error: error instanceof Error ? error.message : String(error),
+        })
+        return await SessionPrompt.prompt({
+          sessionID: input.sessionID,
+          agent: agentName,
+          parts: [
+            {
+              type: "text",
+              text: `Plugin command "/${input.command}" failed: ${error instanceof Error ? error.message : String(error)}`,
+            },
+          ],
+        })
+      }
+      const last = await Session.messages({ sessionID: input.sessionID, limit: 1 })
+      const message = last.at(0)
+      if (message) return message
+      return await SessionPrompt.prompt({
+        sessionID: input.sessionID,
+        agent: agentName,
+        parts: [
+          {
+            type: "text",
+            text: "",
+          },
+        ],
+      })
+    }
+
+    if (!command)
+      return await SessionPrompt.prompt({
+        sessionID: input.sessionID,
+        agent: agentName,
+        parts: [
+          {
+            type: "text",
+            text: "",
+          },
+        ],
+      })
 
     const raw = input.arguments.match(argsRegex) ?? []
     const args = raw.map((arg) => arg.replace(quoteTrimRegex, ""))
@@ -2941,7 +3011,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         }),
       )
       let index = 0
-      template = template.replace(bashRegex, () => results[index++])
+      template = template.replace(bashRegex, () => results[index++] || "")
     }
     template = template.trim()
 
@@ -2984,7 +3054,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       throw error
     }
 
-
     const templateParts = await resolvePromptParts(template)
     const isSubtask = (agent.mode === "subagent" && command.subtask !== false) || command.subtask === true
     const parts = isSubtask
@@ -3020,21 +3089,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       },
       { parts },
     )
-
-    const parts =
-      (agent.mode === "subagent" && command.subtask !== false) || command.subtask === true
-        ? [
-            {
-              type: "subtask" as const,
-              agent: agent.name,
-              description: command.description ?? "",
-              command: input.command,
-              // TODO: how can we make subagent_spawn accept a more complex input?
-              prompt: await resolvePromptParts(template).then((x) => x.find((y) => y.type === "text")?.text ?? ""),
-            },
-          ]
-        : await resolvePromptParts(template)
-
 
     const result = (await prompt({
       sessionID: input.sessionID,

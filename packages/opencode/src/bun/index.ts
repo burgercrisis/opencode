@@ -62,20 +62,17 @@ export namespace BunProc {
   )
 
   export async function install(pkg: string, version = "latest") {
-    // Use lock to ensure only one install at a time
     using _ = await Lock.write("bun-install")
 
     const mod = path.join(Global.Path.cache, "node_modules", pkg)
+    const bundledDir = path.join(Global.Path.cache, "bundled")
+    const bundledFile = path.join(bundledDir, `${pkg.replace(/\//g, "-")}.js`)
     const pkgjson = Bun.file(path.join(Global.Path.cache, "package.json"))
     const parsed = await pkgjson.json().catch(async () => {
-      const result = { dependencies: {} }
+      const result = { dependencies: {}, bundled: {} }
       await Bun.write(pkgjson.name!, JSON.stringify(result, null, 2))
       return result
     })
-    const dependencies = parsed.dependencies ?? {}
-    if (!parsed.dependencies) parsed.dependencies = dependencies
-    const modExists = await Filesystem.exists(mod)
-    if (dependencies[pkg] === version && modExists) return mod
 
     const proxied = !!(
       process.env.HTTP_PROXY ||
@@ -84,22 +81,27 @@ export namespace BunProc {
       process.env.https_proxy
     )
 
+    const dependencies = parsed.dependencies ?? {}
+    if (!parsed.dependencies) parsed.dependencies = dependencies
+    const modExists = await Filesystem.exists(mod)
+
+    // Check if already installed and bundled
+    const bundledExists = await Bun.file(bundledFile).exists()
+    if (dependencies[pkg] === version && bundledExists) {
+      return bundledFile
+    }
+
     // Build command arguments
     const args = [
       "add",
       "--force",
       "--exact",
-      // TODO: get rid of this case (see: https://github.com/oven-sh/bun/issues/19936)
       ...(proxied ? ["--no-cache"] : []),
       "--cwd",
       Global.Path.cache,
       pkg + "@" + version,
     ]
 
-    // Let Bun handle registry resolution:
-    // - If .npmrc files exist, Bun will use them automatically
-    // - If no .npmrc files exist, Bun will default to https://registry.npmjs.org
-    // - No need to pass --registry flag
     log.info("installing package using Bun's default registry resolution", {
       pkg,
       version,
@@ -116,8 +118,6 @@ export namespace BunProc {
       )
     })
 
-    // Resolve actual version from installed package when using "latest"
-    // This ensures subsequent starts use the cached version until explicitly updated
     let resolvedVersion = version
     if (version === "latest") {
       const installedPkgJson = Bun.file(path.join(mod, "package.json"))
@@ -127,8 +127,85 @@ export namespace BunProc {
       }
     }
 
+    await Bun.file(bundledDir)
+      .exists()
+      .then(async (exists) => {
+        if (!exists) await Bun.$`mkdir -p ${bundledDir}`
+      })
+
+    const installedPkgJson = Bun.file(path.join(mod, "package.json"))
+    const installedPkg = await installedPkgJson.json().catch(() => ({}))
+    const entryPoint = installedPkg.main || "index.js"
+    const entryPath = path.join(mod, entryPoint)
+
+    log.info("bundling plugin for compiled binary compatibility", {
+      pkg,
+      entryPath,
+      bundledFile,
+    })
+
+    try {
+      const result = await Bun.build({
+        entrypoints: [entryPath],
+        outdir: bundledDir,
+        naming: `${pkg.replace(/\//g, "-")}.js`,
+        target: "bun",
+        format: "esm",
+        packages: "bundle",
+      })
+
+      if (!result.success) {
+        log.error("failed to bundle plugin", {
+          pkg,
+          logs: result.logs,
+        })
+        return mod
+      }
+
+      await copyPluginAssets(mod, bundledDir)
+      await copyPluginAssets(mod, Global.Path.cache)
+    } catch (e) {
+      log.error("failed to bundle plugin", {
+        pkg,
+        error: (e as Error).message,
+      })
+      return mod
+    }
+
     parsed.dependencies[pkg] = resolvedVersion
+    if (!parsed.bundled) parsed.bundled = {}
+    parsed.bundled[pkg] = bundledFile
     await Bun.write(pkgjson.name!, JSON.stringify(parsed, null, 2))
-    return mod
+    return bundledFile
+  }
+
+  async function copyPluginAssets(pluginDir: string, targetDir: string) {
+    const assetExtensions = [".html", ".css", ".json", ".txt", ".svg", ".png", ".jpg", ".gif"]
+
+    async function copyAssetsRecursive(srcDir: string, destDir: string) {
+      const entries = await Array.fromAsync(new Bun.Glob("**/*").scan({ cwd: srcDir, dot: false }))
+
+      for (const entry of entries) {
+        const ext = path.extname(entry).toLowerCase()
+        if (assetExtensions.includes(ext)) {
+          const srcPath = path.join(srcDir, entry)
+          const destPath = path.join(destDir, path.basename(entry))
+
+          try {
+            const content = await Bun.file(srcPath).arrayBuffer()
+            await Bun.write(destPath, content)
+            log.info("copied plugin asset", { src: entry, dest: destPath })
+          } catch (e) {
+            log.error("failed to copy plugin asset", {
+              src: srcPath,
+              dest: destPath,
+              error: (e as Error).message,
+            })
+          }
+        }
+      }
+    }
+
+    await copyAssetsRecursive(pluginDir, targetDir)
   }
 }

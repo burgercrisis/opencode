@@ -1,6 +1,6 @@
 import { SyntaxStyle, RGBA, type TerminalColors } from "@opentui/core"
 import path from "path"
-import { createEffect, createMemo, onMount } from "solid-js"
+import { createEffect, createMemo } from "solid-js"
 import { useSync } from "@tui/context/sync"
 import { createSimpleContext } from "./helper"
 import aura from "./theme/aura.json" with { type: "json" }
@@ -101,6 +101,7 @@ type ThemeColors = {
 type Theme = ThemeColors & {
   _hasSelectedListItemText: boolean
   thinkingOpacity: number
+  transparent: boolean
 }
 
 export function selectedForeground(theme: Theme, bg?: RGBA): RGBA {
@@ -168,13 +169,13 @@ export const DEFAULT_THEMES: Record<string, ThemeJson> = {
   solarized,
   synthwave84,
   tokyonight,
-  vesper,
   vercel,
+  vesper,
   zenburn,
   carbonfox,
 }
 
-function resolveTheme(theme: ThemeJson, mode: "dark" | "light") {
+function resolveTheme(theme: ThemeJson, mode: "dark" | "light", transparent: boolean) {
   const defs = theme.defs ?? {}
   function resolveColor(c: ColorValue): RGBA {
     if (c instanceof RGBA) return c
@@ -225,10 +226,17 @@ function resolveTheme(theme: ThemeJson, mode: "dark" | "light") {
   // Handle thinkingOpacity - optional with default of 0.6
   const thinkingOpacity = theme.theme.thinkingOpacity ?? 0.6
 
+  if (transparent) {
+    resolved.background = RGBA.fromInts(0, 0, 0, 0)
+    // NOTE: Could alternatively apply an alpha channel to the theme's base background color
+    // instead of forcing full transparency, allowing for adjustable opacity levels
+  }
+
   return {
     ...resolved,
     _hasSelectedListItemText: hasSelectedListItemText,
     thinkingOpacity,
+    transparent,
   } as Theme
 }
 
@@ -286,6 +294,7 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
       themes: DEFAULT_THEMES,
       mode: kv.get("theme_mode", props.mode),
       active: (sync.data.config.theme ?? kv.get("theme", "opencode")) as string,
+      transparent: kv.get("theme_transparent", false),
       ready: false,
     })
 
@@ -353,7 +362,7 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
     })
 
     const values = createMemo(() => {
-      return resolveTheme(store.themes[store.active] ?? store.themes.opencode, store.mode)
+      return resolveTheme(store.themes[store.active] ?? store.themes.opencode, store.mode, store.transparent)
     })
 
     const syntax = createMemo(() => generateSyntax(values()))
@@ -384,6 +393,13 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
       set(theme: string) {
         setStore("active", theme)
         kv.set("theme", theme)
+      },
+      transparent() {
+        return store.transparent
+      },
+      setTransparent(transparent: boolean) {
+        setStore("transparent", transparent)
+        kv.set("theme_transparent", transparent)
       },
       get ready() {
         return store.ready
@@ -983,6 +999,14 @@ function getSyntaxRules(theme: Theme) {
         foreground: theme.textMuted,
       },
     },
+    {
+      scope: ["markup.strikethrough"],
+      style: {
+        foreground: theme.background,
+        background: theme.primary,
+        strikethrough: true,
+      },
+    },
     // Additional common highlight groups
     {
       scope: ["string.special", "string.special.url"],
@@ -1074,12 +1098,6 @@ function getSyntaxRules(theme: Theme) {
       scope: ["tag.delimiter"],
       style: {
         foreground: theme.syntaxOperator,
-      },
-    },
-    {
-      scope: ["markup.strikethrough"],
-      style: {
-        foreground: theme.textMuted,
       },
     },
     {

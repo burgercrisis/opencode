@@ -11,13 +11,13 @@ import { SessionStatus } from "./status"
 import { SessionMessage } from "./message-routing"
 import { Plugin } from "@/plugin"
 import type { Provider } from "@/provider/provider"
+import { Token } from "@/util/token"
 import { LLM } from "./llm"
 import { Config } from "@/config/config"
 import { Storage } from "@/storage/storage"
 import { SessionCompaction } from "./compaction"
 import { PermissionNext } from "@/permission/next"
 import { Question } from "@/question"
-import { Token } from "@/util/token"
 
 export namespace SessionProcessor {
   const DOOM_LOOP_THRESHOLD = 3
@@ -64,7 +64,6 @@ export namespace SessionProcessor {
 
         compactionRequest = undefined
         const config = await Config.get()
-        const shouldBreak = config.experimental?.continue_loop_on_deny !== true
 
         let ignoredOpenAIReasoning = false
 
@@ -129,7 +128,6 @@ export namespace SessionProcessor {
           }
         }
 
-
         while (true) {
           const preserve = new Set((await MessageV2.parts(input.assistantMessage.id)).map((p) => p.id))
           let retrySafe = true
@@ -193,23 +191,6 @@ export namespace SessionProcessor {
                   }
                   break
 
-                case "reasoning-start":
-                  if (value.id in reasoningMap) {
-                    continue
-                  }
-                  reasoningMap[value.id] = {
-                    id: Identifier.ascending("part"),
-                    messageID: input.assistantMessage.id,
-                    sessionID: input.assistantMessage.sessionID,
-                    type: "reasoning",
-                    text: "",
-                    time: {
-                      start: Date.now(),
-                    },
-                    metadata: value.providerMetadata,
-                  }
-                  break
-
                 case "reasoning-delta":
                   if (!storeReasoning) break
                   if (value.id in reasoningMap) {
@@ -228,8 +209,9 @@ export namespace SessionProcessor {
                     }
 
                     if (value.providerMetadata) part.metadata = mergeMetadata(part.metadata, value.providerMetadata)
-                    if (part.text) await Session.updatePart({ part, delta: value.text })
-
+                    // Track reasoning tokens for live display
+                    reasoningTotal += value.text.length
+                    input.assistantMessage.reasoningEstimate = Token.toTokenEstimate(reasoningTotal)
                   }
                   break
 
@@ -246,8 +228,6 @@ export namespace SessionProcessor {
 
                     if (value.providerMetadata) part.metadata = value.providerMetadata
                     reasoningTotal += part.text.length
-
-                    if (value.providerMetadata) part.metadata = mergeMetadata(part.metadata, value.providerMetadata)
 
                     await Session.updatePart(part)
                     delete reasoningMap[value.id]
@@ -415,19 +395,22 @@ export namespace SessionProcessor {
                   input.assistantMessage.finish = value.finishReason
                   input.assistantMessage.cost += usage.cost
                   input.assistantMessage.tokens = usage.tokens
-                  input.assistantMessage.contextEstimate =
-                    usage.tokens.input + usage.tokens.cache.read + usage.tokens.cache.write
+                  // Set contextEstimate from actual usage
+                  input.assistantMessage.contextEstimate = usage.tokens.input + usage.tokens.cache.read
                   await Session.updatePart({
                     id: Identifier.ascending("part"),
                     reason: value.finishReason,
                     snapshot: await Snapshot.track(),
                     messageID: input.assistantMessage.id,
-                    sessionID: input.assistantMessage.sessionID,
+                    sessionID: input.sessionID,
                     type: "step-finish",
                     tokens: usage.tokens,
                     cost: usage.cost,
                   })
                   await Session.updateMessage(input.assistantMessage)
+                  // Clear streaming estimates now that real tokens are available
+                  input.assistantMessage.outputEstimate = undefined
+                  input.assistantMessage.reasoningEstimate = undefined
                   if (snapshot) {
                     const patch = await Snapshot.patch(snapshot)
                     if (patch.files.length) {
@@ -481,6 +464,9 @@ export namespace SessionProcessor {
                         delta: value.text,
                       })
                     }
+                    // Track output tokens for live display
+                    textTotal += value.text.length
+                    input.assistantMessage.outputEstimate = Token.toTokenEstimate(textTotal)
                   }
                   break
 
@@ -499,7 +485,7 @@ export namespace SessionProcessor {
                     currentText.text = textOutput.text
                     if (streamInput.agent.name === "compaction") {
                       currentText.text = currentText.text
-                        .replace(/<think>[\s\S]*?<\/think>\s*/g, "")
+                        .replace(/<tool_call>[\s\S]*?<\/think>\s*/g, "")
                         .replace(/<analysis>[\s\S]*?<\/analysis>\s*/g, "")
                         .trim()
                     }

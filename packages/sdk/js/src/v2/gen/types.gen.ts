@@ -190,6 +190,10 @@ export type AssistantMessage = {
       write: number
     }
   }
+  outputEstimate?: number
+  reasoningEstimate?: number
+  contextEstimate?: number
+  sentEstimate?: number
   finish?: string
 }
 
@@ -1078,6 +1082,10 @@ export type KeybindsConfig = {
    */
   scrollbar_toggle?: string
   /**
+   * Toggle session header visibility
+   */
+  header_toggle?: string
+  /**
    * Toggle username visibility
    */
   username_toggle?: string
@@ -1141,6 +1149,10 @@ export type KeybindsConfig = {
    * Compact the session
    */
   session_compact?: string
+  /**
+   * Search in session messages
+   */
+  session_search?: string
   /**
    * Scroll messages up by one page
    */
@@ -1413,6 +1425,10 @@ export type KeybindsConfig = {
    * Previous child session
    */
   session_child_cycle_reverse?: string
+  /**
+   * Go to parent session
+   */
+  session_parent?: string
   /**
    * Go to parent session
    */

@@ -17,7 +17,7 @@ export interface ListProps<T> extends FilteredListProps<T> {
   children: (item: T) => JSX.Element
   emptyMessage?: string
   onKeyEvent?: (event: KeyboardEvent, item: T | undefined) => void
-  onMove?: (item: T | undefined) => void
+  onActiveChange?: (item: T | undefined) => void
   activeIcon?: IconProps["name"]
   filter?: string
   search?: ListSearchProps | boolean
@@ -106,19 +106,18 @@ export function List<T>(props: ListProps<T> & { ref?: (ref: ListRef) => void }) 
       scroll.scrollTo(0, 0)
       return
     }
-    const key = active()
-    if (!key) return
-    const element = scroll.querySelector(`[data-key="${CSS.escape(key)}"]`)
-    if (!(element instanceof HTMLElement)) return
-    scrollIntoView(scroll, element, "center")
+    const element = scrollRef()?.querySelector(`[data-key="${active()}"]`)
+    element?.scrollIntoView({ block: "center", behavior: "smooth" })
   })
 
-  createEffect(() => {
-    const all = flat()
-    const current = active()
-    const item = all.find((x) => props.key(x) === current)
-    props.onMove?.(item)
-  })
+  // Fire onActiveChange when keyboard focus changes
+  createEffect(
+    on(active, (key) => {
+      if (!props.onActiveChange) return
+      const item = flat().find((x) => props.key(x) === key)
+      props.onActiveChange(item)
+    }),
+  )
 
   const handleSelect = (item: T | undefined, index: number) => {
     props.onSelect?.(item, index)

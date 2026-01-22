@@ -1,0 +1,21 @@
+[data-component="session-message-rail"] {
+  display: flex;
+  flex-shrink: 0;
+}
+
+[data-slot="session-message-rail-compact"],
+[data-slot="session-message-rail-full"] {
+  flex-shrink: 0;
+  padding-top: 0.625rem;
+  padding-left: 0.5rem;
+  padding-right: 0.25rem;
+}
+
+/* Always show compact rail only, hide full */
+[data-slot="session-message-rail-compact"] {
+  display: flex;
+}
+
+[data-slot="session-message-rail-full"] {
+  display: none;
+}

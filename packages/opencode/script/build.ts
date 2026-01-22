@@ -84,13 +84,10 @@ const targets = singleFlag
         return false
       }
 
-      // When building for the current platform, prefer a single native binary by default.
-      // Baseline binaries require additional Bun artifacts and can be flaky to download.
       if (item.avx2 === false) {
         return baselineFlag
       }
 
-      // also skip abi-specific builds for the same reason
       if (item.abi !== undefined) {
         return false
       }
@@ -108,8 +105,7 @@ if (!skipInstall) {
 }
 for (const item of targets) {
   const name = [
-    pkg.name,
-    // changing to win32 flags npm for some reason
+    "opencode",
     item.os === "win32" ? "windows" : item.os,
     item.arch,
     item.avx2 === false ? "baseline" : undefined,
@@ -117,13 +113,14 @@ for (const item of targets) {
   ]
     .filter(Boolean)
     .join("-")
-  console.log(`building ${name}`)
+
+  const bunTarget = name.replace("opencode", "bun")
+  console.log(`building ${name} (target: ${bunTarget})`)
   await $`mkdir -p dist/${name}/bin`
 
   const parserWorker = fs.realpathSync(path.resolve(dir, "./node_modules/@opentui/core/parser.worker.js"))
   const workerPath = "./src/cli/cmd/tui/worker.ts"
 
-  // Use platform-specific bunfs root path based on target OS
   const bunfsRoot = item.os === "win32" ? "B:/~BUN/root/" : "/$bunfs/root/"
   const workerRelativePath = path.relative(dir, parserWorker).replaceAll("\\", "/")
 
@@ -135,7 +132,6 @@ for (const item of targets) {
     compile: {
       autoloadBunfig: false,
       autoloadDotenv: false,
-      //@ts-ignore (bun types aren't up to date)
       autoloadTsconfig: true,
       autoloadPackageJson: true,
       target: name.replace(pkg.name, "bun") as any,
@@ -146,6 +142,7 @@ for (const item of targets) {
     entrypoints: ["./src/index.ts", parserWorker, workerPath],
     define: {
       OPENCODE_VERSION: `'${Script.version}'`,
+      OPENCODE_BASE_VERSION: `'${pkg.version}'`,
       OTUI_TREE_SITTER_WORKER_PATH: bunfsRoot + workerRelativePath,
       OPENCODE_WORKER_PATH: workerPath,
       OPENCODE_CHANNEL: `'${Script.channel}'`,
@@ -161,6 +158,10 @@ for (const item of targets) {
         version: Script.version,
         os: [item.os],
         cpu: [item.arch],
+        repository: {
+          type: "git",
+          url: "https://github.com/anomalyco/opencode",
+        },
       },
       null,
       2,

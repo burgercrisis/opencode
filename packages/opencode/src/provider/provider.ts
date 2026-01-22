@@ -1055,7 +1055,7 @@ export namespace Provider {
       const mod = await import(installedPath)
 
       const fn = mod[Object.keys(mod).find((key) => key.startsWith("create"))!]
-      const loaded = fn({
+      const loaded = await fn({
         name: model.providerID,
         ...options,
       })

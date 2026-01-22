@@ -10,6 +10,14 @@ export namespace Identifier {
     user: "usr",
     part: "prt",
     pty: "pty",
+  const prefixes = {
+    session: "ses",
+    message: "msg",
+    permission: "per",
+    question: "que",
+    user: "usr",
+    part: "prt",
+    pty: "pty",
     tool: "tool",
   } as const
 

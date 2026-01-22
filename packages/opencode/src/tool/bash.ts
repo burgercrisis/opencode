@@ -13,11 +13,39 @@ import { Filesystem } from "@/util/filesystem"
 import { fileURLToPath } from "url"
 import { Flag } from "@/flag/flag.ts"
 import { Shell } from "@/shell/shell"
+import { ptyToText } from "ghostty-opentui"
 
 import { BashArity } from "@/permission/arity"
 import { Truncate } from "./truncation"
 
+const MAX_OUTPUT_LENGTH = Flag.OPENCODE_EXPERIMENTAL_BASH_MAX_OUTPUT_LENGTH || 30_000
 const MAX_METADATA_LENGTH = 30_000
+
+/**
+ * Process carriage returns in output text.
+ * When \r appears mid-line, subsequent text overwrites from line start.
+ * This handles cases where ptyToText doesn't fully process terminal sequences.
+ */
+function processCarriageReturns(text: string): string {
+  return text
+    .split("\n")
+    .map((line) => {
+      if (!line.includes("\r")) return line
+      // Process each segment separated by \r, keeping only what would be visible
+      const segments = line.split("\r")
+      let result = ""
+      for (const segment of segments) {
+        // Each \r returns cursor to start, so new text overwrites from position 0
+        if (segment.length >= result.length) {
+          result = segment
+        } else {
+          result = segment + result.slice(segment.length)
+        }
+      }
+      return result
+    })
+    .join("\n")
+}
 const DEFAULT_TIMEOUT = Flag.OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS || 2 * 60 * 1000
 
 export const log = Log.create({ service: "bash-tool" })
@@ -412,6 +440,27 @@ export const BashTool = Tool.define("bash", async () => {
           })
 
       let output = ""
+=======
+      const proc = spawn(params.command, {
+        shell,
+        cwd,
+        env: {
+          ...process.env,
+          FORCE_COLOR: "3",
+          CLICOLOR: "1",
+          CLICOLOR_FORCE: "1",
+          TERM: "xterm-256color",
+          TERM_PROGRAM: "bash-tool",
+          PY_COLORS: "1",
+          ANSICON: "1",
+          NO_COLOR: undefined,
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+        detached: process.platform !== "win32",
+      })
+
+      let rawOutput = ""
+>>>>>>> 2d0af957f51fcfdc093c8ab6b5075c8c8fea5a2d
 
       // Initialize metadata with empty output
       ctx.metadata({
@@ -422,6 +471,7 @@ export const BashTool = Tool.define("bash", async () => {
       })
 
       const append = (chunk: Buffer) => {
+<<<<<<< HEAD
         output += chunk.toString()
         ctx.metadata({
           metadata: {
@@ -430,6 +480,17 @@ export const BashTool = Tool.define("bash", async () => {
             description: params.description,
           },
         })
+=======
+        if (rawOutput.length <= MAX_OUTPUT_LENGTH) {
+          rawOutput += chunk.toString()
+          ctx.metadata({
+            metadata: {
+              output: rawOutput,
+              description: params.description,
+            },
+          })
+        }
+>>>>>>> 2d0af957f51fcfdc093c8ab6b5075c8c8fea5a2d
       }
 
       proc.stdout?.on("data", append)
@@ -466,6 +527,7 @@ export const BashTool = Tool.define("bash", async () => {
         rejectPromise = reject
       })
 
+<<<<<<< HEAD
       proc.once("exit", (code) => {
         console.log(`[DEBUG] Process exited with code: ${code}`)
         exited = true
@@ -509,6 +571,13 @@ export const BashTool = Tool.define("bash", async () => {
       if (timedOut && exitCode === null) {
         exitCode = 124 // Standard timeout exit code
         resultMetadata.push(`bash tool terminated command after exceeding timeout ${timeout} ms`)
+=======
+      const resultMetadata: string[] = ["<bash_metadata>"]
+
+      if (rawOutput.length > MAX_OUTPUT_LENGTH) {
+        rawOutput = rawOutput.slice(0, MAX_OUTPUT_LENGTH)
+        resultMetadata.push(`bash tool truncated output as it exceeded ${MAX_OUTPUT_LENGTH} char limit`)
+>>>>>>> 2d0af957f51fcfdc093c8ab6b5075c8c8fea5a2d
       }
 
       if (aborted && exitCode === null) {
@@ -516,6 +585,7 @@ export const BashTool = Tool.define("bash", async () => {
         resultMetadata.push("User aborted the command")
       }
 
+<<<<<<< HEAD
       // CMD-specific exit code normalization
       if (Shell.isCmdCommand(processedCommand)) {
         // Handle special CMD exit codes
@@ -551,15 +621,33 @@ export const BashTool = Tool.define("bash", async () => {
       if (resultMetadata.length > 0) {
         output += "\n\n<bash_metadata>\n" + resultMetadata.join("\n") + "\n</bash_metadata>"
       }
+=======
+      const outputForModel = processCarriageReturns(ptyToText(rawOutput, { rows: 120, cols: 256 }))
+
+      const finalRawOutput = (() => {
+        if (resultMetadata.length <= 1) return rawOutput
+        return rawOutput + "\n\n" + resultMetadata.concat(["</bash_metadata>"]).join("\n")
+      })()
+
+      const finalOutputForModel = (() => {
+        if (resultMetadata.length <= 1) return outputForModel
+        return outputForModel + "\n\n" + resultMetadata.concat(["</bash_metadata>"]).join("\n")
+      })()
+>>>>>>> 2d0af957f51fcfdc093c8ab6b5075c8c8fea5a2d
 
       return {
         title: params.description,
         metadata: {
+<<<<<<< HEAD
           output: output.length > MAX_METADATA_LENGTH ? output.slice(0, MAX_METADATA_LENGTH) + "\n\n..." : output,
           exit: exitCode,
+=======
+          output: finalRawOutput,
+          exit: proc.exitCode,
+>>>>>>> 2d0af957f51fcfdc093c8ab6b5075c8c8fea5a2d
           description: params.description,
         },
-        output,
+        output: finalOutputForModel,
       }
     },
   }

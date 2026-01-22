@@ -1,3 +1,4 @@
+import { AskTool } from "./ask"
 import { BashTool } from "./bash"
 import { EditTool } from "./edit"
 import { GlobTool } from "./glob"
@@ -106,7 +107,7 @@ export namespace ToolRegistry {
 
     return [
       InvalidTool,
-      ...(["app", "cli", "desktop"].includes(Flag.OPENCODE_CLIENT) ? [QuestionTool] : []),
+      AskTool,
       BashTool,
       ReadTool,
       GlobTool,
@@ -134,9 +135,26 @@ export namespace ToolRegistry {
     return all().then((x) => x.map((t) => t.id))
   }
 
-  export async function enabled(_agent?: Agent.Info): Promise<Record<string, boolean>> {
-    const cfg = await Config.get()
-    return cfg.tools ?? {}
+  export async function enabled(agent: Agent.Info): Promise<Record<string, boolean>> {
+    const result: Record<string, boolean> = {}
+
+    // Only disable tools globally if edit is a string "deny"
+    // If edit is an object with patterns, per-file checks happen in the tools
+    if (agent.permission.edit === "deny") {
+      result["edit"] = false
+      result["write"] = false
+      result["patch"] = false
+    }
+    if (agent.permission.bash["*"] === "deny" && Object.keys(agent.permission.bash).length === 1) {
+      result["bash"] = false
+    }
+    if (agent.permission.webfetch === "deny") {
+      result["webfetch"] = false
+      result["codesearch"] = false
+      result["websearch"] = false
+    }
+
+    return result
   }
 
   export async function tools(providerID: string, agent?: Agent.Info) {
@@ -170,6 +188,30 @@ export namespace ToolRegistry {
           }
         }),
     )
+    return result
+  }
+
+  }
+
+  export async function enabled(agent: Agent.Info): Promise<Record<string, boolean>> {
+    const result: Record<string, boolean> = {}
+
+    // Only disable tools globally if edit is a string "deny"
+    // If edit is an object with patterns, per-file checks happen in the tools
+    if (agent.permission.edit === "deny") {
+      result["edit"] = false
+      result["write"] = false
+      result["patch"] = false
+    }
+    if (agent.permission.bash["*"] === "deny" && Object.keys(agent.permission.bash).length === 1) {
+      result["bash"] = false
+    }
+    if (agent.permission.webfetch === "deny") {
+      result["webfetch"] = false
+      result["codesearch"] = false
+      result["websearch"] = false
+    }
+
     return result
   }
 }

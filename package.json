@@ -99,7 +99,7 @@
     "@types/node": "catalog:"
   },
   "patchedDependencies": {
-    "ghostty-web@0.3.0": "patches/ghostty-web@0.3.0.patch",
-    "@opentui/core@0.1.74": "patches/opentui-core@0.1.74.patch"
+    "ghostty-opentui@1.3.7": "patches/ghostty-opentui@1.3.7.patch",
+    "ghostty-web@0.3.0": "patches/ghostty-web@0.3.0.patch"
   }
 }

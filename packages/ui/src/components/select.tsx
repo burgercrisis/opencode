@@ -15,6 +15,9 @@ export type SelectProps<T> = Omit<ComponentProps<typeof Kobalte<T>>, "value" | "
   onHighlight?: (value: T | undefined) => (() => void) | void
   class?: ComponentProps<"div">["class"]
   classList?: ComponentProps<"div">["classList"]
+  /** Classes applied to the root Kobalte element for flex layout sizing (e.g., min-w-0, grow, max-w-*) */
+  rootClass?: ComponentProps<"div">["class"]
+  rootClassList?: ComponentProps<"div">["classList"]
   children?: (item: T | undefined) => JSX.Element
   triggerStyle?: JSX.CSSProperties
   triggerVariant?: "settings"
@@ -24,6 +27,8 @@ export function Select<T>(props: SelectProps<T> & Omit<ButtonProps, "children">)
   const [local, others] = splitProps(props, [
     "class",
     "classList",
+    "rootClass",
+    "rootClassList",
     "placeholder",
     "options",
     "current",
@@ -83,9 +88,11 @@ export function Select<T>(props: SelectProps<T> & Omit<ButtonProps, "children">)
     <Kobalte<T, { category: string; options: T[] }>
       {...others}
       data-component="select"
-      data-trigger-style={local.triggerVariant}
-      placement={local.triggerVariant === "settings" ? "bottom-end" : "bottom-start"}
-      gutter={4}
+      classList={{
+        ...(local.rootClassList ?? {}),
+        [local.rootClass ?? ""]: !!local.rootClass,
+      }}
+      placement="bottom-start"
       value={local.current}
       options={grouped()}
       optionValue={(x) => (local.value ? local.value(x) : (x as string))}

@@ -32,7 +32,6 @@ import { Event } from "../server/event"
 export namespace Config {
   const log = Log.create({ service: "config" })
 
-  // Custom merge function that concatenates array fields instead of replacing them
   function mergeConfigConcatArrays(target: Info, source: Info): Info {
     const merged = mergeDeep(target, source)
     if (target.plugin && source.plugin) {
@@ -48,7 +47,6 @@ export namespace Config {
     const auth = await Auth.all()
     let result = await global()
 
-    // Override with custom config if provided
     if (Flag.OPENCODE_CONFIG) {
       result = mergeConfigConcatArrays(result, await loadFile(Flag.OPENCODE_CONFIG))
       log.debug("loaded custom config", { path: Flag.OPENCODE_CONFIG })
@@ -127,7 +125,6 @@ export namespace Config {
         for (const file of ["opencode.jsonc", "opencode.json"]) {
           log.debug(`loading config from ${path.join(dir, file)}`)
           result = mergeConfigConcatArrays(result, await loadFile(path.join(dir, file)))
-          // to satisfy the type checker
           result.agent ??= {}
           result.mode ??= {}
           result.plugin ??= []
@@ -144,7 +141,6 @@ export namespace Config {
       result.plugin.push(...(await loadPlugin(dir)))
     }
 
-    // Migrate deprecated mode field to agent field
     for (const [name, mode] of Object.entries(result.mode)) {
       result.agent = mergeDeep(result.agent ?? {}, {
         [name]: {
@@ -155,10 +151,9 @@ export namespace Config {
     }
 
     if (Flag.OPENCODE_PERMISSION) {
-      result.permission = mergeDeep(result.permission ?? {}, JSON.parse(Flag.OPENCODE_PERMISSION))
+      result.permission = mergeConfigConcatArrays(result.permission ?? {}, JSON.parse(Flag.OPENCODE_PERMISSION))
     }
 
-    // Backwards compatibility: legacy top-level `tools` config
     if (result.tools) {
       const perms: Record<string, Config.PermissionAction> = {}
       for (const [tool, enabled] of Object.entries(result.tools)) {
@@ -174,14 +169,12 @@ export namespace Config {
 
     if (!result.username) result.username = os.userInfo().username
 
-    // Handle migration from autoshare to share field
     if (result.autoshare === true && !result.share) {
       result.share = "auto"
     }
 
     if (!result.keybinds) result.keybinds = Info.shape.keybinds.parse({})
 
-    // Apply flag overrides for compaction settings
     if (Flag.OPENCODE_DISABLE_AUTOCOMPACT) {
       result.compaction = { ...result.compaction, auto: false }
     }
@@ -208,14 +201,11 @@ export namespace Config {
     const hasGitIgnore = await Bun.file(gitignore).exists()
     if (!hasGitIgnore) await Bun.write(gitignore, ["node_modules", "package.json", "bun.lock", ".gitignore"].join("\n"))
 
-    // Use "latest" for local dev and preview/feature branches since those versions don't exist on npm
     const pluginVersion = Installation.isLocal() || Installation.isPreview() ? "latest" : Installation.VERSION
     await BunProc.run(["add", `@opencode-ai/plugin@${pluginVersion}`, "--exact"], {
       cwd: dir,
     }).catch(() => {})
 
-    // Install any additional dependencies defined in the package.json
-    // This allows local plugins and custom tools to use external packages
     await BunProc.run(["install"], { cwd: dir }).catch(() => {})
   }
 
@@ -377,16 +367,6 @@ export namespace Config {
     return plugins
   }
 
-  /**
-   * Extracts a canonical plugin name from a plugin specifier.
-   * - For file:// URLs: extracts filename without extension
-   * - For npm packages: extracts package name without version
-   *
-   * @example
-   * getPluginName("file:///path/to/plugin/foo.js") // "foo"
-   * getPluginName("oh-my-opencode@2.4.3") // "oh-my-opencode"
-   * getPluginName("@scope/pkg@1.0.0") // "@scope/pkg"
-   */
   export function getPluginName(plugin: string): string {
     if (plugin.startsWith("file://")) {
       return path.parse(new URL(plugin).pathname).name
@@ -398,24 +378,8 @@ export namespace Config {
     return plugin
   }
 
-  /**
-   * Deduplicates plugins by name, with later entries (higher priority) winning.
-   * Priority order (highest to lowest):
-   * 1. Local plugin/ directory
-   * 2. Local opencode.json
-   * 3. Global plugin/ directory
-   * 4. Global opencode.json
-   *
-   * Since plugins are added in low-to-high priority order,
-   * we reverse, deduplicate (keeping first occurrence), then restore order.
-   */
   export function deduplicatePlugins(plugins: string[]): string[] {
-    // seenNames: canonical plugin names for duplicate detection
-    // e.g., "oh-my-opencode", "@scope/pkg"
     const seenNames = new Set<string>()
-
-    // uniqueSpecifiers: full plugin specifiers to return
-    // e.g., "oh-my-opencode@2.4.3", "file:///path/to/plugin.js"
     const uniqueSpecifiers: string[] = []
 
     for (const specifier of plugins.toReversed()) {
@@ -445,7 +409,7 @@ export namespace Config {
         .optional()
         .describe(
           "Timeout in ms for fetching tools from the MCP server. Defaults to 30000 (30 seconds) if not specified.",
-        )
+        ),
     })
     .strict()
     .meta({
@@ -584,17 +548,14 @@ export namespace Config {
         "tools",
       ])
 
-      // Extract unknown properties into options
       const options: Record<string, unknown> = { ...agent.options }
       for (const [key, value] of Object.entries(agent)) {
         if (!knownKeys.has(key)) options[key] = value
       }
 
-      // Convert legacy tools config to permissions
       const permission: Permission = {}
       for (const [tool, enabled] of Object.entries(agent.tools ?? {})) {
         const action = enabled ? "allow" : "deny"
-        // write, edit, patch, multiedit all map to edit permission
         if (tool === "write" || tool === "edit" || tool === "patch" || tool === "multiedit") {
           permission.edit = action
         } else {
@@ -603,7 +564,6 @@ export namespace Config {
       }
       Object.assign(permission, agent.permission)
 
-      // Convert legacy maxSteps to steps
       const steps = agent.steps ?? agent.maxSteps
 
       return { ...agent, options, permission, steps } as typeof agent & {
@@ -625,6 +585,7 @@ export namespace Config {
       theme_list: z.string().optional().default("<leader>t").describe("List available themes"),
       sidebar_toggle: z.string().optional().default("<leader>b").describe("Toggle sidebar"),
       scrollbar_toggle: z.string().optional().default("none").describe("Toggle session scrollbar"),
+      header_toggle: z.string().optional().default("none").describe("Toggle session header visibility"),
       username_toggle: z.string().optional().default("none").describe("Toggle username visibility"),
       status_view: z.string().optional().default("<leader>s").describe("View status"),
       session_export: z.string().optional().default("<leader>x").describe("Export session to editor"),
@@ -641,6 +602,7 @@ export namespace Config {
       session_unshare: z.string().optional().default("none").describe("Unshare current session"),
       session_interrupt: z.string().optional().default("escape").describe("Interrupt current session"),
       session_compact: z.string().optional().default("<leader>c").describe("Compact the session"),
+      session_search: z.string().optional().default("ctrl+/").describe("Search in session messages"),
       messages_page_up: z.string().optional().default("pageup,ctrl+alt+b").describe("Scroll messages up by one page"),
       messages_page_down: z
         .string()
@@ -710,11 +672,7 @@ export namespace Config {
         .optional()
         .default("alt+shift+a")
         .describe("Select to start of visual line in input"),
-      input_select_visual_line_end: z
-        .string()
-        .optional()
-        .default("alt+shift+e")
-        .describe("Select to end of visual line in input"),
+      input_select_visual_line_end: z.string().optional().default("alt+shift+e").describe("Select to end of visual line in input"),
       input_buffer_home: z.string().optional().default("home").describe("Move to start of buffer in input"),
       input_buffer_end: z.string().optional().default("end").describe("Move to end of buffer in input"),
       input_select_buffer_home: z
@@ -765,7 +723,7 @@ export namespace Config {
       session_child_list: z.string().optional().default("<leader>j").describe("List child/subagent sessions"),
       session_child_cycle: z.string().optional().default("<leader>right").describe("Next child session"),
       session_child_cycle_reverse: z.string().optional().default("<leader>left").describe("Previous child session"),
-      session_parent: z.string().optional().default("<leader>up").describe("Go to parent session"),
+      session_parent: z.string().optional().default("<leader>up").describe("Go to parent sessionuspend: z.string().optional().default"),
       terminal_suspend: z.string().optional().default("ctrl+z").describe("Suspend terminal"),
       terminal_title_toggle: z.string().optional().default("none").describe("Toggle terminal title"),
       tips_toggle: z.string().optional().default("<leader>h").describe("Toggle tips on home screen"),
@@ -924,13 +882,10 @@ export namespace Config {
         .describe("@deprecated Use `agent` field instead."),
       agent: z
         .object({
-          // primary
           plan: Agent.optional(),
           build: Agent.optional(),
-          // subagent
           general: Agent.optional(),
           explore: Agent.optional(),
-          // specialized
           title: Agent.optional(),
           summary: Agent.optional(),
           compaction: Agent.optional(),
@@ -1168,7 +1123,7 @@ export namespace Config {
       for (const match of fileMatches) {
         const lineIndex = lines.findIndex((line) => line.includes(match))
         if (lineIndex !== -1 && lines[lineIndex].trim().startsWith("//")) {
-          continue // Skip if line is commented
+          continue
         }
         let filePath = match.replace(/^\{file:/, "").replace(/\}$/, "")
         if (filePath.startsWith("~/")) {
@@ -1192,7 +1147,6 @@ export namespace Config {
               throw new InvalidError({ path: configFilepath, message: errMsg }, { cause: error })
             })
         ).trim()
-        // escape newlines/quotes, strip outer quotes
         text = text.replace(match, JSON.stringify(fileContent).slice(1, -1))
       }
     }
@@ -1247,6 +1201,7 @@ export namespace Config {
       issues: parsed.error.issues,
     })
   }
+
   export const JsonError = NamedError.create(
     "ConfigJsonError",
     z.object({
@@ -1259,8 +1214,6 @@ export namespace Config {
     "ConfigDirectoryTypoError",
     z.object({
       path: z.string(),
-      dir: z.string(),
-      suggestion: z.string(),
     }),
   )
 
@@ -1268,121 +1221,8 @@ export namespace Config {
     "ConfigInvalidError",
     z.object({
       path: z.string(),
-      issues: z.custom<z.core.$ZodIssue[]>().optional(),
+      issues: z.array(z.any()).optional(),
       message: z.string().optional(),
     }),
   )
-
-  export async function get() {
-    return state().then((x) => x.config)
-  }
-
-  export async function getGlobal() {
-    return global()
-  }
-
-  export async function update(config: Info) {
-    const filepath = path.join(Instance.directory, "config.json")
-    const existing = await loadFile(filepath)
-    await Bun.write(filepath, JSON.stringify(mergeDeep(existing, config), null, 2))
-    await Instance.dispose()
-  }
-
-  function globalConfigFile() {
-    const candidates = ["opencode.jsonc", "opencode.json", "config.json"].map((file) =>
-      path.join(Global.Path.config, file),
-    )
-    for (const file of candidates) {
-      if (existsSync(file)) return file
-    }
-    return candidates[0]
-  }
-
-  function isRecord(value: unknown): value is Record<string, unknown> {
-    return !!value && typeof value === "object" && !Array.isArray(value)
-  }
-
-  function patchJsonc(input: string, patch: unknown, path: string[] = []): string {
-    if (!isRecord(patch)) {
-      const edits = modify(input, path, patch, {
-        formattingOptions: {
-          insertSpaces: true,
-          tabSize: 2,
-        },
-      })
-      return applyEdits(input, edits)
-    }
-
-    return Object.entries(patch).reduce((result, [key, value]) => {
-      if (value === undefined) return result
-      return patchJsonc(result, value, [...path, key])
-    }, input)
-  }
-
-  function parseConfig(text: string, filepath: string): Info {
-    const errors: JsoncParseError[] = []
-    const data = parseJsonc(text, errors, { allowTrailingComma: true })
-    if (errors.length) {
-      const lines = text.split("\n")
-      const errorDetails = errors
-        .map((e) => {
-          const beforeOffset = text.substring(0, e.offset).split("\n")
-          const line = beforeOffset.length
-          const column = beforeOffset[beforeOffset.length - 1].length + 1
-          const problemLine = lines[line - 1]
-
-          const error = `${printParseErrorCode(e.error)} at line ${line}, column ${column}`
-          if (!problemLine) return error
-
-          return `${error}\n   Line ${line}: ${problemLine}\n${"".padStart(column + 9)}^`
-        })
-        .join("\n")
-
-      throw new JsonError({
-        path: filepath,
-        message: `\n--- JSONC Input ---\n${text}\n--- Errors ---\n${errorDetails}\n--- End ---`,
-      })
-    }
-
-    const parsed = Info.safeParse(data)
-    if (parsed.success) return parsed.data
-
-    throw new InvalidError({
-      path: filepath,
-      issues: parsed.error.issues,
-    })
-  }
-
-  export async function updateGlobal(config: Info) {
-    const filepath = globalConfigFile()
-    const before = await Bun.file(filepath)
-      .text()
-      .catch((err) => {
-        if (err.code === "ENOENT") return "{}"
-        throw new JsonError({ path: filepath }, { cause: err })
-      })
-
-    if (!filepath.endsWith(".jsonc")) {
-      const existing = parseConfig(before, filepath)
-      await Bun.write(filepath, JSON.stringify(mergeDeep(existing, config), null, 2))
-    } else {
-      const next = patchJsonc(before, config)
-      parseConfig(next, filepath)
-      await Bun.write(filepath, next)
-    }
-
-    global.reset()
-    await Instance.disposeAll()
-    GlobalBus.emit("event", {
-      directory: "global",
-      payload: {
-        type: Event.Disposed.type,
-        properties: {},
-      },
-    })
-  }
-
-  export async function directories() {
-    return state().then((x) => x.directories)
-  }
 }

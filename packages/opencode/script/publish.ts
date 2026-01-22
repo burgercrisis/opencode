@@ -9,27 +9,33 @@ process.chdir(dir)
 
 const { binaries } = await import("./build.ts")
 {
-  const name = `${pkg.name}-${process.platform}-${process.arch}`
+  const name = `opencode-${process.platform === "win32" ? "windows" : process.platform}-${process.arch}`
   console.log(`smoke test: running dist/${name}/bin/opencode --version`)
   await $`./dist/${name}/bin/opencode --version`
 }
 
+const publishTag = Script.channel === "integration" ? "latest" : Script.channel
+for (const name of Object.keys(binaries)) {
+  console.log(`publishing binary package: ${name}`)
+  await $`cd ./dist/${name} && npm publish --access public --tag ${publishTag}`.nothrow()
+}
+
 await $`mkdir -p ./dist/${pkg.name}`
 await $`cp -r ./bin ./dist/${pkg.name}/bin`
-await $`cp ./script/postinstall.mjs ./dist/${pkg.name}/postinstall.mjs`
 
 await Bun.file(`./dist/${pkg.name}/package.json`).write(
   JSON.stringify(
     {
-      name: pkg.name + "-ai",
+      name: "opencode-ai",
       bin: {
-        [pkg.name]: `./bin/${pkg.name}`,
-      },
-      scripts: {
-        postinstall: "bun ./postinstall.mjs || node ./postinstall.mjs",
+        opencode: "./bin/opencode",
       },
       version: Script.version,
       optionalDependencies: binaries,
+      repository: {
+        type: "git",
+        url: "https://github.com/anomalyco/opencode",
+      },
     },
     null,
     2,
@@ -53,7 +59,6 @@ for (const tag of tags) {
 }
 
 if (!Script.preview) {
-  // Create archives for GitHub release
   for (const key of Object.keys(binaries)) {
     if (key.includes("linux")) {
       await $`tar -czf ../../${key}.tar.gz *`.cwd(`dist/${key}/bin`)

@@ -16,6 +16,8 @@ import { Filesystem } from "../util/filesystem"
 import { Instance } from "../project/instance"
 import { Snapshot } from "@/snapshot"
 import { assertExternalDirectory } from "./external-directory"
+import { Agent } from "../agent"
+import { Permission } from "../permission"
 
 const MAX_DIAGNOSTICS_PER_FILE = 20
 
@@ -67,19 +69,41 @@ export const EditTool = Tool.define("edit", {
     let diff = ""
     let contentOld = ""
     let contentNew = ""
+    // Resolve permission for this specific file
+    const resolvedPermission = Agent.resolveFilePermission({
+      permission: agent.permission.edit,
+      filePath,
+      baseDir: Instance.directory,
+    })
+
+    // Check for deny first
+    if (resolvedPermission === "deny") {
+      throw new Permission.RejectedError(
+        ctx.sessionID,
+        "edit",
+        ctx.callID,
+        { filepath: filePath },
+        `Editing file ${filePath} is denied by permission configuration`,
+      )
+    }
+
     await FileTime.withLock(filePath, async () => {
       if (params.oldString === "") {
         contentNew = params.newString
         diff = trimDiff(createTwoFilesPatch(filePath, filePath, contentOld, contentNew))
-        await ctx.ask({
-          permission: "edit",
-          patterns: [Filesystem.relativePath(Instance.worktree, filePath)],
-          always: ["*"],
-          metadata: {
-            filepath: filePath,
-            diff,
-          },
-        })
+        if (resolvedPermission === "ask") {
+          await Permission.ask({
+            type: "edit",
+            sessionID: ctx.sessionID,
+            messageID: ctx.messageID,
+            callID: ctx.callID,
+            title: "Edit this file: " + filePath,
+            metadata: {
+              filePath,
+              diff,
+            },
+          })
+        }
         await Bun.write(filePath, params.newString)
         await Bus.publish(File.Event.Edited, {
           file: filePath,
@@ -106,15 +130,19 @@ export const EditTool = Tool.define("edit", {
       diff = trimDiff(
         createTwoFilesPatch(filePath, filePath, normalizeLineEndings(contentOld), normalizeLineEndings(contentNew)),
       )
-      await ctx.ask({
-        permission: "edit",
-        patterns: [Filesystem.relativePath(Instance.worktree, filePath)],
-        always: ["*"],
-        metadata: {
-          filepath: filePath,
-          diff,
-        },
-      })
+      if (resolvedPermission === "ask") {
+        await Permission.ask({
+          type: "edit",
+          sessionID: ctx.sessionID,
+          messageID: ctx.messageID,
+          callID: ctx.callID,
+          title: "Edit this file: " + filePath,
+          metadata: {
+            filePath,
+            diff,
+          },
+        })
+      }
 
       await file.write(contentNew)
       await Bus.publish(File.Event.Edited, {

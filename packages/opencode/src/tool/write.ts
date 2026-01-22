@@ -47,15 +47,37 @@ export const WriteTool = Tool.define("write", {
       if (exists) await FileTime.assert(ctx.sessionID, filepath)
 
       const diff = trimDiff(createTwoFilesPatch(filepath, filepath, contentOld, params.content))
-      await ctx.ask({
-        permission: "edit",
-        patterns: [path.relative(Instance.worktree, filepath)],
-        always: ["*"],
-        metadata: {
-          filepath,
-          diff,
-        },
+
+      // Resolve permission for this specific file
+      const resolvedPermission = Agent.resolveFilePermission({
+        permission: agent.permission.edit,
+        filePath: filepath,
+        baseDir: Instance.directory,
       })
+
+      // Check for deny first
+      if (resolvedPermission === "deny") {
+        throw new Permission.RejectedError(
+          ctx.sessionID,
+          "write",
+          ctx.callID,
+          { filepath },
+          `Writing to file ${filepath} is denied by permission configuration`,
+        )
+      }
+
+      if (resolvedPermission === "ask")
+        await Permission.ask({
+          type: "write",
+          sessionID: ctx.sessionID,
+          messageID: ctx.messageID,
+          callID: ctx.callID,
+          title: exists ? "Overwrite this file: " + filepath : "Create new file: " + filepath,
+          metadata: {
+            filepath,
+            diff,
+          },
+        })
 
       await Bun.write(filepath, params.content)
       await Bus.publish(File.Event.Edited, {

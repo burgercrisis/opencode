@@ -95,8 +95,8 @@ async function collectRemovalTargets(args: UninstallArgs, method: Installation.M
     { path: Global.Path.state, label: "State", keep: false },
   ]
 
-  const shellConfig = method === "curl" ? await getShellConfigFile() : null
-  const binary = method === "curl" ? process.execPath : null
+  const shellConfig = null
+  const binary = null
 
   return { directories, shellConfig, binary }
 }
@@ -127,7 +127,7 @@ async function showRemovalSummary(targets: RemovalTargets, method: Installation.
     prompts.log.info(`  ✓ Shell PATH in ${shortenPath(targets.shellConfig)}`)
   }
 
-  if (method !== "curl" && method !== "unknown") {
+  if (method !== "unknown") {
     const cmds: Record<string, string> = {
       npm: "npm uninstall -g opencode-ai",
       pnpm: "pnpm uninstall -g opencode-ai",
@@ -178,7 +178,7 @@ async function executeUninstall(method: Installation.Method, targets: RemovalTar
     }
   }
 
-  if (method !== "curl" && method !== "unknown") {
+  if (method !== "unknown") {
     const cmds: Record<string, string[]> = {
       npm: ["npm", "uninstall", "-g", "opencode-ai"],
       pnpm: ["pnpm", "uninstall", "-g", "opencode-ai"],
@@ -209,17 +209,6 @@ async function executeUninstall(method: Installation.Method, targets: RemovalTar
       } else {
         spinner.stop("Package removed")
       }
-    }
-  }
-
-  if (method === "curl" && targets.binary) {
-    UI.empty()
-    prompts.log.message("To finish removing the binary, run:")
-    prompts.log.info(`  rm "${targets.binary}"`)
-
-    const binDir = path.dirname(targets.binary)
-    if (binDir.includes(".opencode")) {
-      prompts.log.info(`  rmdir "${binDir}" 2>/dev/null`)
     }
   }
 

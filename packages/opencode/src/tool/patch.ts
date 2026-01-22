@@ -10,6 +10,8 @@ import { Patch } from "../patch"
 import { createTwoFilesPatch } from "diff"
 import { assertExternalDirectory } from "./external-directory"
 import { Filesystem } from "../util/filesystem"
+import { Agent } from "../agent/agent"
+import { Permission } from "../permission"
 
 const PatchParams = z.object({
   patchText: z.string().describe("The full patch text that describes all changes to be made"),
@@ -127,26 +129,66 @@ export const PatchTool = Tool.define("patch", {
         }
       }
 
-      const patterns = Array.from(
-        new Set(
-          fileChanges
-            .flatMap((c) => {
-              const base = path.relative(Instance.worktree, c.filePath)
-              if (!c.movePath) return [base]
-              return [base, path.relative(Instance.worktree, c.movePath)]
-            })
-            .filter((p) => p !== ""),
-        ),
-      )
+    // Check permissions for all files
+    const deniedFiles: string[] = []
+    const askFiles: string[] = []
 
-      await ctx.ask({
-        permission: "edit",
-        patterns,
-        always: ["*"],
+    const agent = await Agent.get(ctx.agent)
+    if (!agent) throw new Error(`Unknown agent: ${ctx.agent}`)
+
+    for (const change of fileChanges) {
+      const resolvedPermission = Agent.resolveFilePermission({
+        permission: agent.permission.edit,
+        filePath: change.filePath,
+        baseDir: Instance.directory,
+      })
+
+      if (resolvedPermission === "deny") {
+        deniedFiles.push(change.filePath)
+      } else if (resolvedPermission === "ask") {
+        askFiles.push(change.filePath)
+      }
+
+      // Also check move destination if applicable
+      if (change.movePath) {
+        const movePermission = Agent.resolveFilePermission({
+          permission: agent.permission.edit,
+          filePath: change.movePath,
+          baseDir: Instance.directory,
+        })
+        if (movePermission === "deny") {
+          deniedFiles.push(change.movePath)
+        } else if (movePermission === "ask") {
+          askFiles.push(change.movePath)
+        }
+      }
+    }
+
+    // If any file is denied, reject the entire patch
+    if (deniedFiles.length > 0) {
+      throw new Permission.RejectedError(
+        ctx.sessionID,
+        "edit",
+        ctx.callID,
+        { files: deniedFiles },
+        `Patch denied: editing these files is not permitted: ${deniedFiles.join(", ")}`,
+      )
+    }
+
+    // If any file requires ask, prompt once for all
+    if (askFiles.length > 0) {
+      await Permission.ask({
+        type: "edit",
+        sessionID: ctx.sessionID,
+        messageID: ctx.messageID,
+        callID: ctx.callID,
+        message: `Apply patch to ${fileChanges.length} files`,
         metadata: {
           diff: totalDiff,
+          askFiles,
         },
       })
+    }
 
       const changedFiles: string[] = []
 
