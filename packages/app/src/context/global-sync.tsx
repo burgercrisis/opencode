@@ -41,6 +41,7 @@ import {
 import { showToast } from "@opencode-ai/ui/toast"
 import { getFilename } from "@opencode-ai/util/path"
 import { usePlatform } from "./platform"
+import { useLanguage } from "@/context/language"
 import { Persist, persisted } from "@/utils/persist"
 
 type State = {
@@ -95,6 +96,7 @@ type ChildOptions = {
 function createGlobalSync() {
   const globalSDK = useGlobalSDK()
   const platform = usePlatform()
+  const language = useLanguage()
   const owner = getOwner()
   if (!owner) throw new Error("GlobalSync must be created within owner")
   const vcsCache = new Map<string, VcsCache>()
@@ -233,7 +235,7 @@ function createGlobalSync() {
       .catch((err) => {
         console.error("Failed to load sessions", err)
         const project = getFilename(directory)
-        showToast({ title: `Failed to load sessions for ${project}`, description: err.message })
+        showToast({ title: language.t("toast.session.listFailed.title", { project }), description: err.message })
       })
 
     sessionLoads.set(directory, promise)
@@ -469,6 +471,20 @@ function createGlobalSync() {
         )
         break
       }
+      case "session.deleted": {
+        const result = Binary.search(store.session, event.properties.info.id, (s) => s.id)
+        if (result.found) {
+          setStore(
+            "session",
+            produce((draft) => {
+              draft.splice(result.index, 1)
+            }),
+          )
+        }
+        if (event.properties.info.parentID) break
+        setStore("sessionTotal", (value) => Math.max(0, value - 1))
+        break
+      }
       case "session.diff":
         setStore("session_diff", event.properties.sessionID, reconcile(event.properties.diff, { key: "file" }))
         break
@@ -652,10 +668,7 @@ function createGlobalSync() {
       .then((x) => x.data)
       .catch(() => undefined)
     if (!health?.healthy) {
-      setGlobalStore(
-        "error",
-        new Error(`Could not connect to server. Is there a server running at \`${globalSDK.url}\`?`),
-      )
+      setGlobalStore("error", new Error(language.t("error.globalSync.connectFailed", { url: globalSDK.url })))
       return
     }
 

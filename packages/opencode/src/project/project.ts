@@ -28,6 +28,11 @@ export namespace Project {
           color: z.string().optional(),
         })
         .optional(),
+      commands: z
+        .object({
+          start: z.string().optional().describe("Startup script to run when creating a new workspace (worktree)"),
+        })
+        .optional(),
       time: z.object({
         created: z.number(),
         updated: z.number(),
@@ -317,6 +322,7 @@ export namespace Project {
       projectID: z.string(),
       name: z.string().optional(),
       icon: Info.shape.icon.optional(),
+      commands: Info.shape.commands.optional(),
     }),
     async (input) => {
       const result = await Storage.update<Info>(["project", input.projectID], (draft) => {
@@ -329,6 +335,16 @@ export namespace Project {
           if (input.icon.override !== undefined) draft.icon.override = input.icon.override || undefined
           if (input.icon.color !== undefined) draft.icon.color = input.icon.color
         }
+
+        if (input.commands?.start !== undefined) {
+          const start = input.commands.start || undefined
+          draft.commands = {
+            ...(draft.commands ?? {}),
+          }
+          draft.commands.start = start
+          if (!draft.commands.start) draft.commands = undefined
+        }
+
         draft.time.updated = Date.now()
       })
       GlobalBus.emit("event", {

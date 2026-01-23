@@ -5,6 +5,7 @@ import path from "path"
 import fs from "fs/promises"
 import fsSync from "fs"
 import { afterAll } from "bun:test"
+const { Global } = await import("../src/global")
 
 const dir = path.join(os.tmpdir(), "opencode-test-data-" + process.pid)
 await fs.mkdir(dir, { recursive: true })
@@ -35,7 +36,7 @@ process.env["OPENCODE_DISABLE_DEFAULT_PLUGINS"] = "true"
 const cacheDir = path.join(dir, "cache", "opencode")
 await fs.mkdir(cacheDir, { recursive: true })
 await fs.writeFile(path.join(cacheDir, "version"), "14")
-
+// Static fixture for test environment (used as fallback when models.dev is unavailable)
 const modelsDevFixture = {
   anthropic: {
     id: "anthropic",
@@ -151,7 +152,15 @@ const modelsDevFixture = {
   },
 }
 
-await fs.writeFile(path.join(cacheDir, "models.json"), JSON.stringify(modelsDevFixture))
+// Try to fetch models from models.dev, fall back to static fixture
+const url = Global.Path.modelsDevUrl
+const response = await fetch(`${url}/api.json`)
+if (response.ok) {
+  await fs.writeFile(path.join(cacheDir, "models.json"), await response.text())
+} else {
+  // Fallback to static fixture if fetch fails
+  await fs.writeFile(path.join(cacheDir, "models.json"), JSON.stringify(modelsDevFixture))
+}
 // Disable models.dev refresh to avoid race conditions during tests
 process.env["OPENCODE_DISABLE_MODELS_FETCH"] = "true"
 

@@ -1,5 +1,5 @@
-use tauri::{path::BaseDirectory, AppHandle, Manager};
-use tauri_plugin_shell::{process::Command, ShellExt};
+use tauri::{AppHandle, Manager, path::BaseDirectory};
+use tauri_plugin_shell::{ShellExt, process::Command};
 
 const CLI_INSTALL_DIR: &str = ".opencode/bin";
 const CLI_BINARY_NAME: &str = "opencode";
@@ -158,12 +158,23 @@ pub fn create_command(app: &tauri::AppHandle, args: &str) -> Command {
         .env("XDG_STATE_HOME", &state_dir);
 
     #[cfg(not(target_os = "windows"))]
-    return app
-        .shell()
-        .sidecar("opencode-cli")
-        .unwrap()
-        .args(args.split_whitespace())
-        .env("OPENCODE_EXPERIMENTAL_ICON_DISCOVERY", "true")
-        .env("OPENCODE_CLIENT", "desktop")
-        .env("XDG_STATE_HOME", &state_dir);
+    return {
+        let sidecar = get_sidecar_path(app);
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+
+        // Enhanced shell wrapping with Nu shell detection and proper escaping
+        let cmd = if shell.ends_with("/nu") {
+            // Nu shell requires escaping for proper argument handling
+            format!("^\"{}\" {}", sidecar.display(), args)
+        } else {
+            format!("\"{}\" {}", sidecar.display(), args)
+        };
+
+        app.shell()
+            .command(&shell)
+            .env("OPENCODE_EXPERIMENTAL_ICON_DISCOVERY", "true")
+            .env("OPENCODE_CLIENT", "desktop")
+            .env("XDG_STATE_HOME", &state_dir)
+            .args(["-il", "-c", &cmd])
+    };
 }

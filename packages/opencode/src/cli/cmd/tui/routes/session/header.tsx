@@ -67,6 +67,10 @@ export function Header() {
 
   const dimensions = useTerminalDimensions()
   const tall = createMemo(() => dimensions().height > 40)
+  const narrow = createMemo(() => dimensions().width < 80)
+
+  // Combined responsive strategy: use compact layout when either tall or narrow
+  const useCompactLayout = createMemo(() => !tall() || narrow())
 
   const displayTitle = createMemo(() => {
     const current = session()
@@ -89,11 +93,19 @@ export function Header() {
       >
         <Switch>
           <Match when={session()?.parentID}>
-            <box flexDirection="row" gap={2}>
-              <Title title={displayTitle} truncate={!tall()} />
-              <text fg={theme.textMuted}>
-                <b>Subagent session</b>
-              </text>
+            <box flexDirection={useCompactLayout() ? "column" : "row"} gap={useCompactLayout() ? 1 : 2}>
+              <box flexDirection={useCompactLayout() ? "row" : "column"} gap={useCompactLayout() ? 0 : 1}>
+                <box flexDirection={useCompactLayout() ? "column" : "row"} justifyContent="space-between" gap={useCompactLayout() ? 1 : 0}>
+                  <Title title={displayTitle} truncate={!tall()} />
+                  <text fg={theme.textMuted}>
+                    <b>Subagent session</b>
+                  </text>
+                </box>
+                <box flexDirection="row" gap={1} flexShrink={0}>
+                  <ContextInfo context={context} cost={cost} />
+                  <text fg={theme.textMuted}>v{Installation.VERSION}</text>
+                </box>
+              </box>
               <box
                 onMouseOver={() => setHover("parent")}
                 onMouseOut={() => setHover(null)}
@@ -141,10 +153,6 @@ export function Header() {
                 </text>
               </box>
               <box flexGrow={1} flexShrink={1} />
-              <box flexDirection="row" gap={1} flexShrink={0}>
-                <ContextInfo context={context} cost={cost} />
-                <text fg={theme.textMuted}>v{Installation.VERSION}</text>
-              </box>
             </box>
           </Match>
           <Match when={true}>

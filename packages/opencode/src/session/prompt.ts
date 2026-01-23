@@ -1497,28 +1497,30 @@ export namespace SessionPrompt {
           } satisfies MessageV2.ToolPart)
         }
 
-        // Add synthetic user message to prevent certain reasoning models from erroring
-        // If we create assistant messages w/ out user ones following mid loop thinking signatures
-        // will be missing and it can cause errors for models like gemini for example
-        const summaryUserMsg: MessageV2.User = {
-          id: Identifier.ascending("message"),
-          sessionID,
-          role: "user",
-          time: {
-            created: Date.now(),
-          },
-          agent: lastUser.agent,
-          model: lastUser.model,
+        if (task.command) {
+          // Add synthetic user message to prevent certain reasoning models from erroring
+          // If we create assistant messages w/ out user ones following mid loop thinking signatures
+          // will be missing and it can cause errors for models like gemini for example
+          const summaryUserMsg: MessageV2.User = {
+            id: Identifier.ascending("message"),
+            sessionID,
+            role: "user",
+            time: {
+              created: Date.now(),
+            },
+            agent: lastUser.agent,
+            model: lastUser.model,
+          }
+          await Session.updateMessage(summaryUserMsg)
+          await Session.updatePart({
+            id: Identifier.ascending("part"),
+            messageID: summaryUserMsg.id,
+            sessionID,
+            type: "text",
+            text: "Summarize the task tool output above and continue with your task.",
+            synthetic: true,
+          } satisfies MessageV2.TextPart)
         }
-        await Session.updateMessage(summaryUserMsg)
-        await Session.updatePart({
-          id: Identifier.ascending("part"),
-          messageID: summaryUserMsg.id,
-          sessionID,
-          type: "text",
-          text: "Summarize the task tool output above and continue with your task.",
-          synthetic: true,
-        } satisfies MessageV2.TextPart)
 
         // Skip subtask processing - handled by job system
 
@@ -1690,7 +1692,7 @@ export namespace SessionPrompt {
           ),
         ],
         messages: [
-          ...MessageV2.toModelMessage(sessionMessages),
+          ...MessageV2.toModelMessages(sessionMessages, model),
           ...(isLastStep
             ? [
                 {
@@ -1925,12 +1927,6 @@ export namespace SessionPrompt {
           )
           return result
         },
-        toModelOutput(result) {
-          return {
-            type: "text",
-            value: result.output,
-          }
-        },
       })
     }
 
@@ -2043,12 +2039,6 @@ export namespace SessionPrompt {
           output: truncated.content,
           attachments,
           content: result.content, // directly return content to preserve ordering when outputting to model
-        }
-      }
-      item.toModelOutput = (result) => {
-        return {
-          type: "text",
-          value: result.output,
         }
       }
       tools[key] = item
@@ -2458,15 +2448,7 @@ export namespace SessionPrompt {
     const msgs = await MessageV2.filterCompacted(MessageV2.stream(input.sessionID))
     const lastAssistantMsg = msgs.findLast((m) => m.info.role === "assistant")?.info as MessageV2.Assistant | undefined
     const priorContext = lastAssistantMsg?.contextEstimate ?? lastAssistantMsg?.tokens?.input ?? 0
-    // Calculate tool result tokens from the last assistant's tool parts
-    const lastAssistantParts = lastAssistantMsg
-      ? (msgs.find((m) => m.info.id === lastAssistantMsg.id)?.parts.filter((p) => p.type === "tool") ?? [])
-      : []
-    const toolResultTokens = Token.calculateToolResultTokens(lastAssistantParts)
-    info.contextEstimate = priorContext + sentEstimate + toolResultTokens
->>>>>>> 2d0af957f51fcfdc093c8ab6b5075c8c8fea5a2d
-=======
-// Calculate sentEstimate for user messages - tokens in user's text parts
+    // Calculate sentEstimate for user messages - tokens in user's text parts
     const sentEstimate = parts
       .filter((p): p is MessageV2.TextPart => p.type === "text" && !p.ignored)
       .reduce((sum, p) => sum + Token.estimate(p.text), 0)
@@ -2482,7 +2464,6 @@ export namespace SessionPrompt {
       : []
     const toolResultTokens = Token.calculateToolResultTokens(lastAssistantParts)
     info.contextEstimate = priorContext + sentEstimate + toolResultTokens
->>>>>>> 2d0af957f51fcfdc093c8ab6b5075c8c8fea5a2d
 
     await Session.updateMessage(info)
     for (const part of parts) {
@@ -2566,7 +2547,7 @@ export namespace SessionPrompt {
         sessionID: userMessage.info.sessionID,
         type: "text",
         text: `<system-reminder>
-Plan mode is active. The user indicated that they do not want you to execute yet -- you MUST NOT make any edits (with the exception of the plan file mentioned below), run any non-readonly tools (including changing configs or making commits), or otherwise make any changes to the system. This supercedes any other instructions you have received.
+Plan mode is active. The user indicated that they do not want you to execute yet -- you MUST NOT make any edits (with the exception of the plan file mentioned below), run any non-readonly tools (including changing configs or making commits), or otherwise make any changes to the system. This supersedes any other instructions you have received.
 
 ## Plan File Info:
 ${exists ? `A plan file already exists at ${plan}. You can read it and make incremental edits using the edit tool.` : `No plan file exists yet. You should create your plan at ${plan} using the write tool.`}
@@ -3124,18 +3105,19 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     if (!isFirst) return
     const agent = await Agent.get("title")
     if (!agent) return
+    const model = await iife(async () => {
+      if (agent.model) return await Provider.getModel(agent.model.providerID, agent.model.modelID)
+      return (
+        (await Provider.getSmallModel(input.providerID)) ?? (await Provider.getModel(input.providerID, input.modelID))
+      )
+    })
     const result = await LLM.stream({
       agent,
       user: input.message.info as MessageV2.User,
       system: [],
       small: true,
       tools: {},
-      model: await iife(async () => {
-        if (agent.model) return await Provider.getModel(agent.model.providerID, agent.model.modelID)
-        return (
-          (await Provider.getSmallModel(input.providerID)) ?? (await Provider.getModel(input.providerID, input.modelID))
-        )
-      }),
+      model,
       abort: new AbortController().signal,
       sessionID: input.session.id,
       retries: 2,
@@ -3144,38 +3126,27 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           role: "user",
           content: "Generate a title for this conversation:\n",
         },
-        ...MessageV2.toModelMessage([
-          {
-            info: {
-              id: Identifier.ascending("message"),
-              role: "user",
-              sessionID: input.session.id,
-              time: {
-                created: Date.now(),
-              },
-              agent: input.message.info.role === "user" ? input.message.info.agent : await Agent.defaultAgent(),
-              model: {
-                providerID: input.providerID,
-                modelID: input.modelID,
-              },
-            },
-            parts: input.message.parts,
-          },
-        ]),
+        ...(hasOnlySubtaskParts
+          ? [{ role: "user" as const, content: subtaskParts.map((p) => p.prompt).join("\n") }]
+          : MessageV2.toModelMessages(contextMessages, model)),
       ],
     })
     const text = await result.text.catch((err) => log.error("failed to generate title", { error: err }))
     if (text)
-      return Session.update(input.session.id, (draft) => {
-        const cleaned = text
-          .replace(/<think>[\s\S]*?<\/think>\s*/g, "")
-          .split("\n")
-          .map((line) => line.trim())
-          .find((line) => line.length > 0)
-        if (!cleaned) return
+      return Session.update(
+        input.session.id,
+        (draft) => {
+          const cleaned = text
+            .replace(/<think>[\s\S]*?<\/think>\s*/g, "")
+            .split("\n")
+            .map((line) => line.trim())
+            .find((line) => line.length > 0)
+          if (!cleaned) return
 
-        const title = cleaned.length > 100 ? cleaned.substring(0, 97) + "..." : cleaned
-        draft.title = title
-      })
+          const title = cleaned.length > 100 ? cleaned.substring(0, 97) + "..." : cleaned
+          draft.title = title
+        },
+        { touch: false },
+      )
   }
 }
