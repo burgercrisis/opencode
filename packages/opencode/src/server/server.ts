@@ -1,3 +1,4 @@
+import { isOriginAllowed } from "./cors"
 import { BusEvent } from "@/bus/bus-event"
 import { Bus } from "@/bus"
 import { Log } from "../util/log"
@@ -30,6 +31,7 @@ import { Auth } from "../auth"
 import { Flag } from "../flag/flag"
 import { Command } from "../command"
 import { Global } from "../global"
+import { Usage } from "../usage"
 
 import { ProjectRoutes } from "./routes/project"
 import { SessionRoutes } from "./routes/session"
@@ -226,6 +228,124 @@ export namespace Server {
         )
 
         .route("/global", GlobalRoutes())
+
+        // Usage tracking endpoint
+        .route(
+          "/usage",
+          new Hono().get(
+            "/",
+            describeRoute({
+              summary: "Get usage",
+              description: "Fetch usage limits for authenticated providers.",
+              operationId: "usage.get",
+              responses: {
+                200: {
+                  description: "Usage response",
+                  content: {
+                    "application/json": {
+                      schema: resolver(
+                        z.object({
+                          entries: z.array(
+                            z.object({
+                              provider: z.string(),
+                              displayName: z.string(),
+                              snapshot: Usage.snapshotSchema,
+                            }),
+                          ),
+                          error: z.string().optional(),
+                        }),
+                      ),
+                    },
+                  },
+                },
+              },
+            }),
+            validator(
+              "query",
+              z.object({
+                provider: z.string().optional(),
+                refresh: z.coerce.boolean().optional(),
+              }),
+            ),
+            async (c) => {
+              const query = c.req.valid("query")
+              const providerInput = query.provider?.trim()
+              const refresh = query.refresh ?? false
+              const resolved = providerInput ? Usage.resolveProvider(providerInput) : null
+              if (providerInput && !resolved) {
+                return c.json({
+                  entries: [],
+                  error: `Unknown provider: "${providerInput}"`,
+                })
+              }
+
+              const providers = resolved ? [resolved] : await Usage.getAuthenticatedProviders()
+              if (providers.length === 0) {
+                return c.json({
+                  entries: [],
+                  error: "No OAuth providers with usage tracking are authenticated.",
+                })
+              }
+
+              const entries: Array<{ provider: string; displayName: string; snapshot: any }> = []
+              const errors: string[] = []
+
+              for (const provider of providers) {
+                const info = Usage.getProviderInfo(provider)
+                if (!info) {
+                  errors.push(`Provider "${provider}" does not support usage tracking.`)
+                  continue
+                }
+
+                const authEntry = await Usage.getProviderAuth(provider)
+                if (!authEntry) {
+                  errors.push(`Not authenticated with ${info.displayName}.`)
+                  continue
+                }
+                if (info.requiresOAuth && authEntry.auth.type !== "oauth") {
+                  errors.push(`Not authenticated with ${info.displayName} OAuth.`)
+                  continue
+                }
+
+                const cached = await Usage.getUsage(provider)
+                const stale = !cached || Date.now() - cached.updatedAt > 5 * 60 * 1000
+                const snapshot = await (async () => {
+                  if (!refresh && !stale) return cached
+
+                  let fetched: any = null
+
+                  if (provider === "copilot") {
+                    const refreshToken = authEntry.auth.type === "oauth" ? authEntry.auth.refresh : null
+                    if (refreshToken) {
+                      fetched = await Usage.fetchCopilotUsage({ access: authEntry.auth.access, refresh: refreshToken })
+                    }
+                  } else {
+                    fetched = await Usage.fetchFromEndpoint(authEntry.auth.access)
+                  }
+
+                  if (!fetched) return cached
+                  return Usage.updateUsage(provider, fetched)
+                })()
+
+                if (!snapshot) {
+                  errors.push(`Unable to fetch usage data for ${info.displayName}.`)
+                  continue
+                }
+
+                entries.push({
+                  provider,
+                  displayName: info.displayName,
+                  snapshot,
+                })
+              }
+
+              return c.json({
+                entries,
+                ...(errors.length > 0 ? { error: errors.join("\n") } : {}),
+              })
+            },
+          ),
+        )
 
         .get(
           "/global/health",

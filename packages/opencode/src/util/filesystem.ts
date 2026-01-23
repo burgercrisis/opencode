@@ -1,8 +1,15 @@
 import { realpathSync } from "fs"
+import { homedir } from "os"
 import { Flag } from "@/flag/flag"
 import path from "path"
 
 export namespace Filesystem {
+  export function expanduser(p: string): string {
+    if (p === "~") return homedir()
+    if (p.startsWith("~/")) return join(homedir(), p.slice(2))
+    return p
+  }
+
   export const exists = (p: string) =>
     Bun.file(p)
       .stat()
