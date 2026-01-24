@@ -1084,7 +1084,7 @@ export namespace ACP {
       }
     }
 
-    async unstable_setSessionModel(params: SetSessionModelRequest) {
+    async setSessionModel(params: SetSessionModelRequest) {
       const session = this.sessionManager.get(params.sessionId)
 
       const model = Provider.parseModel(params.modelId)

@@ -368,32 +368,20 @@ export const BlockAnchorReplacer: Replacer = function* (content, find) {
 }
 
 export const WhitespaceNormalizedReplacer: Replacer = function* (content, find) {
-  // Helper function to check if a string is whitespace-only
-  const isWhitespaceOnly = (text: string): boolean => {
-    return text.length > 0 && text.trim().length === 0
-  }
-  
-  const normalizeWhitespace = (text: string) => {
-    // If the text is whitespace-only, return a marker
-    if (isWhitespaceOnly(text)) {
-      return "\x00WHITESPACE_ONLY\x00"
-    }
-    // Otherwise, collapse multiple whitespace and trim
-    return text.replace(/\s+/g, " ").trim()
-  }
-  
+  const normalizeWhitespace = (text: string) => text.replace(/\s+/g, " ").trim()
   const normalizedFind = normalizeWhitespace(find)
-  
+
   // Handle single line matches
   const lines = content.split("\n")
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
     if (normalizeWhitespace(line) === normalizedFind) {
       yield line
-    } else if (!normalizedFind.includes("\x00")) {
-      // Only check for substring matches if not a whitespace-only marker
+    } else {
+      // Only check for substring matches if the full line doesn't match
       const normalizedLine = normalizeWhitespace(line)
       if (normalizedLine.includes(normalizedFind)) {
+        // Find the actual substring in the original line that matches
         const words = find.trim().split(/\s+/)
         if (words.length > 0) {
           const pattern = words.map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+")
@@ -410,7 +398,7 @@ export const WhitespaceNormalizedReplacer: Replacer = function* (content, find) 
       }
     }
   }
-  
+
   // Handle multi-line matches
   const findLines = find.split("\n")
   if (findLines.length > 1) {
