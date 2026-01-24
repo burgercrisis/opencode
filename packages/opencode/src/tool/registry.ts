@@ -134,14 +134,19 @@ export namespace ToolRegistry {
     const result = await Promise.all(
       tools
         .filter((t) => {
-          // Enable websearch/codesearch for zen users OR via enable flag
+          // Enable websearch/codesearch for all models
           if (t.id === "codesearch" || t.id === "websearch") {
-            return model.providerID === "opencode" || Flag.OPENCODE_ENABLE_EXA
+            return true
           }
 
           // use apply tool in same format as codex
           const usePatch =
-            model.modelID.includes("gpt-") && !model.modelID.includes("oss") && !model.modelID.includes("gpt-4")
+            model.modelID.includes("gpt-") &&
+            !model.modelID.includes("oss") &&
+            !model.modelID.includes("gpt-4") &&
+            !model.modelID.includes("gpt-5") &&
+            !model.modelID.includes("o1") &&
+            !model.modelID.includes("o3")
           if (t.id === "apply_patch") return usePatch
           if (t.id === "edit" || t.id === "write" || t.id === "patch") return !usePatch
 
