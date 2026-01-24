@@ -1,5 +1,5 @@
-use tauri::{path::BaseDirectory, AppHandle, Manager};
-use tauri_plugin_shell::{process::Command, ShellExt};
+use tauri::{AppHandle, Manager, path::BaseDirectory};
+use tauri_plugin_shell::{ShellExt, process::Command};
 
 const CLI_INSTALL_DIR: &str = ".opencode/bin";
 const CLI_BINARY_NAME: &str = "opencode";
@@ -141,6 +141,10 @@ pub fn sync_cli(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 
+fn get_user_shell() -> String {
+    std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string())
+}
+
 pub fn create_command(app: &tauri::AppHandle, args: &str) -> Command {
     let state_dir = app
         .path()
@@ -158,12 +162,21 @@ pub fn create_command(app: &tauri::AppHandle, args: &str) -> Command {
         .env("XDG_STATE_HOME", &state_dir);
 
     #[cfg(not(target_os = "windows"))]
-    return app
-        .shell()
-        .sidecar("opencode-cli")
-        .unwrap()
-        .args(args.split_whitespace())
-        .env("OPENCODE_EXPERIMENTAL_ICON_DISCOVERY", "true")
-        .env("OPENCODE_CLIENT", "desktop")
-        .env("XDG_STATE_HOME", &state_dir);
+    return {
+        let sidecar = get_sidecar_path(app);
+        let shell = get_user_shell();
+
+        let cmd = if shell.ends_with("/nu") {
+            format!("^\"{}\" {}", sidecar.display(), args)
+        } else {
+            format!("\"{}\" {}", sidecar.display(), args)
+        };
+
+        app.shell()
+            .command(&shell)
+            .env("OPENCODE_EXPERIMENTAL_ICON_DISCOVERY", "true")
+            .env("OPENCODE_CLIENT", "desktop")
+            .env("XDG_STATE_HOME", &state_dir)
+            .args(["-il", "-c", &cmd])
+    };
 }
