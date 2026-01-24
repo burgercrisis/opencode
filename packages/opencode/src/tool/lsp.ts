@@ -17,6 +17,7 @@ const operations = [
   "prepareCallHierarchy",
   "incomingCalls",
   "outgoingCalls",
+  "diagnostics",
 ] as const
 
 export const LspTool = Tool.define("lsp", {
@@ -79,10 +80,20 @@ export const LspTool = Tool.define("lsp", {
           return LSP.incomingCalls(position)
         case "outgoingCalls":
           return LSP.outgoingCalls(position)
+        case "diagnostics": {
+          const all = await LSP.diagnostics()
+          const fileDiagnostics = all[file] || []
+          return fileDiagnostics
+        }
       }
     })()
 
     const output = (() => {
+      if (args.operation === "diagnostics") {
+        const arr = result as any[]
+        if (arr.length === 0) return "No diagnostics found for this file."
+        return arr.map((d: any) => LSP.Diagnostic.pretty(d)).join("\n")
+      }
       if (result.length === 0) return `No results found for ${args.operation}`
       return JSON.stringify(result, null, 2)
     })()

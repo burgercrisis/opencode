@@ -10,6 +10,7 @@ Supported operations:
 - prepareCallHierarchy: Get call hierarchy item at a position (functions/methods)
 - incomingCalls: Find all functions/methods that call the function at a position
 - outgoingCalls: Find all functions/methods called by the function at a position
+- diagnostics: Get all linter/compiler errors and warnings for the file
 
 All operations require:
 - filePath: The file to operate on
