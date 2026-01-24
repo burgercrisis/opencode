@@ -141,6 +141,7 @@ pub fn sync_cli(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 
+#[cfg(not(target_os = "windows"))]
 fn get_user_shell() -> String {
     std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string())
 }
