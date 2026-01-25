@@ -1,100 +1,119 @@
 import { batch, createMemo } from "solid-js"
-import { createStore, produce, reconcile } from "solid-js/store"
+import { createStore, produce, reconcile, SetStoreFunction } from "solid-js/store"
 import { Binary } from "@opencode-ai/util/binary"
 import { retry } from "@opencode-ai/util/retry"
 import { createSimpleContext } from "@opencode-ai/ui/context"
 import { useGlobalSync } from "./global-sync"
 import { useSDK } from "./sdk"
-import type { Message, Part } from "@opencode-ai/sdk/v2/client"
+import type { Message, Part, SDK } from "@opencode-ai/sdk/v2/client"
+
+const chunk = 400
+const inflight = new Map<string, Promise<void>>()
+const inflightDiff = new Map<string, Promise<void>>()
+const inflightTodo = new Map<string, Promise<void>>()
+
+const [meta, setMeta] = createStore({
+  limit: {} as Record<string, number>,
+  complete: {} as Record<string, boolean>,
+  loading: {} as Record<string, boolean>,
+})
+
+const keyFor = (directory: string, sessionID: string) => `${directory}:${sessionID}`
+
+const limitFor = (count: number) => {
+  if (count <= chunk) return chunk
+  return Math.ceil(count / chunk) * chunk
+}
+
+const loadMessages = async (input: {
+  directory: string
+  client: SDK["client"]
+  setStore: SetStoreFunction<any>
+  sessionID: string
+  limit: number
+}) => {
+  const key = keyFor(input.directory, input.sessionID)
+  if (meta.loading[key]) return
+
+  setMeta("loading", key, true)
+  await retry(() => input.client.session.messages({ sessionID: input.sessionID, limit: input.limit }))
+    .then((messages) => {
+      const items = (messages.data ?? []).filter((x) => !!x?.info?.id)
+      const next = items
+        .map((x) => x.info)
+        .filter((m) => !!m?.id)
+        .slice()
+        .sort((a, b) => a.id.localeCompare(b.id))
+
+      batch(() => {
+        input.setStore("message", input.sessionID, reconcile(next, { key: "id" }))
+
+        for (const message of items) {
+          input.setStore(
+            "part",
+            message.info.id,
+            reconcile(
+              message.parts
+                .filter((p) => !!p?.id)
+                .slice()
+                .sort((a, b) => a.id.localeCompare(b.id)),
+              { key: "id" },
+            ),
+          )
+        }
+
+        setMeta("limit", key, input.limit)
+        setMeta("complete", key, next.length < input.limit)
+      })
+    })
+    .finally(() => {
+      setMeta("loading", key, false)
+    })
+}
 
 export const { use: useSync, provider: SyncProvider } = createSimpleContext({
   name: "Sync",
   init: () => {
     const globalSync = useGlobalSync()
     const sdk = useSDK()
-    const [store, setStore] = globalSync.child(sdk.directory)
-    const absolute = (path: string) => (store.path.directory + "/" + path).replace("//", "/")
-    const chunk = 400
-    const inflight = new Map<string, Promise<void>>()
-    const inflightDiff = new Map<string, Promise<void>>()
-    const inflightTodo = new Map<string, Promise<void>>()
-    const [meta, setMeta] = createStore({
-      limit: {} as Record<string, number>,
-      complete: {} as Record<string, boolean>,
-      loading: {} as Record<string, boolean>,
-    })
+    const current = createMemo(() => globalSync.child(sdk.directory))
+    const absolute = (path: string) => (current()[0].path.directory + "/" + path).replace("//", "/")
 
     const getSession = (sessionID: string) => {
+      const store = current()[0]
       const match = Binary.search(store.session, sessionID, (s) => s.id)
       if (match.found) return store.session[match.index]
       return undefined
     }
 
-    const limitFor = (count: number) => {
-      if (count <= chunk) return chunk
-      return Math.ceil(count / chunk) * chunk
-    }
-
     const hydrateMessages = (sessionID: string) => {
-      if (meta.limit[sessionID] !== undefined) return
+      const store = current()[0]
+      const key = keyFor(sdk.directory, sessionID)
+      if (meta.limit[key] !== undefined) return
 
       const messages = store.message[sessionID]
       if (!messages) return
 
       const limit = limitFor(messages.length)
-      setMeta("limit", sessionID, limit)
-      setMeta("complete", sessionID, messages.length < limit)
-    }
-
-    const loadMessages = async (sessionID: string, limit: number) => {
-      if (meta.loading[sessionID]) return
-
-      setMeta("loading", sessionID, true)
-      await retry(() => sdk.client.session.messages({ sessionID, limit }))
-        .then((messages) => {
-          const items = (messages.data ?? []).filter((x) => !!x?.info?.id)
-          const next = items
-            .map((x) => x.info)
-            .filter((m) => !!m?.id)
-            .slice()
-            .sort((a, b) => a.id.localeCompare(b.id))
-
-          batch(() => {
-            setStore("message", sessionID, reconcile(next, { key: "id" }))
-
-            for (const message of items) {
-              setStore(
-                "part",
-                message.info.id,
-                reconcile(
-                  message.parts
-                    .filter((p) => !!p?.id)
-                    .slice()
-                    .sort((a, b) => a.id.localeCompare(b.id)),
-                  { key: "id" },
-                ),
-              )
-            }
-
-            setMeta("limit", sessionID, limit)
-            setMeta("complete", sessionID, next.length < limit)
-          })
-        })
-        .finally(() => {
-          setMeta("loading", sessionID, false)
-        })
+      setMeta("limit", key, limit)
+      setMeta("complete", key, messages.length < limit)
     }
 
     return {
-      data: store,
-      set: setStore,
+      get data() {
+        return current()[0]
+      },
+      get set() {
+        return current()[1]
+      },
       get status() {
-        return store.status
+        return current()[0].status
       },
       get ready() {
-        return store.status !== "loading"
+        return current()[0].status !== "loading"
       },
       get project() {
+        const store = current()[0]
         const match = Binary.search(globalSync.data.project, store.project, (p) => p.id)
         if (match.found) return globalSync.data.project[match.index]
         return undefined
@@ -108,6 +127,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           agent: string
           model: { providerID: string; modelID: string }
         }) {
+          const [, setStore] = current()
           const message: Message = {
             id: input.messageID,
             sessionID: input.sessionID,
@@ -133,20 +153,25 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           )
         },
         async sync(sessionID: string) {
+          const directory = sdk.directory
+          const client = sdk.client
+          const [store, setStore] = current()
+          const key = keyFor(directory, sessionID)
+
           const hasSession = getSession(sessionID) !== undefined
           hydrateMessages(sessionID)
 
           const hasMessages = store.message[sessionID] !== undefined
           if (hasSession && hasMessages) return
 
-          const pending = inflight.get(sessionID)
+          const pending = inflight.get(key)
           if (pending) return pending
 
-          const limit = meta.limit[sessionID] ?? chunk
+          const limit = meta.limit[key] ?? chunk
 
           const sessionReq = hasSession
             ? Promise.resolve()
-            : retry(() => sdk.client.session.get({ sessionID })).then((session) => {
+            : retry(() => client.session.get({ sessionID })).then((session) => {
                 const data = session.data
                 if (!data) return
                 setStore(
@@ -162,72 +187,106 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
                 )
               })
 
-          const messagesReq = hasMessages ? Promise.resolve() : loadMessages(sessionID, limit)
+          const messagesReq = hasMessages
+            ? Promise.resolve()
+            : loadMessages({
+                directory,
+                client,
+                setStore,
+                sessionID,
+                limit,
+              })
 
           const promise = Promise.all([sessionReq, messagesReq])
             .then(() => {})
             .finally(() => {
-              inflight.delete(sessionID)
+              inflight.delete(key)
             })
 
-          inflight.set(sessionID, promise)
+          inflight.set(key, promise)
           return promise
         },
         async diff(sessionID: string) {
+          const directory = sdk.directory
+          const client = sdk.client
+          const [store, setStore] = current()
+          const key = keyFor(directory, sessionID)
+
           if (store.session_diff[sessionID] !== undefined) return
 
-          const pending = inflightDiff.get(sessionID)
+          const pending = inflightDiff.get(key)
           if (pending) return pending
 
-          const promise = retry(() => sdk.client.session.diff({ sessionID }))
+          const promise = retry(() => client.session.diff({ sessionID }))
             .then((diff) => {
               setStore("session_diff", sessionID, reconcile(diff.data ?? [], { key: "file" }))
             })
             .finally(() => {
-              inflightDiff.delete(sessionID)
+              inflightDiff.delete(key)
             })
 
-          inflightDiff.set(sessionID, promise)
+          inflightDiff.set(key, promise)
           return promise
         },
         async todo(sessionID: string) {
+          const directory = sdk.directory
+          const client = sdk.client
+          const [store, setStore] = current()
+          const key = keyFor(directory, sessionID)
+
           if (store.todo[sessionID] !== undefined) return
 
-          const pending = inflightTodo.get(sessionID)
+          const pending = inflightTodo.get(key)
           if (pending) return pending
 
-          const promise = retry(() => sdk.client.session.todo({ sessionID }))
+          const promise = retry(() => client.session.todo({ sessionID }))
             .then((todo) => {
               setStore("todo", sessionID, reconcile(todo.data ?? [], { key: "id" }))
             })
             .finally(() => {
-              inflightTodo.delete(sessionID)
+              inflightTodo.delete(key)
             })
 
-          inflightTodo.set(sessionID, promise)
+          inflightTodo.set(key, promise)
           return promise
         },
         history: {
           more(sessionID: string) {
+            const store = current()[0]
+            const key = keyFor(sdk.directory, sessionID)
             if (store.message[sessionID] === undefined) return false
-            if (meta.limit[sessionID] === undefined) return false
-            if (meta.complete[sessionID]) return false
+            if (meta.limit[key] === undefined) return false
+            if (meta.complete[key]) return false
             return true
           },
           loading(sessionID: string) {
-            return meta.loading[sessionID] ?? false
+            const key = keyFor(sdk.directory, sessionID)
+            return meta.loading[key] ?? false
           },
           async loadMore(sessionID: string, count = chunk) {
-            if (meta.loading[sessionID]) return
-            if (meta.complete[sessionID]) return
+            const directory = sdk.directory
+            const client = sdk.client
+            const [, setStore] = current()
+            const key = keyFor(directory, sessionID)
+            if (meta.loading[key]) return
+            if (meta.complete[key]) return
 
-            const current = meta.limit[sessionID] ?? chunk
-            await loadMessages(sessionID, current + count)
+            const currentLimit = meta.limit[key] ?? chunk
+            await loadMessages({
+              directory,
+              client,
+              setStore,
+              sessionID,
+              limit: currentLimit + count,
+            })
           },
         },
         fetch: async (count = 10) => {
+          const directory = sdk.directory
+          const client = sdk.client
+          const [store, setStore] = current()
           setStore("limit", (x) => x + count)
-          await sdk.client.session.list().then((x) => {
+          await client.session.list().then((x) => {
             const sessions = (x.data ?? [])
               .filter((s) => !!s?.id)
               .slice()
@@ -236,9 +295,11 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
             setStore("session", reconcile(sessions, { key: "id" }))
           })
         },
-        more: createMemo(() => store.session.length >= store.limit),
+        more: createMemo(() => current()[0].session.length >= current()[0].limit),
         archive: async (sessionID: string) => {
-          await sdk.client.session.update({ sessionID, time: { archived: Date.now() } })
+          const client = sdk.client
+          const [, setStore] = current()
+          await client.session.update({ sessionID, time: { archived: Date.now() } })
           setStore(
             produce((draft) => {
               const match = Binary.search(draft.session, sessionID, (s) => s.id)
@@ -249,7 +310,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       },
       absolute,
       get directory() {
-        return store.path.directory
+        return current()[0].path.directory
       },
     }
   },
