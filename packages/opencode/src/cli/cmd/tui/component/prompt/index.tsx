@@ -492,7 +492,7 @@ export function Prompt(props: PromptProps) {
     if (!store.prompt.input) return
     const trimmed = store.prompt.input.trim()
     if (trimmed === "exit" || trimmed === "quit" || trimmed === ":q") {
-      exit()
+      await tryExit()
       return
     }
     const selectedModel = local.model.current()
@@ -619,6 +619,22 @@ export function Prompt(props: PromptProps) {
     input.clear()
   }
   const exit = useExit()
+  const toast = useToast()
+  let lastExitAttempt = 0
+
+  async function tryExit() {
+    const now = Date.now()
+    if (now - lastExitAttempt < 2000) {
+      await exit()
+      return
+    }
+    lastExitAttempt = now
+    toast.show({
+      variant: "warning",
+      message: "Press again to exit",
+      duration: 2000,
+    })
+  }
 
   function pasteText(text: string, virtualText: string) {
     const currentOffset = input.visualCursor.offset
@@ -816,12 +832,9 @@ export function Prompt(props: PromptProps) {
                   return
                 }
                 if (keybind.match("app_exit", e)) {
-                  if (store.prompt.input === "") {
-                    await exit()
-                    // Don't preventDefault - let textarea potentially handle the event
-                    e.preventDefault()
-                    return
-                  }
+                  await tryExit()
+                  e.preventDefault()
+                  return
                 }
                 if (e.name === "!" && input.visualCursor.offset === 0) {
                   setStore("mode", "shell")
