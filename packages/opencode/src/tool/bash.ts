@@ -13,6 +13,7 @@ import { Filesystem } from "@/util/filesystem"
 import { fileURLToPath } from "url"
 import { Flag } from "@/flag/flag.ts"
 import { Shell } from "@/shell/shell"
+import { Config } from "../config/config"
 
 import { BashArity } from "@/permission/arity"
 import { Truncate } from "./truncation"
@@ -56,7 +57,7 @@ const parser = lazy(async () => {
  * @param {string} command - The original command that was executed
  * @returns {{output: string, hasErrors: boolean}} Processed output with enhanced error messages and error detection
  */
-function processPowerShellOutput(output: string, command: string): {output: string, hasErrors: boolean} {
+export function processPowerShellOutput(output: string, command: string): {output: string, hasErrors: boolean} {
   let processed = output
 
   // 1. Improve non-existent cmdlet error messages with clearer guidance
@@ -92,8 +93,9 @@ function processPowerShellOutput(output: string, command: string): {output: stri
 
   // 2. Suppress or handle Format-* -First unsupported parameter errors
   // This is common in older PowerShell versions where -First parameter doesn't exist
+  // We use [\s\S]*? to handle potential newlines in the error message
   processed = processed.replace(
-    /(Format-Table|Format-List|Format-Wide|Format-Custom) : A parameter cannot be found that matches parameter name 'First'\./gi,
+    /(\w+-\w+)\s*:\s*A\s+parameter\s+cannot\s+be\s+found\s+that\s+matches\s+parameter\s+name\s+'First'\./gi,
     (match, cmdlet) => {
       // Provide helpful guidance about the limitation
       return `Note: The -First parameter is not supported in ${cmdlet} for your PowerShell version. ` +
@@ -103,8 +105,10 @@ function processPowerShellOutput(output: string, command: string): {output: stri
 
   // Handle alternative error message format for -First parameter
   processed = processed.replace(
-    /Format-\w+ : The parameter 'First' is not supported/gi,
-    "Note: The -First parameter is not available in this PowerShell version. Use 'Select-Object -First N' as a workaround."
+    /(\w+-\w+)\s*:\s*The\s+parameter\s+'First'\s+is\s+not\s+supported/gi,
+    (match, cmdlet) => {
+      return `Note: The -First parameter is not available in ${cmdlet} for this PowerShell version. Use 'Select-Object -First N' as a workaround.`
+    }
   )
 
   // 3. Handle Get-Credential in non-interactive context with clear fallback message
@@ -203,7 +207,7 @@ function processPowerShellOutput(output: string, command: string): {output: stri
  * @param command The original command that was executed
  * @returns Processed output with quote artifacts removed
  */
-function processCmdOutput(output: string, command: string): string {
+export function processCmdOutput(output: string, command: string): string {
   let processed = output
 
   // Check if command contains %variable% patterns
@@ -330,12 +334,6 @@ export const BashTool = Tool.define("bash", async () => {
 
       // Implement dynamic environment variable expansion for Windows commands
       if (process.platform === "win32") {
-        // Only expand PowerShell-style variables ($env:VAR) for PowerShell commands
-        if (Shell.isPowerShellCommand(processedCommand)) {
-          processedCommand = processedCommand.replace(/\$env:(\w+)/g, (_, name) => {
-            return process.env[name] || `$env:${name}`
-          })
-        }
         // Handle CMD-style variable expansion for chained commands
         // This fixes issues like: set TEST_VAR=test && cmd /c echo %TEST_VAR%
         if (Shell.isCmdCommand(processedCommand) && processedCommand.includes("&&")) {
@@ -345,9 +343,10 @@ export const BashTool = Tool.define("bash", async () => {
           if (match) {
             const [, cmdExe, cmdSwitch, rest] = match
             // If we have chained commands with variables, ensure proper expansion
-            if (rest.includes("&&") && /%\w+%/.test(rest)) {
+            // BUT: only if it's not a dynamic variable that Shell.ts already handles
+            if (rest.includes("&&") && /%\w+%/.test(rest) && !Shell.hasDynamicEnvVars(rest)) {
               // Replace the command with a version that preserves variable context
-              processedCommand = `${cmdExe} ${cmdSwitch} "${rest.replace(/%/g, "%%")}"`
+              processedCommand = `${cmdExe} ${cmdSwitch} "${rest}"`
             }
           }
         }
@@ -366,7 +365,8 @@ export const BashTool = Tool.define("bash", async () => {
         // as CMD handles its own variable expansion
       }
 
-      const spawnConfig = Shell.getSpawnConfig(processedCommand)
+      const config = await Config.get()
+      const spawnConfig = Shell.getSpawnConfig(processedCommand, config.shell)
 
       // Add more detailed logging for CMD commands (after line 298)
       if (Shell.isCmdCommand(processedCommand)) {
@@ -408,11 +408,11 @@ export const BashTool = Tool.define("bash", async () => {
               ...process.env,
             },
             stdio: ["ignore", "pipe", "pipe"],
-            detached: false, // Don't use detached for direct PowerShell/CMD spawns
+            detached: process.platform !== "win32", // Use detached for Unix to support process group killing
             ...(process.platform === "win32" && Shell.isCmdCommand(processedCommand) && {
               windowsHide: true,
-              windowsVerbatimArguments: true
-            })
+              windowsVerbatimArguments: true,
+            }),
           })
 
       let output = ""
@@ -490,7 +490,15 @@ export const BashTool = Tool.define("bash", async () => {
 
           // Post-process PowerShell output for better error handling
           if (Shell.isPowerShellCommand(processedCommand)) {
+            console.log("[DEBUG] PowerShell command detected, processing output")
             const powerShellResult = processPowerShellOutput(output, processedCommand)
+            console.log("[DEBUG] Processed output length:", powerShellResult.output.length)
+            if (powerShellResult.output.includes("Note: The -First parameter is not supported")) {
+              console.log("[DEBUG] Found helpful note in processed output!")
+            } else {
+              console.log("[DEBUG] Helpful note NOT found in processed output.")
+              console.log("[DEBUG] Raw output snippet:", output.substring(0, 200))
+            }
             output = powerShellResult.output
             // Set exit code based on PowerShell error analysis
             // Skip exit code override for commands with -Debug or -Verbose flags as they may produce debug output
@@ -521,9 +529,9 @@ export const BashTool = Tool.define("bash", async () => {
       }
 
       // CMD-specific exit code normalization
-      if (Shell.isCmdCommand(processedCommand)) {
+      if (process.platform === "win32") {
         // Handle special CMD exit codes
-        if (exitCode === 1) {
+        if (exitCode === 1 || exitCode === 127) {
           // Check if this should be a different exit code based on the command
           if (processedCommand.includes("call") && processedCommand.includes("nonexistent")) {
             exitCode = 2 // Expected exit code for call nonexistent.bat
@@ -556,14 +564,21 @@ export const BashTool = Tool.define("bash", async () => {
         output += "\n\n<bash_metadata>\n" + resultMetadata.join("\n") + "\n</bash_metadata>"
       }
 
+      // Normalize line endings to \n for consistency across platforms
+      output = output.replace(/\r\n/g, "\n")
+
+      const truncated = await Truncate.output(output, {}, ctx.agent)
+
       return {
         title: params.description,
         metadata: {
-          output: output.length > MAX_METADATA_LENGTH ? output.slice(0, MAX_METADATA_LENGTH) + "\n\n..." : output,
+          output: truncated.content.length > MAX_METADATA_LENGTH ? truncated.content.slice(0, MAX_METADATA_LENGTH) + "\n\n..." : truncated.content,
           exit: exitCode,
           description: params.description,
+          truncated: truncated.truncated,
+          outputPath: truncated.truncated ? (truncated as any).outputPath : undefined,
         },
-        output,
+        output: truncated.content,
       }
     },
   }
