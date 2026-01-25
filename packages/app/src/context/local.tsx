@@ -208,7 +208,43 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           }
         }
 
-        throw new Error("No default model found")
+        // Fallback: try to find OpenCode Zen models first, especially big-pickle
+        const allProviders = providers.all()
+        for (const p of allProviders) {
+          // Check for OpenCode provider first
+          if (p.id === "opencode") {
+            const models = Object.values(p.models)
+            // Look for big-pickle specifically
+            const bigPickle = models.find(m => m.id === "big-pickle")
+            if (bigPickle) {
+              return {
+                providerID: p.id,
+                modelID: "big-pickle",
+              }
+            }
+            // If big-pickle not found, return first OpenCode model
+            if (models.length > 0) {
+              return {
+                providerID: p.id,
+                modelID: models[0].id,
+              }
+            }
+          }
+        }
+
+        // If no OpenCode models, try to find any available model from any provider
+        for (const p of allProviders) {
+          const models = Object.values(p.models)
+          if (models.length > 0) {
+            return {
+              providerID: p.id,
+              modelID: models[0].id,
+            }
+          }
+        }
+
+        // If no models are available at all, return undefined instead of throwing
+        return undefined
       })
 
       const current = createMemo(() => {
