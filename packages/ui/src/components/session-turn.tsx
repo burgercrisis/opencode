@@ -76,6 +76,7 @@ function computeStatusFromPart(part: PartType | undefined, t: Translator): strin
 
 function same<T>(a: readonly T[], b: readonly T[]) {
   if (a === b) return true
+  if (!a || !b) return false
   if (a.length !== b.length) return false
   return a.every((x, i) => x === b[i])
 }
@@ -152,15 +153,22 @@ export function SessionTurn(
   const emptyDiffs: FileDiff[] = []
   const idle = { type: "idle" as const }
 
-  const allMessages = createMemo(() => data.store.message[props.sessionID] ?? emptyMessages)
+  const allMessages = createMemo(() => {
+    const messages = data.store.message?.[props.sessionID]
+    if (!messages) return emptyMessages
+    // Filter out any undefined items
+    return messages.filter(m => m) as MessageType[]
+  })
 
-  const messageIndex = createMemo(() => {
+const messageIndex = createMemo(() => {
     const messages = allMessages()
+    if (!messages || messages.length === 0) return -1
+    
     const result = Binary.search(messages, props.messageID, (m) => m.id)
-    if (!result.found) return -1
+    if (!result || !result.found) return -1
 
     const msg = messages[result.index]
-    if (msg.role !== "user") return -1
+    if (!msg || msg.role !== "user") return -1
 
     return result.index
   })
@@ -258,15 +266,18 @@ export function SessionTurn(
 
   const permissions = createMemo(() => data.store.permission?.[props.sessionID] ?? emptyPermissions)
   const permissionCount = createMemo(() => permissions().length)
-  const nextPermission = createMemo(() => permissions()[0])
+  const nextPermission = createMemo(() => {
+    const perms = permissions()
+    return perms.length > 0 ? perms[0] : undefined
+  })
 
-  const permissionParts = createMemo(() => {
+const permissionParts = createMemo(() => {
     if (props.stepsExpanded) return emptyPermissionParts
 
     const next = nextPermission()
     if (!next || !next.tool) return emptyPermissionParts
 
-    const message = assistantMessages().findLast((m) => m.id === next.tool!.messageID)
+    const message = assistantMessages().findLast((m) => m.id === next.tool?.messageID)
     if (!message) return emptyPermissionParts
 
     const parts = data.store.part[message.id] ?? emptyParts
