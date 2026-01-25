@@ -207,7 +207,9 @@ export namespace Filesystem {
   }
 
   export function contains(parent: string, child: string) {
-    return !relative(parent, child).startsWith("..")
+    const rel = relative(parent, child)
+    if (isAbsolute(rel)) return false
+    return !rel.startsWith("..")
   }
 
   export async function findUp(target: string, start: string, stop?: string) {
