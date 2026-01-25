@@ -6,6 +6,7 @@ import DESCRIPTION from "./grep.txt"
 import { Instance } from "../project/instance"
 import path from "path"
 import { assertExternalDirectory } from "./external-directory"
+import { Filesystem } from "../util/filesystem"
 
 const MAX_LINE_LENGTH = 2000
 const MATCH_LIMIT = 250
@@ -34,7 +35,7 @@ export const GrepTool = Tool.define("grep", {
     })
 
     let searchPath = params.path ?? Instance.directory
-    searchPath = path.isAbsolute(searchPath) ? searchPath : path.resolve(Instance.directory, searchPath)
+    searchPath = path.isAbsolute(searchPath) ? Filesystem.nativePath(searchPath) : Filesystem.resolvePath(Instance.directory, searchPath)
     await assertExternalDirectory(ctx, searchPath, { kind: "directory" })
 
     const rgPath = await Ripgrep.filepath()
@@ -64,6 +65,7 @@ export const GrepTool = Tool.define("grep", {
       path: string
       lineNum: number
       lineText: string
+      modTime?: number
     }> = []
     let truncated = false
 
@@ -86,18 +88,10 @@ export const GrepTool = Tool.define("grep", {
           const [filePath, lineNumStr, ...lineTextParts] = line.split("|")
           if (!filePath || !lineNumStr || lineTextParts.length === 0) continue
 
-          const lineNum = parseInt(lineNumStr, 10)
-          const lineText = lineTextParts.join("|")
-
-          const file = Bun.file(filePath)
-          const stats = await file.stat().catch(() => null)
-          if (!stats) continue
-
           matches.push({
             path: filePath,
-            modTime: stats.mtime.getTime(),
-            lineNum,
-            lineText,
+            lineNum: parseInt(lineNumStr, 10),
+            lineText: lineTextParts.join("|"),
           })
         }
 
@@ -107,19 +101,11 @@ export const GrepTool = Tool.define("grep", {
       if (!truncated && buffer) {
         const [filePath, lineNumStr, ...lineTextParts] = buffer.split("|")
         if (filePath && lineNumStr && lineTextParts.length > 0) {
-          const lineNum = parseInt(lineNumStr, 10)
-          const lineText = lineTextParts.join("|")
-
-          const file = Bun.file(filePath)
-          const stats = await file.stat().catch(() => null)
-          if (stats) {
-            matches.push({
-              path: filePath,
-              modTime: stats.mtime.getTime(),
-              lineNum,
-              lineText,
-            })
-          }
+          matches.push({
+            path: filePath,
+            lineNum: parseInt(lineNumStr, 10),
+            lineText: lineTextParts.join("|"),
+          })
         }
       }
     } finally {
@@ -132,8 +118,8 @@ export const GrepTool = Tool.define("grep", {
 
     // Exit codes: 0 = matches found, 1 = no matches, 2 = errors (but may still have matches)
     // With --no-messages, we suppress error output but still get exit code 2 for broken symlinks etc.
-    // Only fail if exit code is 2 AND no output was produced
-    if ((exitCode === 1 || (exitCode === 2 && matches.length === 0)) && matches.length === 0) {
+    // Only return no matches if exit code 1 and no matches were found
+    if (exitCode === 1 && matches.length === 0) {
       return {
         title: params.pattern,
         metadata: { matches: 0, truncated: false },
@@ -141,6 +127,7 @@ export const GrepTool = Tool.define("grep", {
       }
     }
 
+    // Handle errors: fail if exit code indicates failure and we haven't truncated
     if (exitCode !== 0 && exitCode !== 1 && exitCode !== 2 && !truncated) {
       throw new Error(`ripgrep failed: ${errorOutput}`)
     }
@@ -155,7 +142,25 @@ export const GrepTool = Tool.define("grep", {
       }
     }
 
-    matches.sort((a, b) => b.modTime - a.modTime)
+    // Optimization: Batch stat calls for modTime sorting
+    const uniqueFiles = [...new Set(matches.map((m) => m.path))]
+    const fileStats = new Map<string, number>()
+    await Promise.all(
+      uniqueFiles.map(async (filePath) => {
+        const stats = await Bun.file(filePath)
+          .stat()
+          .catch(() => null)
+        if (stats) {
+          fileStats.set(filePath, stats.mtime.getTime())
+        }
+      }),
+    )
+
+    for (const match of matches) {
+      match.modTime = fileStats.get(match.path) ?? 0
+    }
+
+    matches.sort((a, b) => (b.modTime ?? 0) - (a.modTime ?? 0))
 
     const outputLines = [`Found ${matches.length} matches`]
 
