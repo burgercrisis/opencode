@@ -35,7 +35,7 @@ export const LineCommentAnchor = (props: LineCommentAnchorProps) => {
       }}
     >
       <button type="button" data-slot="line-comment-button" onClick={props.onClick} onMouseEnter={props.onMouseEnter}>
-        <Icon name="comment" size="small" />
+        <Icon name="speech-bubble" size="small" />
       </button>
       <Show when={props.open}>
         <div
