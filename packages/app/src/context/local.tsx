@@ -302,7 +302,12 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         set(model: ModelKey | undefined, options?: { recent?: boolean }) {
           batch(() => {
             const currentAgent = agent.current()
-            if (currentAgent) setEphemeral("model", currentAgent.name, model ?? fallbackModel())
+            if (currentAgent) {
+              const selectedModel = model ?? fallbackModel()
+              if (selectedModel) {
+                setEphemeral("model", currentAgent.name, selectedModel)
+              }
+            }
             if (model) updateVisibility(model, "show")
             if (options?.recent && model) {
               const uniq = uniqueBy([model, ...store.recent], (x) => x.providerID + x.modelID)
