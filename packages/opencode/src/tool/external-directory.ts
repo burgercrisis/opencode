@@ -1,6 +1,6 @@
-import path from "path"
-import type { Tool } from "./tool"
+import { Tool } from "./tool"
 import { Instance } from "../project/instance"
+import { Filesystem } from "../util/filesystem"
 
 type Kind = "file" | "directory"
 
@@ -14,11 +14,12 @@ export async function assertExternalDirectory(ctx: Tool.Context, target?: string
 
   if (options?.bypass) return
 
+  target = Filesystem.nativePath(target)
   if (Instance.containsPath(target)) return
 
   const kind = options?.kind ?? "file"
-  const parentDir = kind === "directory" ? target : path.dirname(target)
-  const glob = path.join(parentDir, "*")
+  const parentDir = kind === "directory" ? target : Filesystem.dirname(target)
+  const glob = Filesystem.join(parentDir, "*")
 
   await ctx.ask({
     permission: "external_directory",
