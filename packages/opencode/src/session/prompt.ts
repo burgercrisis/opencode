@@ -1182,6 +1182,21 @@ export namespace SessionPrompt {
       await Session.updatePart(part)
     }
 
+    const userText = parts
+      .filter((p) => p.type === "text" && !p.ignored)
+      .map((p) => (p as MessageV2.TextPart).text)
+      .join("")
+
+    const toolResultTokens = Token.calculateToolResultTokens(parts)
+    const sentEstimate = Token.estimate(userText)
+
+    await Session.updateMessage({
+      ...info,
+      tokens: {
+        sent: sentEstimate,
+      },
+    } as MessageV2.User)
+
     return {
       info,
       parts,
