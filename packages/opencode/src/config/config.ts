@@ -885,6 +885,7 @@ export namespace Config {
   export const Info = z
     .object({
       $schema: z.string().optional().describe("JSON schema reference for configuration validation"),
+      shell: z.string().optional().describe("Shell to use for command execution (e.g., bash, zsh, fish, pwsh)"),
       theme: z.string().optional().describe("Theme name to use for the interface"),
       keybinds: Keybinds.optional().describe("Custom keybind configurations"),
       logLevel: Log.Level.optional().describe("Log level"),
@@ -1089,7 +1090,6 @@ export namespace Config {
         })
         .optional(),
     })
-    .strict()
     .meta({
       ref: "Config",
     })
