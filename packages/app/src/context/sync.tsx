@@ -5,7 +5,7 @@ import { retry } from "@opencode-ai/util/retry"
 import { createSimpleContext } from "@opencode-ai/ui/context"
 import { useGlobalSync } from "./global-sync"
 import { useSDK } from "./sdk"
-import type { Message, Part, SDK } from "@opencode-ai/sdk/v2/client"
+import type { Message, Part } from "@opencode-ai/sdk/v2/client"
 
 const chunk = 400
 const inflight = new Map<string, Promise<void>>()
@@ -27,7 +27,7 @@ const limitFor = (count: number) => {
 
 const loadMessages = async (input: {
   directory: string
-  client: SDK["client"]
+  client: ReturnType<typeof useSDK>["client"]
   setStore: SetStoreFunction<any>
   sessionID: string
   limit: number
@@ -37,12 +37,12 @@ const loadMessages = async (input: {
 
   setMeta("loading", key, true)
   await retry(() => input.client.session.messages({ sessionID: input.sessionID, limit: input.limit }))
-    .then((messages) => {
-      const items = (messages.data ?? []).filter((x) => !!x?.info?.id)
+.then((messages: any) => {
+      const items = (messages.data ?? []).filter((x: any) => !!x?.info?.id)
       const next = items
-        .map((x) => x.info)
-        .filter((m) => !!m?.id)
-        .sort((a, b) => a.id.localeCompare(b.id))
+        .map((x: any) => x.info)
+        .filter((m: any) => !!m?.id)
+        .sort((a: any, b: any) => a.id.localeCompare(b.id))
 
       batch(() => {
         input.setStore("message", input.sessionID, reconcile(next, { key: "id" }))
@@ -52,7 +52,7 @@ const loadMessages = async (input: {
             "part",
             message.info.id,
             reconcile(
-              message.parts.filter((p) => !!p?.id).sort((a, b) => a.id.localeCompare(b.id)),
+              message.parts.filter((p: any) => !!p?.id).sort((a: any, b: any) => a.id.localeCompare(b.id)),
               { key: "id" },
             ),
           )
