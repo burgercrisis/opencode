@@ -411,6 +411,27 @@ export namespace Session {
   export const updatePart = fn(UpdatePartInput, async (input) => {
     const part = "delta" in input ? input.part : input
     const delta = "delta" in input ? input.delta : undefined
+
+    if (part.type === "tool") {
+      const key = ["part", part.messageID, part.id]
+      const existing = await Storage.read<MessageV2.Part>(key).catch(() => undefined)
+
+      if (existing?.type === "tool") {
+        const isDowngrade =
+          (existing.state.status === "completed" || existing.state.status === "error") &&
+          part.state.status === "running"
+        if (isDowngrade) {
+          log.warn("updatePart: preventing status downgrade", {
+            from: existing.state.status,
+            to: part.state.status,
+            tool: part.tool,
+            callID: part.callID,
+          })
+          return existing
+        }
+      }
+    }
+
     await Storage.write(["part", part.messageID, part.id], part)
     Bus.publish(MessageV2.Event.PartUpdated, {
       part,
