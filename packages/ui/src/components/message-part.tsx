@@ -608,7 +608,7 @@ PART_MAPPING["tool"] = function ToolPartDisplay(props) {
   const partMetadata = () => part.state?.metadata ?? emptyMetadata
   const metadata = () => {
     const perm = permission()
-    if (perm?.metadata) return { ...perm.metadata, ...partMetadata() }
+    if (perm && perm.metadata) return { ...perm.metadata, ...partMetadata() }
     return partMetadata()
   }
 
