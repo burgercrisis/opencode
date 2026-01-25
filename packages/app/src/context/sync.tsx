@@ -42,7 +42,6 @@ const loadMessages = async (input: {
       const next = items
         .map((x) => x.info)
         .filter((m) => !!m?.id)
-        .slice()
         .sort((a, b) => a.id.localeCompare(b.id))
 
       batch(() => {
@@ -53,10 +52,7 @@ const loadMessages = async (input: {
             "part",
             message.info.id,
             reconcile(
-              message.parts
-                .filter((p) => !!p?.id)
-                .slice()
-                .sort((a, b) => a.id.localeCompare(b.id)),
+              message.parts.filter((p) => !!p?.id).sort((a, b) => a.id.localeCompare(b.id)),
               { key: "id" },
             ),
           )
@@ -86,9 +82,8 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       return undefined
     }
 
-    const hydrateMessages = (sessionID: string) => {
-      const store = current()[0]
-      const key = keyFor(sdk.directory, sessionID)
+    const hydrateMessages = (directory: string, store: any, sessionID: string) => {
+      const key = keyFor(directory, sessionID)
       if (meta.limit[key] !== undefined) return
 
       const messages = store.message[sessionID]
@@ -127,7 +122,6 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           agent: string
           model: { providerID: string; modelID: string }
         }) {
-          const [, setStore] = current()
           const message: Message = {
             id: input.messageID,
             sessionID: input.sessionID,
@@ -136,7 +130,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
             agent: input.agent,
             model: input.model,
           }
-          setStore(
+          current()[1](
             produce((draft) => {
               const messages = draft.message[input.sessionID]
               if (!messages) {
@@ -145,25 +139,25 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
                 const result = Binary.search(messages, input.messageID, (m) => m.id)
                 messages.splice(result.index, 0, message)
               }
-              draft.part[input.messageID] = input.parts
-                .filter((p) => !!p?.id)
-                .slice()
-                .sort((a, b) => a.id.localeCompare(b.id))
+              draft.part[input.messageID] = input.parts.filter((p) => !!p?.id).sort((a, b) => a.id.localeCompare(b.id))
             }),
           )
         },
         async sync(sessionID: string) {
           const directory = sdk.directory
           const client = sdk.client
-          const [store, setStore] = current()
-          const key = keyFor(directory, sessionID)
+          const [store, setStore] = globalSync.child(directory)
+          const hasSession = (() => {
+            const match = Binary.search(store.session, sessionID, (s) => s.id)
+            return match.found
+          })()
 
-          const hasSession = getSession(sessionID) !== undefined
-          hydrateMessages(sessionID)
+          hydrateMessages(directory, store, sessionID)
 
           const hasMessages = store.message[sessionID] !== undefined
           if (hasSession && hasMessages) return
 
+          const key = keyFor(directory, sessionID)
           const pending = inflight.get(key)
           if (pending) return pending
 
@@ -209,11 +203,10 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
         async diff(sessionID: string) {
           const directory = sdk.directory
           const client = sdk.client
-          const [store, setStore] = current()
-          const key = keyFor(directory, sessionID)
-
+          const [store, setStore] = globalSync.child(directory)
           if (store.session_diff[sessionID] !== undefined) return
 
+          const key = keyFor(directory, sessionID)
           const pending = inflightDiff.get(key)
           if (pending) return pending
 
@@ -231,11 +224,10 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
         async todo(sessionID: string) {
           const directory = sdk.directory
           const client = sdk.client
-          const [store, setStore] = current()
-          const key = keyFor(directory, sessionID)
-
+          const [store, setStore] = globalSync.child(directory)
           if (store.todo[sessionID] !== undefined) return
 
+          const key = keyFor(directory, sessionID)
           const pending = inflightTodo.get(key)
           if (pending) return pending
 
@@ -266,7 +258,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           async loadMore(sessionID: string, count = chunk) {
             const directory = sdk.directory
             const client = sdk.client
-            const [, setStore] = current()
+            const [, setStore] = globalSync.child(directory)
             const key = keyFor(directory, sessionID)
             if (meta.loading[key]) return
             if (meta.complete[key]) return
@@ -284,12 +276,11 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
         fetch: async (count = 10) => {
           const directory = sdk.directory
           const client = sdk.client
-          const [store, setStore] = current()
+          const [store, setStore] = globalSync.child(directory)
           setStore("limit", (x) => x + count)
           await client.session.list().then((x) => {
             const sessions = (x.data ?? [])
               .filter((s) => !!s?.id)
-              .slice()
               .sort((a, b) => a.id.localeCompare(b.id))
               .slice(0, store.limit)
             setStore("session", reconcile(sessions, { key: "id" }))
@@ -297,8 +288,9 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
         },
         more: createMemo(() => current()[0].session.length >= current()[0].limit),
         archive: async (sessionID: string) => {
+          const directory = sdk.directory
           const client = sdk.client
-          const [, setStore] = current()
+          const [, setStore] = globalSync.child(directory)
           await client.session.update({ sessionID, time: { archived: Date.now() } })
           setStore(
             produce((draft) => {

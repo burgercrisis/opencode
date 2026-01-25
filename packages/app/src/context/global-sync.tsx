@@ -297,7 +297,6 @@ function createGlobalSync() {
         const nonArchived = (x.data ?? [])
           .filter((s) => !!s?.id)
           .filter((s) => !s.time?.archived)
-          .slice()
           .sort((a, b) => a.id.localeCompare(b.id))
 
         // Read the current limit at resolve-time so callers that bump the limit while
@@ -432,10 +431,7 @@ function createGlobalSync() {
                 "permission",
                 sessionID,
                 reconcile(
-                  permissions
-                    .filter((p) => !!p?.id)
-                    .slice()
-                    .sort((a, b) => a.id.localeCompare(b.id)),
+                  permissions.filter((p) => !!p?.id).sort((a, b) => a.id.localeCompare(b.id)),
                   { key: "id" },
                 ),
               )
@@ -464,10 +460,7 @@ function createGlobalSync() {
                 "question",
                 sessionID,
                 reconcile(
-                  questions
-                    .filter((q) => !!q?.id)
-                    .slice()
-                    .sort((a, b) => a.id.localeCompare(b.id)),
+                  questions.filter((q) => !!q?.id).sort((a, b) => a.id.localeCompare(b.id)),
                   { key: "id" },
                 ),
               )

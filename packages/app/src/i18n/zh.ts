@@ -455,6 +455,10 @@ export const dict = {
   "settings.general.row.font.title": "字体",
   "settings.general.row.font.description": "自定义代码块使用的等宽字体",
 
+  "font.option.intelOneMono": "Intel One Mono",
+  "font.option.iosevka": "Iosevka",
+  "font.option.jetbrainsMono": "JetBrains Mono",
+
   "settings.general.notifications.agent.title": "智能体",
   "settings.general.notifications.agent.description": "当智能体完成或需要注意时显示系统通知",
   "settings.general.notifications.permissions.title": "权限",
