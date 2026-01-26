@@ -12,6 +12,7 @@ import { Plugin } from "@/plugin"
 import type { Provider } from "@/provider/provider"
 import { LLM } from "./llm"
 import { Config } from "@/config/config"
+import { Token } from "@/util/token"
 import { SessionCompaction } from "./compaction"
 import { PermissionNext } from "@/permission/next"
 import { Question } from "@/question"
@@ -35,6 +36,10 @@ export namespace SessionProcessor {
     let attempt = 0
     let needsCompaction = false
 
+    // Track character accumulation for accurate token calculation during streaming
+    let reasoningCharCount = 0
+    let textCharCount = 0
+
     const result = {
       get message() {
         return input.assistantMessage
@@ -50,6 +55,8 @@ export namespace SessionProcessor {
           try {
             let currentText: MessageV2.TextPart | undefined
             let reasoningMap: Record<string, MessageV2.ReasoningPart> = {}
+            reasoningCharCount = 0
+            textCharCount = 0
             const stream = await LLM.stream(streamInput)
 
             // Create snapshot BEFORE processing stream to ensure it's captured even if aborted
@@ -88,27 +95,11 @@ export namespace SessionProcessor {
                   }
                   break
 
-                case "reasoning-start":
-                  if (value.id in reasoningMap) {
-                    continue
-                  }
-                  reasoningMap[value.id] = {
-                    id: Identifier.ascending("part"),
-                    messageID: input.assistantMessage.id,
-                    sessionID: input.assistantMessage.sessionID,
-                    type: "reasoning",
-                    text: "",
-                    time: {
-                      start: Date.now(),
-                    },
-                    metadata: value.providerMetadata,
-                  }
-                  break
-
                 case "reasoning-delta":
                   if (value.id in reasoningMap) {
                     const part = reasoningMap[value.id]
                     part.text += value.text
+                    reasoningCharCount += value.text.length
                     if (value.providerMetadata) part.metadata = value.providerMetadata
                     if (part.text) await Session.updatePart({ part, delta: value.text })
                   }
@@ -275,6 +266,15 @@ export namespace SessionProcessor {
                     usage: value.usage,
                     metadata: value.providerMetadata,
                   })
+
+                  // Use character-based estimates for reasoning and text if not provided by provider
+                  if (usage.tokens.reasoning === 0 && reasoningCharCount > 0) {
+                    usage.tokens.reasoning = Token.toTokenEstimate(reasoningCharCount)
+                  }
+                  if (usage.tokens.sent === 0 && textCharCount > 0) {
+                    usage.tokens.sent = Token.toTokenEstimate(textCharCount)
+                  }
+
                   input.assistantMessage.finish = value.finishReason
                   input.assistantMessage.cost += usage.cost
                   input.assistantMessage.tokens = usage.tokens
@@ -329,6 +329,7 @@ export namespace SessionProcessor {
                 case "text-delta":
                   if (currentText) {
                     currentText.text += value.text
+                    textCharCount += value.text.length
                     if (value.providerMetadata) currentText.metadata = value.providerMetadata
                     if (currentText.text)
                       await Session.updatePart({

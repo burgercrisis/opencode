@@ -1194,6 +1194,7 @@ export namespace SessionPrompt {
     await Session.updateMessage({
       ...info,
       tokens: {
+        ...info.tokens,
         sent: sentEstimate,
       },
     } as MessageV2.User)
