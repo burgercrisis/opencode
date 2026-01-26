@@ -76,7 +76,7 @@ test("Azure provider routes to Anthropic SDK for Anthropic models", async () => 
       if (claudeLang.type === "anthropic") {
         expect(claudeLang.id).toBe("claude-3-5-sonnet")
         expect(mockAnthropic).toHaveBeenCalled()
-        const anthropicOptions = mockAnthropic.mock.calls[0][0]
+        const anthropicOptions = (mockAnthropic.mock.calls[0] as any[])[0]
         expect(anthropicOptions.baseURL).toBe("https://my-resource.openai.azure.com/openai/deployments/my-deploy")
       } else {
         // Real SDK was loaded

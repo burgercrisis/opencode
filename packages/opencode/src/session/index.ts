@@ -461,6 +461,7 @@ export namespace Session {
         input: safe(adjustedInputTokens),
         output: safe(input.usage.outputTokens ?? 0),
         reasoning: safe(input.usage?.reasoningTokens ?? 0),
+        sent: 0,
         cache: {
           write: safe(
             (input.metadata?.["anthropic"]?.["cacheCreationInputTokens"] ??

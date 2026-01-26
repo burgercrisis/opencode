@@ -8,6 +8,7 @@ import { getFilename } from "@opencode-ai/util/path"
 import { useSDK } from "./sdk"
 import { useSync } from "./sync"
 import { useLanguage } from "@/context/language"
+import { useLayout } from "./layout"
 import { Persist, persisted } from "@/utils/persist"
 
 export type FileSelection = {
@@ -188,6 +189,7 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
     const sync = useSync()
     const params = useParams()
     const language = useLanguage()
+    const layout = useLayout()
 
     const scope = createMemo(() => sdk.directory)
 
@@ -281,6 +283,16 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
     }
 
     const view = createMemo(() => loadView(params.dir!, params.id))
+
+    const sessionKey = createMemo(() => `${params.dir}${params.id ? "/" + params.id : ""}`)
+
+    const active = createMemo(() => {
+      const tabValue = layout.tabs(sessionKey).active()
+      if (!tabValue) return
+      const path = pathFromTab(tabValue)
+      if (!path) return
+      return get(path)
+    })
 
     function ensure(path: string) {
       if (!path) return
@@ -394,6 +406,7 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
       pathFromTab,
       get,
       load,
+      active,
       scrollTop,
       scrollLeft,
       setScrollTop,

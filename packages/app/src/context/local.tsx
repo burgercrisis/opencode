@@ -5,6 +5,8 @@ import type { FileContent, FileNode, Model, Provider, File as FileStatus } from 
 import { createSimpleContext } from "@opencode-ai/ui/context"
 import { useSDK } from "./sdk"
 import { useSync } from "./sync"
+import { useLayout } from "./layout"
+import { useParams } from "@solidjs/router"
 import { base64Encode } from "@opencode-ai/util/encode"
 import { useProviders } from "@/hooks/use-providers"
 import { DateTime } from "luxon"
@@ -376,6 +378,8 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
     })()
 
     const file = (() => {
+      const layout = useLayout()
+      const params = useParams()
       const [store, setStore] = createStore<{
         node: Record<string, LocalFile>
       }>({
@@ -387,6 +391,17 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         scope()
         setStore("node", {})
       })
+
+      const sessionKey = createMemo(() => `${params.dir}${params.id ? "/" + params.id : ""}`)
+
+      const active = () => {
+        const tabValue = layout.tabs(sessionKey()).active()
+        if (!tabValue) return undefined
+        const path = tabValue.startsWith("file://")
+          ? tabValue.slice("file://".length).split("#")[0].split("?")[0]
+          : tabValue
+        return store.node[path]
+      }
 
       // const changeset = createMemo(() => new Set(sync.data.changes.map((f) => f.path)))
       // const changes = createMemo(() => Array.from(changeset()).sort((a, b) => a.localeCompare(b)))
@@ -530,25 +545,16 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       const searchFilesAndDirectories = (query: string) =>
         sdk.client.find.files({ query, dirs: "true" }).then((x) => x.data!)
 
-      const unsub = sdk.event.listen((e) => {
-        const event = e.details
-        switch (event.type) {
-          case "file.watcher.updated":
-            const relativePath = relative(event.properties.file)
-            if (relativePath.startsWith(".git/")) return
-            if (store.node[relativePath]) load(relativePath)
-            break
-        }
+      const unsub = sdk.event.on("file.watcher.updated", (event) => {
+        const relativePath = relative(event.properties.file)
+        if (relativePath.startsWith(".git/")) return
+        if (store.node[relativePath]) load(relativePath)
       })
       onCleanup(unsub)
 
       return {
-        node: async (path: string) => {
-          if (!store.node[path] || !store.node[path].loaded) {
-            await init(path)
-          }
-          return store.node[path]
-        },
+        active,
+        node: (path: string) => store.node[path],
         update: (path: string, node: LocalFile) => setStore("node", path, reconcile(node)),
         open,
         load,

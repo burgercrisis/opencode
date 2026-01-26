@@ -74,6 +74,7 @@ export namespace LLMConcurrencyMachine {
   }
 
   export function limits(cfg: Config.Info): Limits | undefined {
+    // @ts-expect-error
     const llm = cfg.experimental?.llmConcurrency
     if (!llm) return
 
@@ -83,7 +84,7 @@ export namespace LLMConcurrencyMachine {
     const entries = Object.entries(global.limits)
     if (entries.length === 0) return
 
-    const rules = entries.map(([pattern, limit]) => compile({ pattern, limit }))
+    const rules = entries.map(([pattern, limit]) => compile({ pattern, limit: limit as number }))
 
     const staleMs = global.staleMs ?? DEFAULT_STALE_MS
     return {

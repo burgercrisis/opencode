@@ -549,7 +549,7 @@ export const BashTool = Tool.define("bash", async () => {
       // Normalize line endings to \n for consistency across platforms
       finalOutput = finalOutput.replace(/\r\n/g, "\n")
 
-      const truncated = await Truncate.output(finalOutput, {}, ctx.agent)
+      const truncated = await Truncate.output(finalOutput, {}, undefined)
 
       return {
         title: params.description,

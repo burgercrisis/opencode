@@ -208,6 +208,7 @@ export namespace MessageV2 {
       input: z.number(),
       output: z.number(),
       reasoning: z.number(),
+      sent: z.number().optional(),
       cache: z.object({
         read: z.number(),
         write: z.number(),
@@ -322,6 +323,11 @@ export namespace MessageV2 {
     system: z.string().optional(),
     tools: z.record(z.string(), z.boolean()).optional(),
     variant: z.string().optional(),
+    tokens: z
+      .object({
+        sent: z.number().optional(),
+      })
+      .optional(),
   }).meta({
     ref: "UserMessage",
   })
@@ -380,6 +386,7 @@ export namespace MessageV2 {
       input: z.number(),
       output: z.number(),
       reasoning: z.number(),
+      sent: z.number().optional(),
       cache: z.object({
         read: z.number(),
         write: z.number(),
