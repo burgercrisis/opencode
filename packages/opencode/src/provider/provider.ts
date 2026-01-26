@@ -78,7 +78,7 @@ export namespace Provider {
     "@ai-sdk/github-copilot": createGitHubCopilotOpenAICompatible,
   }
 
-  type CustomModelLoader = (sdk: any, modelID: string, options?: Record<string, any>) => Promise<any>
+  type CustomModelLoader = (sdk: any, model: Model, options?: Record<string, any>) => Promise<any>
   type CustomLoader = (provider: Info) => Promise<{
     autoload: boolean
     getModel?: CustomModelLoader
@@ -122,8 +122,11 @@ export namespace Provider {
     openai: async () => {
       return {
         autoload: false,
-        async getModel(sdk: any, modelID: string, _options?: Record<string, any>) {
-          return sdk.responses(modelID)
+        async getModel(sdk: any, model: Model, _options?: Record<string, any>) {
+          if (model && model.api.npm !== "@ai-sdk/openai") {
+            return sdk.languageModel(model.api.id)
+          }
+          return sdk.responses(model.api.id)
         },
         options: {},
       }
@@ -131,8 +134,11 @@ export namespace Provider {
     "github-copilot": async () => {
       return {
         autoload: false,
-        async getModel(sdk: any, modelID: string, _options?: Record<string, any>) {
-          return shouldUseCopilotResponsesApi(modelID) ? sdk.responses(modelID) : sdk.chat(modelID)
+        async getModel(sdk: any, model: Model, _options?: Record<string, any>) {
+          if (model && model.api.npm !== "@ai-sdk/github-copilot") {
+            return sdk.languageModel(model.api.id)
+          }
+          return shouldUseCopilotResponsesApi(model.api.id) ? sdk.responses(model.api.id) : sdk.chat(model.api.id)
         },
         options: {},
       }
@@ -140,8 +146,11 @@ export namespace Provider {
     "github-copilot-enterprise": async () => {
       return {
         autoload: false,
-        async getModel(sdk: any, modelID: string, _options?: Record<string, any>) {
-          return shouldUseCopilotResponsesApi(modelID) ? sdk.responses(modelID) : sdk.chat(modelID)
+        async getModel(sdk: any, model: Model, _options?: Record<string, any>) {
+          if (model && model.api.npm !== "@ai-sdk/github-copilot") {
+            return sdk.languageModel(model.api.id)
+          }
+          return shouldUseCopilotResponsesApi(model.api.id) ? sdk.responses(model.api.id) : sdk.chat(model.api.id)
         },
         options: {},
       }
@@ -149,12 +158,14 @@ export namespace Provider {
     azure: async () => {
       return {
         autoload: false,
-        async getModel(sdk: any, modelID: string, options?: Record<string, any>) {
-          if (options?.["useCompletionUrls"]) {
-            return sdk.chat(modelID)
-          } else {
-            return sdk.responses(modelID)
+        async getModel(sdk: any, model: Model, options?: Record<string, any>) {
+          if (model && model.api.npm !== "@ai-sdk/azure") {
+            return sdk.languageModel(model.api.id)
           }
+          if (options?.["useCompletionUrls"]) {
+            return sdk.chat(model.api.id)
+          }
+          return sdk.responses(model.api.id)
         },
         options: {},
       }
@@ -163,12 +174,14 @@ export namespace Provider {
       const resourceName = Env.get("AZURE_COGNITIVE_SERVICES_RESOURCE_NAME")
       return {
         autoload: false,
-        async getModel(sdk: any, modelID: string, options?: Record<string, any>) {
-          if (options?.["useCompletionUrls"]) {
-            return sdk.chat(modelID)
-          } else {
-            return sdk.responses(modelID)
+        async getModel(sdk: any, model: Model, options?: Record<string, any>) {
+          if (model && model.api.npm !== "@ai-sdk/azure") {
+            return sdk.languageModel(model.api.id)
           }
+          if (options?.["useCompletionUrls"]) {
+            return sdk.chat(model.api.id)
+          }
+          return sdk.responses(model.api.id)
         },
         options: {
           baseURL: resourceName ? `https://${resourceName}.cognitiveservices.azure.com/openai` : undefined,
@@ -231,7 +244,8 @@ export namespace Provider {
       return {
         autoload: true,
         options: providerOptions,
-        async getModel(sdk: any, modelID: string, options?: Record<string, any>) {
+        async getModel(sdk: any, model: Model, options?: Record<string, any>) {
+          let modelID = model.api.id
           // Skip region prefixing if model already has a cross-region inference profile prefix
           if (modelID.startsWith("global.") || modelID.startsWith("jp.")) {
             return sdk.languageModel(modelID)
@@ -271,6 +285,7 @@ export namespace Provider {
                 "eu-central-1",
                 "eu-south-1",
                 "eu-south-2",
+                "eu-south-3",
               ].some((r) => region.includes(r))
               const modelRequiresPrefix = ["claude", "nova-lite", "nova-micro", "llama3", "pixtral"].some((m) =>
                 modelID.includes(m),
@@ -349,8 +364,8 @@ export namespace Provider {
           project,
           location,
         },
-        async getModel(sdk: any, modelID: string) {
-          const id = String(modelID).trim()
+        async getModel(sdk: any, model: Model) {
+          const id = String(model.api.id).trim()
           return sdk.languageModel(id)
         },
       }
@@ -366,8 +381,8 @@ export namespace Provider {
           project,
           location,
         },
-        async getModel(sdk: any, modelID) {
-          const id = String(modelID).trim()
+        async getModel(sdk: any, model: Model) {
+          const id = String(model.api.id).trim()
           return sdk.languageModel(id)
         },
       }
@@ -389,8 +404,8 @@ export namespace Provider {
       return {
         autoload: !!envServiceKey,
         options: envServiceKey ? { deploymentId, resourceGroup } : {},
-        async getModel(sdk: any, modelID: string) {
-          return sdk(modelID)
+        async getModel(sdk: any, model: Model) {
+          return sdk(model.api.id)
         },
       }
     },
@@ -429,8 +444,8 @@ export namespace Provider {
             ...(providerConfig?.options?.featureFlags || {}),
           },
         },
-        async getModel(sdk: ReturnType<typeof createGitLab>, modelID: string) {
-          return sdk.agenticChat(modelID, {
+        async getModel(sdk: ReturnType<typeof createGitLab>, model: Model) {
+          return sdk.agenticChat(model.api.id, {
             featureFlags: {
               duo_agent_platform_agentic_chat: true,
               duo_agent_platform: true,
@@ -457,8 +472,8 @@ export namespace Provider {
 
       return {
         autoload: true,
-        async getModel(sdk: any, modelID: string, _options?: Record<string, any>) {
-          return sdk.languageModel(modelID)
+        async getModel(sdk: any, model: Model, _options?: Record<string, any>) {
+          return sdk.languageModel(model.api.id)
         },
         options: {
           baseURL: `https://gateway.ai.cloudflare.com/v1/${accountId}/${gateway}/compat`,
@@ -600,7 +615,7 @@ export namespace Provider {
       family: model.family,
       api: {
         id: model.id,
-        url: provider.api!,
+        url: model.provider?.api ?? provider.api!,
         npm: iife(() => {
           if (provider.id.startsWith("github-copilot")) return "@ai-sdk/github-copilot"
           return model.provider?.npm ?? provider.npm ?? "@ai-sdk/openai-compatible"
@@ -755,7 +770,7 @@ export namespace Provider {
               existingModel?.api.npm ??
               modelsDev[providerID]?.npm ??
               "@ai-sdk/openai-compatible",
-            url: provider?.api ?? existingModel?.api.url ?? modelsDev[providerID]?.api,
+            url: model.provider?.api ?? provider?.api ?? existingModel?.api.url ?? modelsDev[providerID]?.api,
           },
           status: model.status ?? existingModel?.status ?? "active",
           name,
@@ -969,7 +984,9 @@ export namespace Provider {
         options["includeUsage"] = true
       }
 
-      if (!options["baseURL"]) options["baseURL"] = model.api.url
+      const resolvedBaseURL = resolveModelBaseURL(model, options)
+      if (!options["baseURL"] && resolvedBaseURL) options["baseURL"] = resolvedBaseURL
+
       if (options["apiKey"] === undefined && provider.key) options["apiKey"] = provider.key
       if (model.headers)
         options["headers"] = {
@@ -1092,9 +1109,8 @@ export namespace Provider {
     const sdk = await getSDK(model)
 
     try {
-      const language = s.modelLoaders[model.providerID]
-        ? await s.modelLoaders[model.providerID](sdk, model.api.id, provider.options)
-        : sdk.languageModel(model.api.id)
+      const loader = s.modelLoaders[model.providerID]
+      const language = loader ? await loader(sdk, model, provider.options) : sdk.languageModel(model.api.id)
       s.models.set(key, language)
       return language
     } catch (e) {
@@ -1216,4 +1232,19 @@ export namespace Provider {
       providerID: z.string(),
     }),
   )
+
+  export function resolveModelBaseURL(model: Model, options: Record<string, any>): string {
+    const template = model.api?.url ?? ""
+    if (!template) return ""
+    const matches = [...template.matchAll(/{{([^}]+)}}/g)]
+    if (matches.length === 0) return template
+    return matches.reduce((url, match) => {
+      const keys = match[1].split("|").map((item) => item.trim())
+      const resolved = keys
+        .map((key) => Env.get(key) ?? options[key])
+        .find((value) => value !== undefined && value !== null && value !== "")
+      if (resolved === undefined || resolved === null || resolved === "") return url
+      return url.replaceAll(match[0], String(resolved))
+    }, template)
+  }
 }
