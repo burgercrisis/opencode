@@ -173,11 +173,17 @@ pub fn create_command(app: &tauri::AppHandle, args: &str) -> Command {
             format!("\"{}\" {}", sidecar.display(), args)
         };
 
+        let shell_args = if shell.ends_with("/sh") || shell.ends_with("/dash") {
+            vec!["-c", &cmd]
+        } else {
+            vec!["-il", "-c", &cmd]
+        };
+
         app.shell()
             .command(&shell)
             .env("OPENCODE_EXPERIMENTAL_ICON_DISCOVERY", "true")
             .env("OPENCODE_CLIENT", "desktop")
             .env("XDG_STATE_HOME", &state_dir)
-            .args(["-il", "-c", &cmd])
+            .args(shell_args)
     };
 }

@@ -578,71 +578,31 @@ export namespace Snapshot {
   export type FileDiff = z.infer<typeof FileDiff>
   export async function diffFull(from: string, to: string): Promise<FileDiff[]> {
     const git = gitdir()
-    const gitNormalized = Filesystem.normalizeGitPath(git, true)
-    const worktreeNormalized = Filesystem.normalizeGitPath(Instance.worktree, true)
     const result: FileDiff[] = []
-    
-    // Maximum file size to load into memory (10MB)
-    const MAX_FILE_SIZE = 10 * 1024 * 1024
-    
-    for await (const line of $`git -c core.autocrlf=false --git-dir ${gitNormalized} --work-tree ${worktreeNormalized} diff --no-ext-diff --no-renames --numstat ${from} ${to} -- .`
+
+    const show = async (hash: string, file: string) => {
+      const response =
+        await $`git -c core.autocrlf=false --git-dir ${git} --work-tree ${Instance.worktree} show ${hash}:${file}`
+          .quiet()
+          .nothrow()
+      if (response.exitCode === 0) return response.text()
+      const stderr = response.stderr.toString()
+      if (stderr.toLowerCase().includes("does not exist in")) return ""
+      return `[DEBUG ERROR] git show ${hash}:${file} failed: ${stderr}`
+    }
+
+    for await (const line of $`git -c core.autocrlf=false --git-dir ${git} --work-tree ${Instance.worktree} diff --no-ext-diff --no-renames --numstat ${from} ${to} -- .`
       .quiet()
       .cwd(Instance.directory)
       .nothrow()
       .lines()) {
       if (!line) continue
-      const [additions, deletions, file] = line.split("\t")
+      const [additions, deletions, rawFile] = line.split("\t")
+      const file = unquote(rawFile)
       const isBinaryFile = additions === "-" && deletions === "-"
-      
-      // For large files or binary files, skip loading content
-      let before = ""
-      let after = ""
-      
-      if (!isBinaryFile) {
-        try {
-          // Check file size before loading
-          const beforeSizeResult = await $`git -c core.autocrlf=false --git-dir ${gitNormalized} --work-tree ${worktreeNormalized} ls-filesize ${from} -- "${file}"`
-            .quiet()
-            .nothrow()
-            .text()
-          
-          const beforeSize = parseInt(beforeSizeResult.trim()) || 0
-          
-          if (beforeSize <= MAX_FILE_SIZE) {
-            before = await $`git -c core.autocrlf=false --git-dir ${gitNormalized} --work-tree ${worktreeNormalized} show ${from}:${file}`
-              .quiet()
-              .nothrow()
-              .text()
-          } else {
-            log.info("skipping large file in diffFull", { file, size: beforeSize })
-          }
-          
-          const afterSizeResult = await $`git -c core.autocrlf=false --git-dir ${gitNormalized} --work-tree ${worktreeNormalized} ls-filesize ${to} -- "${file}"`
-            .quiet()
-            .nothrow()
-            .text()
-          
-          const afterSize = parseInt(afterSizeResult.trim()) || 0
-          
-          if (afterSize <= MAX_FILE_SIZE) {
-            after = await $`git -c core.autocrlf=false --git-dir ${gitNormalized} --work-tree ${worktreeNormalized} show ${to}:${file}`
-              .quiet()
-              .nothrow()
-              .text()
-          } else {
-            log.info("skipping large file in diffFull", { file, size: afterSize })
-          }
-        } catch (error) {
-          log.warn("failed to load file content in diffFull", { 
-            file, 
-            error: String(error), 
-            from, 
-            to 
-          })
-          // Continue with empty content
-        }
-      }
-      
+
+      const before = isBinaryFile ? "" : await show(from, file)
+      const after = isBinaryFile ? "" : await show(to, file)
       const added = isBinaryFile ? 0 : parseInt(additions)
       const deleted = isBinaryFile ? 0 : parseInt(deletions)
       result.push({
@@ -654,6 +614,69 @@ export namespace Snapshot {
       })
     }
     return result
+  }
+
+  export function unquote(path: string): string {
+    // If the path is wrapped in quotes, it might contain octal escapes
+    if (path.startsWith('"') && path.endsWith('"')) {
+      const quoted = path.slice(1, -1)
+      // Decode escaped characters
+      const buffer: number[] = []
+      for (let i = 0; i < quoted.length; i++) {
+        if (quoted[i] === "\\") {
+          i++
+          // Check for octal escape (e.g. \344)
+          if (i + 2 < quoted.length && /^[0-7]{3}$/.test(quoted.slice(i, i + 3))) {
+            const octal = quoted.slice(i, i + 3)
+            buffer.push(parseInt(octal, 8))
+            i += 2
+          } else {
+            // Handle standard escapes
+            switch (quoted[i]) {
+              case "b":
+                buffer.push(8)
+                break
+              case "t":
+                buffer.push(9)
+                break
+              case "n":
+                buffer.push(10)
+                break
+              case "v":
+                buffer.push(11)
+                break
+              case "f":
+                buffer.push(12)
+                break
+              case "r":
+                buffer.push(13)
+                break
+              case '"':
+                buffer.push(34)
+                break
+              case "\\":
+                buffer.push(92)
+                break
+              default:
+                // If unknown escape, keep original (or char code of escaped char)
+                buffer.push(quoted.charCodeAt(i))
+            }
+          }
+        } else {
+          const charCode = quoted.charCodeAt(i)
+          if (charCode < 128) {
+            buffer.push(charCode)
+          } else {
+            const charBuffer = Buffer.from(quoted[i])
+            for (const byte of charBuffer) {
+              buffer.push(byte)
+            }
+          }
+        }
+      }
+      return Buffer.from(buffer).toString("utf8")
+    }
+    return path
   }
   
   function gitdir() {
