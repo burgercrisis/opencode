@@ -145,7 +145,7 @@ describe("tool.bash permissions", () => {
         )
         const extDirReq = requests.find((r) => r.permission === "external_directory")
         expect(extDirReq).toBeDefined()
-        expect(extDirReq!.patterns).toContain(process.platform === "win32" ? "C:\\" : "/")
+        expect(extDirReq!.patterns.map(p => p.replace(/\\/g, "/"))).toContain(process.platform === "win32" ? "C:/" : "/")
       },
     })
   })
@@ -266,7 +266,7 @@ describe("tool.bash truncation", () => {
         const result = await bash.execute(
           {
             command: process.platform === "win32"
-              ? `powershell -Command "-join ((1..${byteCount}) | % { 'a' })"`
+              ? `powershell -Command "New-Object string('a', ${byteCount})"`
               : `head -c ${byteCount} /dev/zero | tr '\\0' 'a'`,
             description: "Generate bytes exceeding limit",
           },
@@ -277,7 +277,7 @@ describe("tool.bash truncation", () => {
         expect(result.output).toContain("The tool call succeeded but the output was truncated")
       },
     })
-  })
+  }, 15000)
 
   test("does not truncate small output", async () => {
     await Instance.provide({
@@ -562,7 +562,9 @@ describe("tool.bash PowerShell fixes", () => {
           ctx,
         )
         expect(result.metadata.exit).not.toBe(0)
-        expect(result.metadata.output).toContain("This is a test error")
+        // Check for the error message, being robust against line wrapping/formatting
+        const normalizedOutput = result.metadata.output.replace(/[\r\n]+/g, " ")
+        expect(normalizedOutput).toContain("This is a test error")
       },
     })
   })

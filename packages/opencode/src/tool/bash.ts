@@ -245,11 +245,7 @@ export const BashTool = Tool.define("bash", async () => {
         ),
     }),
     async execute(params, ctx) {
-      let cwd = params.workdir || Instance.directory
-      // Normalize cwd for Windows Git Bash paths
-      if (process.platform === "win32" && cwd.match(/^\/[a-z]\//)) {
-        cwd = cwd.replace(/^\/([a-z])\//, (_, drive) => `${drive.toUpperCase()}:\\`).replace(/\//g, "\\")
-      }
+      const cwd = params.workdir ? Filesystem.normalize(params.workdir) : Instance.directory
       if (params.timeout !== undefined && params.timeout < 0) {
         throw new Error(`Invalid timeout value: ${params.timeout}. Timeout must be a positive number.`)
       }
@@ -257,7 +253,6 @@ export const BashTool = Tool.define("bash", async () => {
       // Extend timeout for PowerShell job commands to minimum 10 minutes (600,000ms)
       const powershellJobCmdlets = /(Start-Job|Receive-Job|Wait-Job|Get-Job|Stop-Job|Remove-Job)/i
       if (powershellJobCmdlets.test(params.command)) {
-        log.info(`Detected PowerShell job command: ${params.command}. Extending timeout to 10 minutes.`)
         timeout = Math.max(timeout, 10 * 60 * 1000)
       }
       const tree = await parser().then((p) => p.parse(params.command))
@@ -265,7 +260,7 @@ export const BashTool = Tool.define("bash", async () => {
         throw new Error("Failed to parse command")
       }
       const directories = new Set<string>()
-      if (!Instance.containsPath(cwd)) directories.add(cwd)
+      if (!Instance.containsPath(cwd)) directories.add(Filesystem.normalize(cwd))
       const patterns = new Set<string>()
       const always = new Set<string>()
 
@@ -291,14 +286,16 @@ export const BashTool = Tool.define("bash", async () => {
         if (["cd", "rm", "cp", "mv", "mkdir", "touch", "chmod", "chown", "cat"].includes(command[0])) {
           for (const arg of command.slice(1)) {
             if (arg.startsWith("-") || (command[0] === "chmod" && arg.startsWith("+"))) continue
-            const resolved = path.resolve(cwd, arg)
-            log.info("resolved path", { arg, resolved })
-            if (resolved) {
-              // Git Bash on Windows returns Unix-style paths like /c/Users/...
-              const normalized =
-                process.platform === "win32" && resolved.match(/^\/[a-z]\//)
-                  ? resolved.replace(/^\/([a-z])\//, (_, drive) => `${drive.toUpperCase()}:\\`).replace(/\//g, "\\")
-                  : resolved
+            try {
+              const resolved = Filesystem.getCanonicalPath(path.resolve(cwd, arg))
+              if (resolved) {
+                const normalized = Filesystem.normalize(resolved)
+                if (!Instance.containsPath(normalized)) directories.add(normalized)
+              }
+            } catch (err) {
+              // Fallback to simple resolve if canonical path fails
+              const resolved = path.resolve(cwd, arg)
+              const normalized = Filesystem.normalize(resolved)
               if (!Instance.containsPath(normalized)) directories.add(normalized)
             }
           }
@@ -315,7 +312,7 @@ export const BashTool = Tool.define("bash", async () => {
         await ctx.ask({
           permission: "external_directory",
           patterns: Array.from(directories),
-          always: Array.from(directories).map((x) => path.dirname(x) + "*"),
+          always: Array.from(directories).map((x) => Filesystem.join(Filesystem.dirname(x), "/*")),
           metadata: {},
         })
       }
@@ -331,6 +328,7 @@ export const BashTool = Tool.define("bash", async () => {
 
       // Get the appropriate spawn configuration for this command
       let processedCommand = params.command
+      const env = { ...process.env }
 
       // Implement dynamic environment variable expansion for Windows commands
       if (process.platform === "win32") {
@@ -358,7 +356,7 @@ export const BashTool = Tool.define("bash", async () => {
           if (setMatch) {
             const [, varName, varValue] = setMatch
             // Store the variable in the environment for the CMD process
-            process.env[varName] = varValue
+            env[varName] = varValue
           }
         }
         // Note: CMD-style variables (%VAR%) are intentionally NOT expanded here
@@ -368,27 +366,9 @@ export const BashTool = Tool.define("bash", async () => {
       const config = await Config.get()
       const spawnConfig = Shell.getSpawnConfig(processedCommand, config.shell)
 
-      // Add more detailed logging for CMD commands (after line 298)
-      if (Shell.isCmdCommand(processedCommand)) {
-        log.info("bash tool CMD command", {
-          original: params.command.substring(0, 100),
-          processed: processedCommand.substring(0, 100),
-          executable: spawnConfig.executable,
-          args: spawnConfig.args.map(a => a.substring(0, 50)),
-          useShellFlag: spawnConfig.useShellFlag,
-        })
-      }
-
-      log.info("bash tool spawn config", {
-        command: processedCommand.substring(0, 100),
-        executable: spawnConfig.executable.substring(0, 50),
-        useShellFlag: spawnConfig.useShellFlag,
-        platform: process.platform
-      })
-
       if (Shell.isCmdBuiltin(processedCommand)) {
         log.info("Detected bare CMD builtin, automatically wrapping", {
-          command: processedCommand.substring(0, 100)
+          command: processedCommand.substring(0, 100),
         })
       }
 
@@ -396,23 +376,20 @@ export const BashTool = Tool.define("bash", async () => {
         ? spawn(spawnConfig.executable, {
             shell: spawnConfig.shell,
             cwd,
-            env: {
-              ...process.env,
-            },
+            env,
             stdio: ["ignore", "pipe", "pipe"],
             detached: process.platform !== "win32",
           })
         : spawn(spawnConfig.executable, spawnConfig.args, {
             cwd,
-            env: {
-              ...process.env,
-            },
+            env,
             stdio: ["ignore", "pipe", "pipe"],
             detached: process.platform !== "win32", // Use detached for Unix to support process group killing
-            ...(process.platform === "win32" && Shell.isCmdCommand(processedCommand) && {
-              windowsHide: true,
-              windowsVerbatimArguments: true,
-            }),
+            ...(process.platform === "win32" &&
+              Shell.isCmdCommand(processedCommand) && {
+                windowsHide: true,
+                windowsVerbatimArguments: true,
+              }),
           })
 
       let output = ""
@@ -430,7 +407,10 @@ export const BashTool = Tool.define("bash", async () => {
         ctx.metadata({
           metadata: {
             // truncate the metadata to avoid GIANT blobs of data (has nothing to do w/ what agent can access)
-            output: output.length > MAX_METADATA_LENGTH ? output.slice(0, MAX_METADATA_LENGTH) + "\n\n..." : output,
+            output:
+              output.length > MAX_METADATA_LENGTH
+                ? output.slice(0, MAX_METADATA_LENGTH) + "\n\n..."
+                : output,
             description: params.description,
           },
         })
@@ -442,7 +422,6 @@ export const BashTool = Tool.define("bash", async () => {
       let timedOut = false
       let aborted = false
       let exited = false
-      let exitCode: number | null = null
 
       const kill = () => Shell.killTree(proc, { exited: () => exited })
 
@@ -463,69 +442,60 @@ export const BashTool = Tool.define("bash", async () => {
         void kill()
       }, timeout + 100)
 
-      let resolvePromise: () => void
-      let rejectPromise: (error: Error) => void
-      const promise = new Promise<void>((resolve, reject) => {
-        resolvePromise = resolve
-        rejectPromise = reject
+      await new Promise<void>((resolve, reject) => {
+        const cleanup = () => {
+          clearTimeout(timeoutTimer)
+          ctx.abort.removeEventListener("abort", abortHandler)
+        }
+
+        proc.once("exit", () => {
+          exited = true
+          cleanup()
+          resolve()
+        })
+
+        proc.once("error", (error) => {
+          exited = true
+          cleanup()
+          reject(error)
+        })
       })
 
-      proc.once("exit", (code) => {
-        console.log(`[DEBUG] Process exited with code: ${code}`)
-        exited = true
-        exitCode = code
-        clearTimeout(timeoutTimer)
-        ctx.abort.removeEventListener("abort", abortHandler)
-        resolvePromise()
-      })
+      let finalOutput = output
+      let hasErrors = false
 
-      proc.once("error", (error) => {
-        exited = true
-        clearTimeout(timeoutTimer)
-        ctx.abort.removeEventListener("abort", abortHandler)
-        rejectPromise(error)
-      })
-
-      await promise
-
-          // Post-process PowerShell output for better error handling
-          if (Shell.isPowerShellCommand(processedCommand)) {
-            console.log("[DEBUG] PowerShell command detected, processing output")
-            const powerShellResult = processPowerShellOutput(output, processedCommand)
-            console.log("[DEBUG] Processed output length:", powerShellResult.output.length)
-            if (powerShellResult.output.includes("Note: The -First parameter is not supported")) {
-              console.log("[DEBUG] Found helpful note in processed output!")
-            } else {
-              console.log("[DEBUG] Helpful note NOT found in processed output.")
-              console.log("[DEBUG] Raw output snippet:", output.substring(0, 200))
-            }
-            output = powerShellResult.output
-            // Set exit code based on PowerShell error analysis
-            // Skip exit code override for commands with -Debug or -Verbose flags as they may produce debug output
-            // But don't skip if the command contains error-producing cmdlets like Write-Error, Throw, etc.
-            const hasDebugVerbose = /\s-Debug\s|\s-Verbose\s/i.test(processedCommand)
-            const hasErrorCmdlets = /\b(Write-Error|Throw|Stop-Process|Exit)\b/i.test(processedCommand)
-            if (exitCode === 0 && powerShellResult.hasErrors && (!hasDebugVerbose || hasErrorCmdlets)) {
-              exitCode = 1
-            }
-          }
-    
-          // Post-process CMD output to fix quote artifacts from variable expansion
-          if (Shell.isCmdCommand(processedCommand)) {
-            output = processCmdOutput(output, processedCommand)
-          }
-
-      const resultMetadata: string[] = []
-
-      // Set appropriate exit codes for special cases
-      if (timedOut && exitCode === null) {
-        exitCode = 124 // Standard timeout exit code
-        resultMetadata.push(`bash tool terminated command after exceeding timeout ${timeout} ms`)
+      if (Shell.isPowerShellCommand(params.command)) {
+        const processed = processPowerShellOutput(finalOutput, params.command)
+        finalOutput = processed.output
+        hasErrors = processed.hasErrors
       }
 
-      if (aborted && exitCode === null) {
-        exitCode = 130 // Standard SIGINT exit code for user abort
-        resultMetadata.push("User aborted the command")
+      if (Shell.isCmdCommand(params.command)) {
+        finalOutput = processCmdOutput(finalOutput, params.command)
+      }
+
+      let exitCode = Shell.normalizeExitCode(proc.exitCode, hasErrors)
+
+      // Special handling for PowerShell exit codes
+      if (Shell.isPowerShellCommand(processedCommand)) {
+        // Don't treat debug output as errors
+        // We need to be careful not to flag exit code 0 as failure just because "Write-Debug" is in the output
+        // This is especially important for commands with -Debug or -Verbose flags as they may produce debug output
+        // But don't skip if the command contains error-producing cmdlets like Write-Error, Throw, etc.
+        const hasDebugVerbose = /-(?:Debug|Verbose)(?:\s|$)/i.test(processedCommand)
+        const hasErrorCmdlets = /\b(Write-Error|Throw|Stop-Process|Exit)\b/i.test(processedCommand)
+        
+        // If we have errors but also debug flags, we might want to ignore errors unless they are explicit error cmdlets
+        // Note: we check proc.exitCode === 0 because exitCode might have been normalized to 1 by Shell.normalizeExitCode
+        if (proc.exitCode === 0 && hasErrors && hasDebugVerbose && !hasErrorCmdlets) {
+          // Reset exit code to 0 if we think it's just debug noise
+          exitCode = 0
+        }
+        
+        // Ensure explicit error cmdlets always fail
+        if (exitCode === 0 && hasErrorCmdlets && hasErrors) {
+          exitCode = 1
+        }
       }
 
       // CMD-specific exit code normalization
@@ -560,19 +530,34 @@ export const BashTool = Tool.define("bash", async () => {
         }
       }
 
+      const resultMetadata: string[] = []
+
+      if (timedOut) {
+        exitCode = 124 // Standard timeout exit code
+        resultMetadata.push(`bash tool terminated command after exceeding timeout ${timeout} ms`)
+      }
+
+      if (aborted) {
+        exitCode = 130 // Standard SIGINT exit code for user abort
+        resultMetadata.push("User aborted the command")
+      }
+
       if (resultMetadata.length > 0) {
-        output += "\n\n<bash_metadata>\n" + resultMetadata.join("\n") + "\n</bash_metadata>"
+        finalOutput += "\n\n<bash_metadata>\n" + resultMetadata.join("\n") + "\n</bash_metadata>"
       }
 
       // Normalize line endings to \n for consistency across platforms
-      output = output.replace(/\r\n/g, "\n")
+      finalOutput = finalOutput.replace(/\r\n/g, "\n")
 
-      const truncated = await Truncate.output(output, {}, ctx.agent)
+      const truncated = await Truncate.output(finalOutput, {}, ctx.agent)
 
       return {
         title: params.description,
         metadata: {
-          output: truncated.content.length > MAX_METADATA_LENGTH ? truncated.content.slice(0, MAX_METADATA_LENGTH) + "\n\n..." : truncated.content,
+          output:
+            truncated.content.length > MAX_METADATA_LENGTH
+              ? truncated.content.slice(0, MAX_METADATA_LENGTH) + "\n\n..."
+              : truncated.content,
           exit: exitCode,
           description: params.description,
           truncated: truncated.truncated,

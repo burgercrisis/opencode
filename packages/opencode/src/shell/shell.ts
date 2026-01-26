@@ -173,10 +173,6 @@ export namespace Shell {
     const trimmed = command.trim()
     const result = /^(?:powershell|pwsh)(\.exe)?\s/i.test(trimmed)
 
-    if (Flag.OPENCODE_DEBUG_SHELL) {
-      console.log(`[PowerShell Detection] Command: "${command}", Is PowerShell: ${result}`)
-    }
-
     return result
   }
 
@@ -188,10 +184,6 @@ export namespace Shell {
   function detectDebugAndVerboseFlags(argsString: string): { hasDebug: boolean; hasVerbose: boolean } {
     const hasDebug = /-(?:Debug|d)(?:\s+|$)/i.test(argsString)
     const hasVerbose = /-(?:Verbose|v)(?:\s+|$)/i.test(argsString)
-
-    if (Flag.OPENCODE_DEBUG_SHELL && (hasDebug || hasVerbose)) {
-      console.log(`[Shell Flags] Detected flags - Debug: ${hasDebug}, Verbose: ${hasVerbose}`)
-    }
 
     return { hasDebug, hasVerbose }
   }
@@ -238,20 +230,12 @@ export namespace Shell {
       // Check if it's followed by /c or /k flags
       const cmdPattern = /^cmd(\.exe)?\s+(\/[ck])\s+/i
       if (cmdPattern.test(trimmed)) {
-        if (Flag.OPENCODE_DEBUG_SHELL) {
-          console.log(`[CMD Builtin Check] Command: "${command}" is explicit CMD command, not bare builtin`)
-        }
         return false
       }
     }
     
     const isBuiltin = firstWord ? CMD_BUILTINS.has(firstWord.toLowerCase()) : false
     const hasPipes = command.includes('|')
-    
-    // Only log in debug mode to reduce noise
-    if (Flag.OPENCODE_DEBUG_SHELL) {
-      console.log(`[CMD Builtin Check] Command: "${command}", First word: "${firstWord}", Is builtin: ${isBuiltin}, Has pipes: ${hasPipes}`)
-    }
     
     return isBuiltin || hasPipes
   }
@@ -312,16 +296,8 @@ export namespace Shell {
         const { hasDebug, hasVerbose } = detectDebugAndVerboseFlags(argsString)
 
         // Parse PowerShell arguments - split on -Command, -File, etc. but keep quoted strings intact
-        // For -Command, we want: ["-Command", "the command string"]
-        // For -NoProfile -Command, we want: ["-NoProfile", "-Command", "the command string"]
         const args: string[] = []
         let current = argsString.trim()
-
-        // Debug logging
-        if (Flag.OPENCODE_DEBUG_SHELL) {
-          console.log(`[PowerShell] Processing command: "${command}"`)
-          console.log(`[PowerShell] Args string: "${current}"`)
-        }
 
         while (current.length > 0) {
           // Check for -Command or -c flag - everything after is a single argument
@@ -352,12 +328,6 @@ export namespace Shell {
 
               args.push(commandArg)
             }
-            
-            // Debug logging for PowerShell command parsing
-            if (Flag.OPENCODE_DEBUG_SHELL) {
-              console.log(`[PowerShell] Parsed command: ${JSON.stringify(args)}`)
-            }
-            
             break
           }
 
@@ -443,14 +413,6 @@ export namespace Shell {
 
         // Verify proper quoting for echo commands
         if (/^\s*echo\s+/i.test(commandToExecute)) {
-          // Echo commands need special handling to preserve arguments
-          // Ensure arguments are not being stripped by bash
-          if (Flag.OPENCODE_DEBUG_SHELL) {
-            console.log("CMD echo command detected", {
-              command: commandToExecute.substring(0, 100),
-              hasQuotes: commandToExecute.includes('"'),
-            })
-          }
           // Push the full command as a single argument
           cmdArgs.push(commandToExecute)
           return {
@@ -460,9 +422,6 @@ export namespace Shell {
           }
         }
         if (commandToExecute.includes('|') || commandToExecute.includes('"')) {
-          if (Flag.OPENCODE_DEBUG_SHELL) {
-            console.log('CMD command with pipes or quotes:', commandToExecute);
-          }
           cmdArgs.push(commandToExecute);
           return {
             executable: process.env.COMSPEC || "cmd.exe",
@@ -530,5 +489,14 @@ export namespace Shell {
       args: args,
       useShellFlag: false,
     }
+  }
+
+  /**
+   * Normalizes the exit code based on the raw exit code and error status
+   */
+  export function normalizeExitCode(exitCode: number | null | undefined, hasErrors: boolean): number {
+    if (exitCode === 0 && hasErrors) return 1
+    if (exitCode !== null && exitCode !== undefined) return exitCode
+    return hasErrors ? 1 : 0
   }
 }

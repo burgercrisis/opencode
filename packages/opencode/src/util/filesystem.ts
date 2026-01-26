@@ -9,7 +9,10 @@ import path, {
 } from "path"
 import { Flag } from "@/flag/flag"
 
+import { normalize as _normalize } from "@opencode-ai/util/path"
+
 export namespace Filesystem {
+  export const normalize = _normalize
   export const exists = (p: string) =>
     Bun.file(p)
       .stat()
@@ -42,14 +45,12 @@ export namespace Filesystem {
    * and escaping issues in MSYS based shells (e.g. git bash).
    */
   export function nativePath(p: string): string {
-    if (process.platform !== "win32") return p
+    const normalized = normalize(p)
+    if (process.platform !== "win32") return normalized
     if (Flag.OPENCODE_EXPERIMENTAL_MSYS_PATHS) {
-      // Convert MSYS format /c/foo to C:/foo and normalize all separators to forward slashes
-      return p.replace(/^\/([a-zA-Z])\//, (_, d) => `${d.toUpperCase()}:/`).replace(/\\+/g, "/")
+      return normalized
     }
-    // Convert to backslashes for native Windows
-    // First handle MSYS format /c/foo -> C:\foo, then convert all forward slashes
-    return p.replace(/^\/([a-zA-Z])\//, (_, d) => `${d.toUpperCase()}:\\`).replace(/\//g, "\\")
+    return normalized.replace(/\//g, "\\")
   }
 
   export function relativePath(from: string, to: string) {
@@ -146,6 +147,9 @@ export namespace Filesystem {
     if (filename.includes('\0')) return false
     if (/[\x00-\x1f\x7f]/.test(filename)) return false // Control characters
     
+    // Check for path separators (filename should not be a path)
+    if (/[\\/]/.test(filename)) return false
+
     // Check length limits (255 is common limit)
     if (filename.length > 255) return false
     
