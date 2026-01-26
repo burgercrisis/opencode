@@ -13,19 +13,27 @@ import { Log } from "@/util/log"
 import { ShareNext } from "@/share/share-next"
 import { Snapshot } from "../snapshot"
 import { Truncate } from "../tool/truncation"
+import { Flag } from "../flag/flag"
+import { LLMConcurrencyMachine } from "../session/llm-concurrency-machine"
 
 export async function InstanceBootstrap() {
+  if (Flag.OPENCODE_EXPERIMENTAL_NO_BOOTSTRAP) return
   Log.Default.info("bootstrapping", { directory: Instance.directory })
-  await Plugin.init()
-  Share.init()
-  ShareNext.init()
-  Format.init()
-  await LSP.init()
-  FileWatcher.init()
-  File.init()
-  Vcs.init()
-  Snapshot.init()
-  Truncate.init()
+  await Promise.all([
+    Plugin.init(),
+    LSP.init(),
+    (async () => {
+      Share.init()
+      ShareNext.init()
+      Format.init()
+      FileWatcher.init()
+      File.init()
+      Vcs.init()
+      Snapshot.init()
+      Truncate.init()
+      await LLMConcurrencyMachine.init()
+    })(),
+  ])
 
   Bus.subscribe(Command.Event.Executed, async (payload) => {
     if (payload.properties.name === Command.Default.INIT) {

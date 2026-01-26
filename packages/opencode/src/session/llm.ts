@@ -24,6 +24,7 @@ import { SystemPrompt } from "./system"
 import { Flag } from "@/flag/flag"
 import { PermissionNext } from "@/permission/next"
 import { Auth } from "@/auth"
+import { LLMConcurrencyMachine } from "./llm-concurrency-machine"
 
 export namespace LLM {
   const log = Log.create({ service: "llm" })
@@ -64,6 +65,7 @@ export namespace LLM {
       Provider.getProvider(input.model.providerID),
       Auth.get(input.model.providerID),
     ])
+    const limits = LLMConcurrencyMachine.limits(cfg)
     const isCodex = provider.id === "openai" && auth?.type === "oauth"
 
     const system = SystemPrompt.header(input.model.providerID)
@@ -177,13 +179,8 @@ export namespace LLM {
       })
     }
 
-    return streamText({
-      onError(error) {
-        l.error("stream error", {
-          error,
-        })
-      },
-      async experimental_repairToolCall(failed) {
+    const args = {
+      async experimental_repairToolCall(failed: any) {
         const lower = failed.toolCall.toolName.toLowerCase()
         if (lower !== failed.toolCall.toolName && tools[lower]) {
           l.info("repairing tool call", {
@@ -261,7 +258,85 @@ export namespace LLM {
         ],
       }),
       experimental_telemetry: { isEnabled: cfg.experimental?.openTelemetry },
+    }
+
+    if (!limits) {
+      return streamText({
+        onError(error) {
+          l.error("stream error", {
+            error,
+          })
+        },
+        ...args,
+      })
+    }
+
+    const key = LLMConcurrencyMachine.bucketKey({
+      providerID: input.model.providerID,
+      modelName: input.model.api.id,
     })
+
+    let snapshot = await LLMConcurrencyMachine.snapshot(limits)
+    const request = LLMConcurrencyMachine.request(limits, [key])
+    let blocks = LLMConcurrencyMachine.blocked(limits, snapshot, request)
+
+    while (blocks.length > 0) {
+      l.info("concurrency limit reached, waiting...", { blocks })
+      await new Promise((resolve) => setTimeout(resolve, 5000))
+      if (input.abort.aborted) throw new Error("aborted while waiting for concurrency lease")
+      snapshot = await LLMConcurrencyMachine.snapshot(limits)
+      blocks = LLMConcurrencyMachine.blocked(limits, snapshot, request)
+    }
+
+    const lease = await LLMConcurrencyMachine.enter({
+      limits,
+      providerID: input.model.providerID,
+      modelName: input.model.api.id,
+      sessionID: input.sessionID,
+    })
+
+    const releaseState = { promise: undefined as Promise<void> | undefined }
+    const release = () => {
+      if (releaseState.promise) return releaseState.promise
+      releaseState.promise = lease?.release().catch(() => {}) ?? Promise.resolve()
+      return releaseState.promise
+    }
+
+    const stream = await Promise.resolve()
+      .then(() =>
+        streamText({
+          onError(error) {
+            release()
+            l.error("stream error", {
+              error,
+            })
+          },
+          onFinish() {
+            release()
+          },
+          ...args,
+        }),
+      )
+      .catch(async (error) => {
+        await release()
+        throw error
+      })
+
+    return {
+      ...stream,
+      fullStream: (async function* () {
+        try {
+          for await (const item of stream.fullStream) {
+            yield item
+          }
+        } finally {
+          await release()
+        }
+      })(),
+      text: stream.text.finally(() => {
+        return release()
+      }),
+    }
   }
 
   async function resolveTools(input: Pick<StreamInput, "tools" | "agent" | "user">) {

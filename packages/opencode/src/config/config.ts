@@ -980,6 +980,22 @@ export namespace Config {
         )
         .optional()
         .describe("MCP (Model Context Protocol) server configurations"),
+      llm: z
+        .object({
+          concurrency: z
+            .object({
+              global: z.number().int().positive().optional().describe("Maximum number of concurrent LLM requests globally"),
+              model: z.number().int().positive().optional().describe("Maximum number of concurrent LLM requests per model"),
+              staleMs: z
+                .number()
+                .int()
+                .positive()
+                .optional()
+                .describe("Timeout in ms after which a lease is considered stale"),
+            })
+            .optional(),
+        })
+        .optional(),
       formatter: z
         .union([
           z.literal(false),
