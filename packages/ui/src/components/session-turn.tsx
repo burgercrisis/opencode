@@ -11,6 +11,7 @@ import { type FileDiff } from "@opencode-ai/sdk/v2"
 import { useData } from "../context"
 import { useDiffComponent } from "../context/diff"
 import { type UiI18nKey, type UiI18nParams, useI18n } from "../context/i18n"
+import { findLast } from "@opencode-ai/util/array"
 import { getDirectory, getFilename } from "@opencode-ai/util/path"
 
 import { Binary } from "@opencode-ai/util/binary"
@@ -160,10 +161,9 @@ export function SessionTurn(
     return messages.filter(m => m) as MessageType[]
   })
 
-const messageIndex = createMemo(() => {
+  const messageIndex = createMemo(() => {
     const messages = allMessages()
     if (!messages || messages.length === 0) return -1
-    
     const result = Binary.search(messages, props.messageID, (m) => m.id)
     if (!result || !result.found) return -1
 
@@ -177,7 +177,8 @@ const messageIndex = createMemo(() => {
     const index = messageIndex()
     if (index < 0) return undefined
 
-    const msg = allMessages()[index]
+    const messages = allMessages() ?? emptyMessages
+    const msg = messages[index]
     if (!msg || msg.role !== "user") return undefined
 
     return msg
@@ -186,7 +187,7 @@ const messageIndex = createMemo(() => {
   const lastUserMessageID = createMemo(() => {
     if (props.lastUserMessageID) return props.lastUserMessageID
 
-    const messages = allMessages()
+    const messages = allMessages() ?? emptyMessages
     for (let i = messages.length - 1; i >= 0; i--) {
       const msg = messages[i]
       if (msg?.role === "user") return msg.id
@@ -220,7 +221,7 @@ const messageIndex = createMemo(() => {
       const msg = message()
       if (!msg) return emptyAssistant
 
-      const messages = allMessages()
+      const messages = allMessages() ?? emptyMessages
       const index = messageIndex()
       if (index < 0) return emptyAssistant
 
@@ -277,7 +278,7 @@ const permissionParts = createMemo(() => {
     const next = nextPermission()
     if (!next || !next.tool) return emptyPermissionParts
 
-    const message = assistantMessages().findLast((m) => m.id === next.tool?.messageID)
+    const message = findLast(assistantMessages(), (m) => m.id === next.tool?.messageID)
     if (!message) return emptyPermissionParts
 
     const parts = data.store.part[message.id] ?? emptyParts
@@ -562,9 +563,28 @@ const permissionParts = createMemo(() => {
                             onClick={props.onStepsExpandedToggle ?? (() => {})}
                             aria-expanded={props.stepsExpanded}
                           >
-                            <Show when={working()}>
-                              <Spinner />
-                            </Show>
+                            <Switch>
+                              <Match when={working()}>
+                                <Spinner />
+                              </Match>
+                              <Match when={true}>
+                                <svg
+                                  width="10"
+                                  height="10"
+                                  viewBox="0 0 10 10"
+                                  fill="none"
+                                  xmlns="http://www.w3.org/2000/svg"
+                                  class="text-icon-base"
+                                >
+                                  <path
+                                    d="M8.125 1.875H1.875L5 8.125L8.125 1.875Z"
+                                    fill="currentColor"
+                                    stroke="currentColor"
+                                    stroke-linejoin="round"
+                                  />
+                                </svg>
+                              </Match>
+                            </Switch>
                             <Switch>
                               <Match when={retry()}>
                                 <span data-slot="session-turn-retry-message">
@@ -583,16 +603,19 @@ const permissionParts = createMemo(() => {
                                 <span data-slot="session-turn-retry-attempt">(#{retry()?.attempt})</span>
                               </Match>
                               <Match when={working()}>
-                                {store.status ?? i18n.t("ui.sessionTurn.status.consideringNextSteps")}
+                                <span data-slot="session-turn-status-text">
+                                  {store.status ?? i18n.t("ui.sessionTurn.status.consideringNextSteps")}
+                                </span>
                               </Match>
-                              <Match when={props.stepsExpanded}>{i18n.t("ui.sessionTurn.steps.hide")}</Match>
-                              <Match when={!props.stepsExpanded}>{i18n.t("ui.sessionTurn.steps.show")}</Match>
+                              <Match when={props.stepsExpanded}>
+                                <span data-slot="session-turn-status-text">{i18n.t("ui.sessionTurn.steps.hide")}</span>
+                              </Match>
+                              <Match when={!props.stepsExpanded}>
+                                <span data-slot="session-turn-status-text">{i18n.t("ui.sessionTurn.steps.show")}</span>
+                              </Match>
                             </Switch>
                             <span aria-hidden="true">·</span>
                             <span aria-live="off">{store.duration}</span>
-                            <Show when={assistantMessages().length > 0}>
-                              <Icon name="chevron-grabber-vertical" size="small" />
-                            </Show>
                           </Button>
                         </div>
                       </Show>

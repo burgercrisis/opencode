@@ -48,6 +48,7 @@ export namespace Flag {
   export const OPENCODE_EXPERIMENTAL_PLAN_MODE = OPENCODE_EXPERIMENTAL || truthy("OPENCODE_EXPERIMENTAL_PLAN_MODE")
   export const OPENCODE_EXPERIMENTAL_MSYS_PATHS = truthy("OPENCODE_EXPERIMENTAL_MSYS_PATHS")
   export const OPENCODE_EXPERIMENTAL_NO_BOOTSTRAP = truthy("OPENCODE_EXPERIMENTAL_NO_BOOTSTRAP")
+  export const OPENCODE_MODELS_URL = process.env["OPENCODE_MODELS_URL"]
 
   function number(key: string) {
     const value = process.env[key]

@@ -359,7 +359,7 @@ export namespace Snapshot {
     // Instead, we need to check what files are different from the snapshot state
     // Use git ls-tree to check if the file existed in the snapshot
     const result =
-      await $`git -c core.autocrlf=false --git-dir ${gitNormalized} --work-tree ${worktreeNormalized} diff --no-ext-diff --name-only ${hash} -- .`
+      await $`git -c core.autocrlf=false -c core.quotepath=false --git-dir ${gitNormalized} --work-tree ${worktreeNormalized} diff --no-ext-diff --name-only ${hash} -- .`
         .quiet()
         .cwd(Instance.directory)
         .nothrow()
