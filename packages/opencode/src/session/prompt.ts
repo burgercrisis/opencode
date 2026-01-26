@@ -638,15 +638,33 @@ export namespace SessionPrompt {
   })
 
   async function lastModel(sessionID: string) {
-    for await (const item of MessageV2.stream(sessionID)) {
-      if (item.info.role === "user" && item.info.model) return item.info.model
+    try {
+      const msgs = await MessageV2.filterCompacted(MessageV2.stream(sessionID))
+      // Iterate backwards to find the most recent user message with a model
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        const msg = msgs[i]
+        if (msg.info.role === "user" && msg.info.model) {
+          return msg.info.model
+        }
+      }
+    } catch (error) {
+      log.error("Error in lastModel, falling back to default model", { sessionID, error })
     }
     return Provider.defaultModel()
   }
 
   async function lastAgent(sessionID: string) {
-    for await (const item of MessageV2.stream(sessionID)) {
-      if (item.info.role === "user" && item.info.agent) return item.info.agent
+    try {
+      const msgs = await MessageV2.filterCompacted(MessageV2.stream(sessionID))
+      // Iterate backwards to find the most recent user message with an agent
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        const msg = msgs[i]
+        if (msg.info.role === "user" && msg.info.agent) {
+          return msg.info.agent
+        }
+      }
+    } catch (error) {
+      log.error("Error in lastAgent, falling back to default agent", { sessionID, error })
     }
     return Agent.defaultAgent()
   }
