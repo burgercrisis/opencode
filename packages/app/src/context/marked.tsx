@@ -47,9 +47,7 @@ export function MarkedProvider(props: ParentProps<{ nativeParser?: NativeMarkdow
       ...value,
       async parse(markdown: string): Promise<string> {
         const html = await nativeParser(markdown)
-        // Note: We're not doing math rendering here because katex is not a dependency of the app
-        // but we can do highlighting if needed. For now, we'll just return the html
-        // as the native parser usually handles highlighting itself.
+        // Highlighting and math rendering are handled by the native parser or post-processing
         return html
       },
     }
