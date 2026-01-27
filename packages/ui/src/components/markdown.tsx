@@ -277,6 +277,7 @@ export function Markdown(
   return (
     <div
       data-component="markdown"
+      data-loading={html.loading}
       classList={{
         ...(local.classList ?? {}),
         [local.class ?? ""]: !!local.class,
