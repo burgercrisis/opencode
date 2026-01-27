@@ -1,4 +1,4 @@
-import { createContext, useContext, type ParentProps, onCleanup } from "solid-js"
+import { createContext, useContext, type ParentProps, onCleanup, createEffect } from "solid-js"
 import { createEventBus } from "@solid-primitives/event-bus"
 import type { Event as SDKEvent } from "@opencode-ai/sdk/v2/client"
 import { useSDK, useGlobalSDK } from "@/context"
@@ -6,13 +6,24 @@ import { useSDK, useGlobalSDK } from "@/context"
 export type Event = SDKEvent // can extend with custom events later
 
 function init() {
-  const sdk = useSDK()
-  const globalSdk = useGlobalSDK()
   const bus = createEventBus<Event>()
-  const unsub = globalSdk.event.on(sdk.directory, (event) => {
-    bus.emit(event as Event)
+
+  createEffect(() => {
+    const sdk = useSDK()
+    const globalSdk = useGlobalSDK()
+    if (!sdk || !globalSdk) return
+
+    const unsub = globalSdk.event.on(sdk.directory, (event) => {
+      bus.emit(event as Event)
+    })
+    onCleanup(() => {
+      if (process.env.NODE_ENV === "production") {
+        console.debug(`[EventProvider] cleaning up listener for ${sdk.directory}`)
+      }
+      unsub()
+    })
   })
-  onCleanup(unsub)
+
   return bus
 }
 
