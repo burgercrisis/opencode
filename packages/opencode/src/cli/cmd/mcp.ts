@@ -1,7 +1,4 @@
 import { cmd } from "./cmd"
-import { Client } from "@modelcontextprotocol/sdk/client/index.js"
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
-import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js"
 import * as prompts from "@clack/prompts"
 import { UI } from "../ui"
 import { MCP } from "../../mcp"
@@ -698,11 +695,15 @@ export const McpDebugCommand = cmd({
             prompts.log.info("Testing OAuth flow (without completing authorization)...")
 
             // Try creating transport with auth provider to trigger discovery
+            const { StreamableHTTPClientTransport } = await import(
+              "@modelcontextprotocol/sdk/client/streamableHttp.js"
+            )
             const transport = new StreamableHTTPClientTransport(new URL(serverConfig.url), {
               authProvider,
             })
 
             try {
+              const { Client } = await import("@modelcontextprotocol/sdk/client/index.js")
               const client = new Client({
                 name: "opencode-debug",
                 version: Installation.VERSION,
@@ -711,6 +712,7 @@ export const McpDebugCommand = cmd({
               prompts.log.success("Connection successful (already authenticated)")
               await client.close()
             } catch (error) {
+              const { UnauthorizedError } = await import("@modelcontextprotocol/sdk/client/auth.js")
               if (error instanceof UnauthorizedError) {
                 prompts.log.info(`OAuth flow triggered: ${error.message}`)
 
