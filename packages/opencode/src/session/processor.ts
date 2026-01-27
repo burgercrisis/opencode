@@ -68,11 +68,7 @@ export namespace SessionProcessor {
             }
 
             for await (const value of stream.fullStream) {
-              // Check abort but don't throw - allow graceful completion of current operation
-              if (input.abort.aborted) {
-                log.info("abort detected during stream processing")
-                // Still try to complete current operation
-              }
+              input.abort.throwIfAborted()
               switch (value.type) {
                 case "start":
                   SessionStatus.set(input.sessionID, { type: "busy" })
