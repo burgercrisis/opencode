@@ -69,38 +69,11 @@ export namespace SessionPrompt {
       return data
     },
     async (current) => {
-      const cleanupErrors: Error[] = []
-      
-      for (const [sessionID, item] of Object.entries(current)) {
-        try {
-          // Abort any ongoing operations
-          if (item.abort && !item.abort.signal.aborted) {
-            item.abort.abort()
-          }
-        } catch (abortError) {
-          cleanupErrors.push(new Error(`Failed to abort session ${sessionID}: ${abortError instanceof Error ? abortError.message : String(abortError)}`))
+      for (const item of Object.values(current)) {
+        item.abort.abort()
+        for (const item of item.callbacks) {
+          item.reject()
         }
-        
-        // Clean up callbacks with proper error handling
-        if (item.callbacks && Array.isArray(item.callbacks)) {
-          for (const [callbackIndex, callback] of item.callbacks.entries()) {
-            try {
-              if (callback && typeof callback.reject === 'function') {
-                callback.reject()
-              }
-            } catch (callbackError) {
-              cleanupErrors.push(new Error(`Failed to reject callback ${callbackIndex} for session ${sessionID}: ${callbackError instanceof Error ? callbackError.message : String(callbackError)}`))
-            }
-          }
-        }
-      }
-      
-      // Log any cleanup errors
-      if (cleanupErrors.length > 0) {
-        log.error("Errors during state cleanup", { 
-          errorCount: cleanupErrors.length,
-          errors: cleanupErrors.map(e => e.message)
-        })
       }
     },
   )
@@ -309,21 +282,14 @@ export namespace SessionPrompt {
       let tasks: (MessageV2.CompactionPart | MessageV2.SubtaskPart)[] = []
       for (let i = msgs.length - 1; i >= 0; i--) {
         const msg = msgs[i]
-        // Type safety: Ensure msg.info exists before accessing its properties
-        if (!msg.info) continue
-        
         if (!lastUser && msg.info.role === "user") lastUser = msg.info as MessageV2.User
         if (!lastAssistant && msg.info.role === "assistant") lastAssistant = msg.info as MessageV2.Assistant
         if (!lastFinished && msg.info.role === "assistant" && msg.info.finish)
           lastFinished = msg.info as MessageV2.Assistant
         if (lastUser && lastFinished) break
-        
-        // Type safety: Ensure msg.parts exists and is an array before filtering
-        if (msg.parts && Array.isArray(msg.parts) && msg.parts.length > 0) {
-          const task = msg.parts.filter((part) => part.type === "compaction" || part.type === "subtask")
-          if (task && task.length > 0 && !lastFinished) {
-            tasks.push(...task)
-          }
+        const task = msg.parts.filter((part) => part.type === "compaction" || part.type === "subtask")
+        if (task.length > 0 && !lastFinished) {
+          tasks.push(...(task as (MessageV2.CompactionPart | MessageV2.SubtaskPart)[]))
         }
       }
 
@@ -338,25 +304,16 @@ export namespace SessionPrompt {
       }
 
       step++
-      if (step === 1) {
-        try {
-          // Type safety: Ensure lastUser and lastUser.model exist before accessing properties
-          if (!lastUser?.model) {
-            log.warn("Skipping title generation - no user model available", { sessionID })
-          } else {
-            ensureTitle({
-              session,
-              modelID: lastUser.model.modelID,
-              providerID: lastUser.model.providerID,
-              history: msgs,
-            })
-          }
-        } catch (error) {
-          log.error("Failed to ensure title", { 
-            sessionID, 
-            error: error instanceof Error ? error.message : String(error) 
+        if (step === 1) {
+        if (!lastUser.model) {
+          log.warn("Skipping title generation - no user model available", { sessionID })
+        } else {
+          ensureTitle({
+            session,
+            modelID: lastUser.model.modelID,
+            providerID: lastUser.model.providerID,
+            history: msgs,
           })
-          // Continue even if title setting fails
         }
       }
 
@@ -370,62 +327,12 @@ export namespace SessionPrompt {
         // pending subtask
         // TODO: centralize "invoke tool" logic
         if (task?.type === "subtask") {
-          // Type safety: Validate task has required properties
-          if (!task || !task.agent) {
-            log.error("Subtask missing required agent property", { sessionID, task })
-            continue
-          }
-
-        let taskToolInit: Awaited<ReturnType<typeof TaskTool.init>>
-        try {
-          taskToolInit = await TaskTool.init()
-          
-          // Validate the initialized tool
-          if (!taskToolInit || typeof taskToolInit.execute !== 'function') {
-            throw new Error("TaskTool initialization returned invalid tool object")
-          }
-        } catch (error) {
-          log.error("Failed to initialize task tool", { 
-            sessionID, 
-            agent: task.agent,
-            error: error instanceof Error ? error.message : String(error) 
-          })
-          
-          // Cleanup resources if initialization partially succeeded
-          if (taskToolInit && typeof taskToolInit === 'object') {
-            try {
-              // Call any cleanup method if available
-              if ('cleanup' in taskToolInit && typeof taskToolInit.cleanup === 'function') {
-                await taskToolInit.cleanup()
-              }
-            } catch (cleanupError) {
-              log.error("Failed to cleanup partially initialized task tool", { 
-                sessionID,
-                cleanupError: cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
-              })
-            }
-          }
-          
-          continue // Skip this subtask if tool initialization fails
-        }
+          const taskToolInit = await TaskTool.init()
+          const taskModel = task.model
+            ? await Provider.getModel(task.model.providerID, task.model.modelID)
+            : model
         
-        let taskModel = model
-        if (task.model) {
-          try {
-            taskModel = await Provider.getModel(task.model.providerID, task.model.modelID)
-          } catch (error) {
-            log.error("Failed to get task model, falling back to default model", { 
-              sessionID, 
-              taskModel: task.model,
-              error: error instanceof Error ? error.message : String(error) 
-          })
-            // Continue with default model
-          }
-        }
-        
-        let assistantMessage: MessageV2.Assistant
-        try {
-          assistantMessage = (await Session.updateMessage({
+          const assistantMessage = (await Session.updateMessage({
             id: Identifier.ascending("message"),
             role: "assistant",
             parentID: lastUser.id,
@@ -449,17 +356,7 @@ export namespace SessionPrompt {
               created: Date.now(),
             },
           })) as MessageV2.Assistant
-        } catch (error) {
-          log.error("Failed to create subtask assistant message", { 
-            sessionID, 
-            agent: task.agent,
-            error: error instanceof Error ? error.message : String(error) 
-          })
-          continue // Skip this subtask if message creation fails
-        }
-        let part: MessageV2.ToolPart
-        try {
-          part = (await Session.updatePart({
+          const part = (await Session.updatePart({
             id: Identifier.ascending("part"),
             messageID: assistantMessage.id,
             sessionID: assistantMessage.sessionID,
@@ -479,21 +376,12 @@ export namespace SessionPrompt {
               },
             },
           })) as MessageV2.ToolPart
-        } catch (error) {
-          log.error("Failed to create subtask part", { 
-            sessionID, 
-            agent: task.agent,
-            error: error instanceof Error ? error.message : String(error) 
-          })
-          continue // Skip this subtask if part creation fails
-        }
-        const taskArgs = {
-          prompt: task.prompt,
-          description: task.description,
-          subagent_type: task.agent,
-          command: task.command,
-        }
-        try {
+          const taskArgs = {
+            prompt: task.prompt,
+            description: task.description,
+            subagent_type: task.agent,
+            command: task.command,
+          }
           await Plugin.trigger(
             "tool.execute.before",
             {
@@ -503,176 +391,82 @@ export namespace SessionPrompt {
             },
             { args: taskArgs },
           )
-        } catch (error) {
-          log.error("Failed to trigger before plugin for subtask", { 
-            sessionID, 
-            tool: "task",
-            callID: part.id,
-            error: error instanceof Error ? error.message : String(error) 
-          })
-          // Continue even if plugin trigger fails
-        }
-        
-        let executionError: Error | undefined
-        let taskAgent: Agent.Info | undefined
-        try {
-          taskAgent = await Agent.get(task.agent)
-        } catch (error) {
-          log.error("Failed to get task agent", { 
-            sessionID, 
+          const taskAgent = await Agent.get(task.agent)
+          const taskCtx: Tool.Context = {
             agent: task.agent,
-            error: error instanceof Error ? error.message : String(error) 
-          })
-          executionError = error instanceof Error ? error : new Error(String(error))
-        }
-        
-         const taskCtx: Tool.Context = {
-           agent: task.agent,
-           messageID: assistantMessage.id,
-           sessionID: sessionID,
-           abort,
-           callID: part.callID!,
-           extra: { bypassAgentCheck: true },
-           async metadata(input) {
-             try {
-               // Type safety: Ensure part and part.state exist before accessing properties
-               if (!part || !part.state) {
-                 log.error("Part or part.state is missing for metadata update", { sessionID, callID: part.callID })
-                 return
-               }
-               const currentState = part.state || {}
-               await Session.updatePart({
-                 ...part,
-                 type: "tool",
-                 state: {
-                   ...currentState,
-                   ...input,
-                 },
-               } satisfies MessageV2.ToolPart)
-             } catch (error) {
-               log.error("Failed to update task metadata", { 
-                 sessionID, 
-                 callID: part.callID,
-                 error: error instanceof Error ? error.message : String(error) 
-               })
-             }
-           },
-           async ask(req) {
-             try {
-               // Type safety: Ensure taskAgent exists before accessing permissions
-               const taskAgentPermissions = taskAgent?.permission || []
-               await PermissionNext.ask({
-                 ...req,
-                 sessionID: sessionID,
-                 ruleset: PermissionNext.merge(taskAgentPermissions, session.permission ?? []),
-               })
-             } catch (error) {
-               log.error("Failed to ask for permission in task", { 
-                 sessionID, 
-                 callID: part.callID,
-                 permission: req.permission,
-                 error: error instanceof Error ? error.message : String(error) 
-               })
-               throw error // Re-throw permission errors
-             }
-           },
-         }
-        
-         const result = await taskToolInit.execute(taskArgs, taskCtx).catch(async (error: unknown) => {
-           executionError = error instanceof Error ? error : new Error(String(error))
-           log.error("subtask execution failed", { 
-             error: error instanceof Error ? error.message : String(error), 
-             agent: task.agent, 
-             description: task.description 
-           })
-           
-           // Attempt to cleanup task tool resources on execution failure
-           try {
-             if (taskToolInit && typeof taskToolInit === 'object') {
-               if ('cleanup' in taskToolInit && typeof taskToolInit.cleanup === 'function') {
-                 await taskToolInit.cleanup()
-               }
-             }
-           } catch (cleanupError) {
-              log.error("Failed to cleanup task tool after execution error", { 
-                sessionID,
-                agent: task.agent,
-                cleanupError: cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
-              })
-            }
-           
-           return undefined
-         })
-        
-        try {
-          await Plugin.trigger(
-            "tool.execute.after",
-            {
-              tool: "task",
-              sessionID,
-              callID: part.id,
+            messageID: assistantMessage.id,
+            sessionID: sessionID,
+            abort,
+            callID: part.callID!,
+            extra: { bypassAgentCheck: true },
+            async metadata(input) {
+              const currentState = part.state || {}
+              await Session.updatePart({
+                ...part,
+                type: "tool",
+                state: {
+                  ...currentState,
+                  ...input,
+                },
+              } satisfies MessageV2.ToolPart)
             },
-            result,
-          )
-        } catch (error) {
-          log.error("Failed to trigger after plugin for subtask", { 
-            sessionID, 
+            async ask(req) {
+              await PermissionNext.ask({
+                ...req,
+                sessionID: sessionID,
+                ruleset: PermissionNext.merge(taskAgent?.permission ?? [], session.permission ?? []),
+              })
+            },
+          }
+        
+        const result = await taskToolInit.execute(taskArgs, taskCtx).catch(async (error: unknown) => {
+          executionError = error instanceof Error ? error : new Error(String(error))
+          
+          if (taskToolInit && typeof taskToolInit === 'object' && 'cleanup' in taskToolInit && typeof taskToolInit.cleanup === 'function') {
+            await taskToolInit.cleanup()
+          }
+          
+          return undefined
+        })
+
+        await Plugin.trigger(
+          "tool.execute.after",
+          {
             tool: "task",
+            sessionID,
             callID: part.id,
-            error: error instanceof Error ? error.message : String(error) 
-          })
-          // Continue even if plugin trigger fails
-        }
+          },
+          result,
+        )
+
         assistantMessage.finish = "tool-calls"
         assistantMessage.time.completed = Date.now()
         
-        try {
-          await Session.updateMessage(assistantMessage)
-        } catch (error) {
-          log.error("Failed to update assistant message after task", { 
-            sessionID, 
-            messageID: assistantMessage.id,
-            error: error instanceof Error ? error.message : String(error) 
-          })
-        }
+        await Session.updateMessage(assistantMessage)
         
         if (result && part && part.state?.status === "running") {
-          try {
-            // Type safety: Ensure part.state and its properties exist
-            const currentState = part.state || {}
-            const currentTime = currentState.time || {}
-            
-            await Session.updatePart({
-              ...part,
-              state: {
-                status: "completed",
-                input: currentState.input,
-                title: result.title,
-                metadata: result.metadata,
-                output: result.output,
-                attachments: result.attachments,
-                time: {
-                  ...currentTime,
-                  end: Date.now(),
-                },
+          const currentState = part.state || {}
+          const currentTime = currentState.time || {}
+          
+          await Session.updatePart({
+            ...part,
+            state: {
+              status: "completed",
+              input: currentState.input,
+              title: result.title,
+              metadata: result.metadata,
+              output: result.output,
+              attachments: result.attachments,
+              time: {
+                ...currentTime,
+                end: Date.now(),
               },
-            } satisfies MessageV2.ToolPart)
-          } catch (error) {
-            log.error("Failed to update completed task part", { 
-              sessionID, 
-              callID: part.callID,
-              error: error instanceof Error ? error.message : String(error) 
-            })
-          }
+            },
+          } satisfies MessageV2.ToolPart)
         }
         
         if (!result) {
-          try {
-            // Type safety: Ensure part and part.state exist before accessing properties
-            if (!part || !part.state) {
-              log.error("Part or part.state is missing for error update", { sessionID, callID: part?.callID })
-              return
-            }
+          if (part && part.state) {
             const currentState = part.state || {}
             const currentTime = currentState.time || {}
             
@@ -689,31 +483,11 @@ export namespace SessionPrompt {
                 input: currentState.input,
               },
             } satisfies MessageV2.ToolPart)
-          } catch (error) {
-            log.error("Failed to update error task part", { 
-              sessionID, 
-              callID: part.callID,
-              error: error instanceof Error ? error.message : String(error) 
-            })
           }
         }
 
         if (task.command) {
-          // Add synthetic user message to prevent certain reasoning models from erroring
-          // If we create assistant messages w/ out user ones following mid loop thinking signatures
-          // will be missing and it can cause errors for models like gemini for example
-          try {
-            // Type safety: Ensure lastUser and its properties exist
-            if (!lastUser?.agent || !lastUser?.model) {
-              log.error("Cannot create synthetic user message - missing user agent or model", { 
-                sessionID, 
-                hasLastUser: !!lastUser,
-                hasAgent: !!lastUser?.agent,
-                hasModel: !!lastUser?.model
-              })
-              continue
-            }
-
+          if (lastUser?.agent && lastUser?.model) {
             const summaryUserMsg: MessageV2.User = {
               id: Identifier.ascending("message"),
               sessionID,
@@ -733,12 +507,6 @@ export namespace SessionPrompt {
               text: "Summarize the task tool output above and continue with your task.",
               synthetic: true,
             } satisfies MessageV2.TextPart)
-          } catch (error) {
-            log.error("Failed to create synthetic user message after task", { 
-              sessionID, 
-              error: error instanceof Error ? error.message : String(error) 
-            })
-            // Continue even if synthetic message creation fails
           }
         }
 
@@ -747,159 +515,65 @@ export namespace SessionPrompt {
 
       // pending compaction
       if (task?.type === "compaction") {
-        try {
-          // Type safety: Ensure lastUser and task exist before accessing properties
-          if (!lastUser?.id) {
-            log.error("Cannot process compaction - missing user message ID", { sessionID })
-            continue
-          }
-          if (!task) {
-            log.error("Cannot process compaction - missing task", { sessionID })
-            continue
-          }
-
-          const result = await SessionCompaction.process({
-            messages: msgs,
-            parentID: lastUser.id,
-            abort,
-            sessionID,
-            auto: task.auto ?? false, // Type safety: Provide default for auto
-          })
-          if (result === "stop") break
-        } catch (error) {
-          log.error("Failed to process compaction", { 
-            sessionID, 
-            auto: task?.auto,
-            error: error instanceof Error ? error.message : String(error) 
-          })
-          // Continue even if compaction fails
-        }
+        const result = await SessionCompaction.process({
+          messages: msgs,
+          parentID: lastUser.id,
+          abort,
+          sessionID,
+          auto: task.auto ?? false,
+        })
+        if (result === "stop") break
         continue
       }
 
       // context overflow, needs compaction
-      if (
-        lastFinished &&
-        lastFinished.summary !== true
-      ) {
-        let needsCompaction = false
-        try {
-          // Type safety: Ensure lastFinished.tokens exists
-          if (lastFinished.tokens) {
-            needsCompaction = await SessionCompaction.isOverflow({ tokens: lastFinished.tokens, model })
-          }
-        } catch (error) {
-          log.error("Failed to check for context overflow", { 
-            sessionID, 
-            error: error instanceof Error ? error.message : String(error) 
+      if (lastFinished && lastFinished.summary !== true) {
+        if (lastFinished.tokens && await SessionCompaction.isOverflow({ tokens: lastFinished.tokens, model })) {
+          await SessionCompaction.create({
+            sessionID,
+            agent: lastUser.agent,
+            model: lastUser.model,
+            auto: true,
           })
-          // Assume no overflow if check fails
-        }
-        
-        if (needsCompaction) {
-          try {
-            // Type safety: Ensure lastUser and its properties exist
-            if (!lastUser?.agent || !lastUser?.model) {
-              log.error("Cannot create compaction - missing user agent or model", { 
-                sessionID, 
-                hasLastUser: !!lastUser,
-                hasAgent: !!lastUser?.agent,
-                hasModel: !!lastUser?.model
-              })
-              continue
-            }
-
-            await SessionCompaction.create({
-              sessionID,
-              agent: lastUser.agent,
-              model: lastUser.model,
-              auto: true,
-            })
-          } catch (error) {
-            log.error("Failed to create compaction", { 
-              sessionID, 
-              error: error instanceof Error ? error.message : String(error) 
-            })
-            // Continue without compaction if creation fails
-          }
           continue
         }
       }
 
       // normal processing
-      let agent: Agent.Info
-      try {
-        // Type safety: Ensure lastUser and its agent exist
-        if (!lastUser?.agent) {
-          throw new Error("No agent found in last user message")
-        }
-        
-        agent = await Agent.get(lastUser.agent)
-        log.debug("Using agent from last user message", { 
-          sessionID, 
-          agent: lastUser.agent 
-        })
-      } catch (error) {
-        log.error("Failed to get agent from last user message, falling back to default", { 
-          sessionID, 
-          requestedAgent: lastUser?.agent,
-          error: error instanceof Error ? error.message : String(error) 
-        })
-        const fallbackAgentName = await lastAgent(sessionID)
-        agent = await Agent.get(fallbackAgentName)
-      }
+      const agent = await Agent.get(lastUser.agent ?? await lastAgent(sessionID))
       const maxSteps = agent.steps ?? Infinity
       const isLastStep = step >= maxSteps
-      try {
-        msgs = await insertReminders({
-          messages: msgs,
-          agent,
-          session,
-        })
-      } catch (error) {
-        log.error("Failed to insert reminders, continuing with original messages", { 
-          sessionID, 
-          error: error instanceof Error ? error.message : String(error),
-          agent: agent.name 
-        })
-        // Continue with original messages if insertReminders fails
-      }
 
-      let assistantMessage: MessageV2.Assistant
-      try {
-        assistantMessage = (await Session.updateMessage({
-          id: Identifier.ascending("message"),
-          parentID: lastUser.id,
-          role: "assistant",
-          mode: agent.name,
-          agent: agent.name,
-          path: {
-            cwd: Instance.directory,
-            root: Instance.worktree,
-          },
-          cost: 0,
-          tokens: {
-            input: 0,
-            output: 0,
-            reasoning: 0,
-            cache: { read: 0, write: 0 },
-          },
-          modelID: model.id,
-          providerID: model.providerID,
-          time: {
-            created: Date.now(),
-          },
-          sessionID,
-        })) as MessageV2.Assistant
-      } catch (error) {
-        log.error("Failed to create assistant message", { 
-          sessionID, 
-          step,
-          error: error instanceof Error ? error.message : String(error) 
-        })
-        // Skip this loop iteration if we can't create the assistant message
-        continue
-      }
+      msgs = await insertReminders({
+        messages: msgs,
+        agent,
+        session,
+      })
+
+      const assistantMessage = (await Session.updateMessage({
+        id: Identifier.ascending("message"),
+        parentID: lastUser.id,
+        role: "assistant",
+        mode: agent.name,
+        agent: agent.name,
+        path: {
+          cwd: Instance.directory,
+          root: Instance.worktree,
+        },
+        cost: 0,
+        tokens: {
+          input: 0,
+          output: 0,
+          reasoning: 0,
+          cache: { read: 0, write: 0 },
+        },
+        modelID: model.id,
+        providerID: model.providerID,
+        time: {
+          created: Date.now(),
+        },
+        sessionID,
+      })) as MessageV2.Assistant
 
       const processor = SessionProcessor.create({
         assistantMessage,
@@ -914,39 +588,20 @@ export namespace SessionPrompt {
         ? lastUserMsg.parts.some((p) => p.type === "agent") 
         : false
 
-      let tools: Record<string, AITool> = {}
-      try {
-        tools = await resolveTools({
-          agent,
-          session,
-          model,
-          tools: lastUser.tools,
-          processor,
-          bypassAgentCheck,
-        })
-      } catch (error) {
-        log.error("Failed to resolve tools, continuing with empty tool set", { 
-          sessionID, 
-          agent: agent.name,
-          error: error instanceof Error ? error.message : String(error) 
-        })
-        // Continue with empty tools if resolution fails
-      }
+      const tools = await resolveTools({
+        agent,
+        session,
+        model,
+        tools: lastUser.tools,
+        processor,
+        bypassAgentCheck,
+      })
 
       if (step === 1) {
-        try {
-          SessionSummary.summarize({
-            sessionID: sessionID,
-            messageID: lastUser.id,
-          })
-        } catch (error) {
-          log.error("Failed to create summary", { 
-            sessionID, 
-            messageID: lastUser.id,
-            error: error instanceof Error ? error.message : String(error) 
-          })
-          // Continue even if summarization fails
-        }
+        SessionSummary.summarize({
+          sessionID: sessionID,
+          messageID: lastUser.id,
+        })
       }
 
       const sessionMessages = clone(msgs)
@@ -954,17 +609,11 @@ export namespace SessionPrompt {
       // Ephemerally wrap queued user messages with a reminder to stay on track
       if (step > 1 && lastFinished) {
         for (const msg of sessionMessages) {
-          // Type safety: Ensure msg.info exists and has required properties
           if (!msg.info || msg.info.role !== "user" || !lastFinished.id || msg.info.id <= lastFinished.id) continue
-          
-          // Type safety: Ensure msg.parts exists and is iterable
           if (!msg.parts || !Array.isArray(msg.parts)) continue
           
           for (const part of msg.parts) {
-            // Type safety: Check part exists and has required properties
             if (!part || part.type !== "text" || part.ignored || part.synthetic) continue
-            
-            // Type safety: Ensure part.text exists and is a string
             if (typeof part.text !== "string" || !part.text.trim()) continue
             
             part.text = [
@@ -979,229 +628,110 @@ export namespace SessionPrompt {
         }
       }
 
-      try {
       await Plugin.trigger("experimental.chat.messages.transform", {}, { messages: sessionMessages })
-    } catch (error) {
-      log.error("Failed to transform messages", { 
-        sessionID, 
-        error: error instanceof Error ? error.message : String(error) 
+
+      const systemPrompts = [...(await SystemPrompt.environment(model)), ...(await SystemPrompt.custom())]
+
+      const result = await processor.process({
+        user: lastUser,
+        agent,
+        abort,
+        sessionID,
+        system: systemPrompts,
+        messages: [
+          ...MessageV2.toModelMessages(sessionMessages, model),
+          ...(isLastStep
+            ? [
+                {
+                  role: "assistant" as const,
+                  content: MAX_STEPS,
+                },
+              ]
+            : []),
+        ],
+        tools,
+        model,
       })
-      // Continue with untransformed messages if transform fails
-    }
 
-      let systemPrompts: string[] = []
-      try {
-        systemPrompts = [...(await SystemPrompt.environment(model)), ...(await SystemPrompt.custom())]
-      } catch (error) {
-        log.error("Failed to load system prompts", { 
-          sessionID, 
-          model: model.id,
-          error: error instanceof Error ? error.message : String(error) 
-        })
-        // Continue with empty system prompts if loading fails
-      }
-
-      let result: "stop" | "compact" | "continue" | undefined
-      try {
-        result = await processor.process({
-          user: lastUser,
-          agent,
-          abort,
-          sessionID,
-          system: systemPrompts,
-          messages: [
-            ...MessageV2.toModelMessages(sessionMessages, model),
-            ...(isLastStep
-              ? [
-                  {
-                    role: "assistant" as const,
-                    content: MAX_STEPS,
-                  },
-                ]
-              : []),
-          ],
-          tools,
-          model,
-        })
-      } catch (error) {
-        log.error("Processor failed to process request", { 
-          sessionID, 
-          step,
-          error: error instanceof Error ? error.message : String(error) 
-        })
-        // Break the loop on processor failure to prevent infinite loops
-        break
-      }
       if (result === "stop") break
       if (result === "compact") {
-        try {
-          await SessionCompaction.create({
-            sessionID,
-            agent: lastUser.agent,
-            model: lastUser.model,
-            auto: true,
-          })
-        } catch (error) {
-          log.error("Failed to create compaction after processor request", { 
-            sessionID, 
-            error: error instanceof Error ? error.message : String(error) 
-          })
-          // Continue without compaction if creation fails
-        }
+        await SessionCompaction.create({
+          sessionID,
+          agent: lastUser.agent,
+          model: lastUser.model,
+          auto: true,
+        })
       }
       continue
-      } catch (loopError) {
-        log.error("Unexpected error in main loop, attempting to continue", { 
-          sessionID, 
-          step,
-          error: loopError instanceof Error ? loopError.message : String(loopError) 
-        })
-        
-        // Try to create a fallback assistant message to prevent complete failure
-        try {
-          // Type safety: Safely get the parentID with proper fallbacks
-          let parentID = ""
-          try {
-            const filteredMessages = await MessageV2.filterCompacted(MessageV2.stream(sessionID))
-            const lastUserMessage = filteredMessages.findLast(msg => msg.info?.role === "user")
-            parentID = lastUserMessage?.info?.id || ""
-          } catch (parentError) {
-            log.warn("Failed to get parent ID for fallback message", { 
-              sessionID,
-              error: parentError instanceof Error ? parentError.message : String(parentError)
-            })
-          }
-
-          // Type safety: Safely get default model
-          let defaultModel: { modelID: string; providerID: string }
-          try {
-            defaultModel = await Provider.defaultModel()
-          } catch (modelError) {
-            log.warn("Failed to get default model for fallback message", { 
-              sessionID,
-              error: modelError instanceof Error ? modelError.message : String(modelError)
-            })
-            // Ultimate fallback model
-            defaultModel = { modelID: "gpt-4", providerID: "openai" }
-          }
-
-          const fallbackMessage = await Session.updateMessage({
-            id: Identifier.ascending("message"),
-            parentID,
-            role: "assistant",
-            mode: "fallback",
-            agent: "fallback",
-            path: {
-              cwd: Instance.directory,
-              root: Instance.worktree,
-            },
-            cost: 0,
-            tokens: {
-              input: 0,
-              output: 0,
-              reasoning: 0,
-              cache: { read: 0, write: 0 },
-            },
-            modelID: defaultModel.modelID,
-            providerID: defaultModel.providerID,
-            time: {
-              created: Date.now(),
-              completed: Date.now(),
-            },
-            sessionID,
-            finish: "error",
-          })
-          
-          await Session.updatePart({
-            id: Identifier.ascending("part"),
-            messageID: fallbackMessage.id,
-            sessionID,
-            type: "text",
-            text: "I encountered an error while processing your request. The system has recovered, but you may need to provide your input again.",
-            synthetic: true,
-          })
-          
-          return fallbackMessage
-        } catch (fallbackError) {
-          log.error("Failed to create fallback message", { 
-            sessionID, 
-            error: fallbackError instanceof Error ? fallbackError.message : String(fallbackError) 
-          })
-          throw new Error(`Critical error in session loop: ${loopError instanceof Error ? loopError.message : String(loopError)}`)
-        }
-      }
-    }
-    try {
-      SessionCompaction.prune({ sessionID })
-    } catch (error) {
-      log.error("Failed to prune compaction", { 
+    } catch (loopError) {
+      log.error("Unexpected error in main loop, attempting to continue", { 
         sessionID, 
-        error: error instanceof Error ? error.message : String(error) 
-      })
-      // Continue even if prune fails
-    }
-    let messageStream: AsyncIterable<MessageV2.WithParts> | null = null
-    try {
-      messageStream = MessageV2.stream(sessionID)
-      
-      for await (const item of messageStream) {
-        try {
-          // Type safety: Ensure item.info exists before accessing its properties
-          if (!item.info || item.info.role === "user") continue
-          
-          const queued = state()[sessionID]?.callbacks ?? []
-          try {
-            for (const q of queued) {
-              try {
-                q.resolve(item)
-              } catch (callbackError) {
-                log.error("Failed to resolve queued callback", { 
-                  sessionID, 
-                  error: callbackError instanceof Error ? callbackError.message : String(callbackError)
-                })
-              }
-            }
-          } catch (queuedError) {
-            log.error("Failed to process queued callbacks", { 
-              sessionID, 
-              error: queuedError instanceof Error ? queuedError.message : String(queuedError)
-            })
-          }
-          
-          return item
-        } catch (itemError) {
-          log.error("Failed to process streamed message item", { 
-            sessionID, 
-            error: itemError instanceof Error ? itemError.message : String(itemError)
-          })
-          // Continue to next item
-        }
-      }
-    } catch (error) {
-      log.error("Failed to stream messages for final return", { 
-        sessionID, 
-        error: error instanceof Error ? error.message : String(error) 
+        step,
+        error: loopError instanceof Error ? loopError.message : String(loopError) 
       })
       
-      // Cleanup stream resources if available
-      if (messageStream && typeof messageStream[Symbol.asyncIterator] === 'function') {
-        try {
-          // Try to close the stream if it has a close method
-          if ('close' in messageStream && typeof messageStream.close === 'function') {
-            await messageStream.close()
-          }
-        } catch (closeError) {
-          log.error("Failed to close message stream", { 
-            sessionID,
-            error: closeError instanceof Error ? closeError.message : String(closeError)
-          })
-        }
-      }
+      const filteredMessages = await MessageV2.filterCompacted(MessageV2.stream(sessionID))
+      const lastUserMessage = filteredMessages.findLast(msg => msg.info?.role === "user")
+      const parentID = lastUserMessage?.info?.id || ""
+
+      const defaultModel = await Provider.defaultModel()
+
+      const fallbackMessage = await Session.updateMessage({
+        id: Identifier.ascending("message"),
+        parentID,
+        role: "assistant",
+        mode: "fallback",
+        agent: "fallback",
+        path: {
+          cwd: Instance.directory,
+          root: Instance.worktree,
+        },
+        cost: 0,
+        tokens: {
+          input: 0,
+          output: 0,
+          reasoning: 0,
+          cache: { read: 0, write: 0 },
+        },
+        modelID: defaultModel.modelID,
+        providerID: defaultModel.providerID,
+        time: {
+          created: Date.now(),
+          completed: Date.now(),
+        },
+        sessionID,
+        finish: "error",
+      })
       
-      throw new Error("Failed to retrieve final assistant message from stream")
+      await Session.updatePart({
+        id: Identifier.ascending("part"),
+        messageID: fallbackMessage.id,
+        sessionID,
+        type: "text",
+        text: "I encountered an error while processing your request. The system has recovered, but you may need to provide your input again.",
+        synthetic: true,
+      })
+      
+      return fallbackMessage
     }
-    throw new Error("Impossible")
-  })
+  }
+
+  SessionCompaction.prune({ sessionID })
+
+  const messageStream = MessageV2.stream(sessionID)
+  
+  for await (const item of messageStream) {
+    if (!item.info || item.info.role === "user") continue
+    
+    const queued = state()[sessionID]?.callbacks ?? []
+    for (const q of queued) {
+      q.resolve(item)
+    }
+    
+    return item
+  }
+  throw new Error("Impossible")
+})
 
   async function lastModel(sessionID: string) {
     try {
@@ -1261,83 +791,36 @@ export namespace SessionPrompt {
               providerID: provider.id,
               modelID: models[0].id
             }
-            log.warn("Using fallback model from provider", { 
-              sessionID, 
-              providerID: fallbackModel.providerID, 
-              modelID: fallbackModel.modelID 
-            })
             return fallbackModel
           }
         }
-      } catch (fallbackError) {
+      } catch (anyError) {
         log.error("Failed to find any available model", { 
           sessionID, 
-          error: fallbackError instanceof Error ? fallbackError.message : String(fallbackError) 
+          error: anyError instanceof Error ? anyError.message : String(anyError) 
         })
       }
       
-      // Ultimate fallback - this should never be reached if providers are configured
       const ultimateFallback = {
         providerID: "openai",
         modelID: "gpt-4"
       }
-      log.error("Using ultimate fallback model", { 
-        sessionID, 
-        providerID: ultimateFallback.providerID, 
-        modelID: ultimateFallback.modelID 
-      })
       return ultimateFallback
     }
   }
 
   async function lastAgent(sessionID: string) {
-    try {
-      const msgs = await MessageV2.filterCompacted(MessageV2.stream(sessionID))
-      // Iterate backwards to find the most recent user message with an agent
-      for (let i = msgs.length - 1; i >= 0; i--) {
-        const msg = msgs[i]
-        // Type safety: Ensure msg.info and msg.info.agent exist before accessing properties
-        if (msg.info?.role === "user" && msg.info.agent) {
-          // Verify that the agent still exists and is accessible
-          try {
-            const agent = await Agent.get(msg.info.agent)
-            if (agent && agent.hidden !== true) {
-              log.debug("Found last used agent", { sessionID, agent: msg.info.agent })
-              return msg.info.agent
-            } else {
-              log.warn("Last used agent is hidden or not found, continuing search", { 
-                sessionID, 
-                agent: msg.info.agent 
-              })
-            }
-          } catch (agentError) {
-            log.warn("Failed to get last used agent, continuing search", { 
-              sessionID, 
-              agent: msg.info.agent,
-              error: agentError instanceof Error ? agentError.message : String(agentError)
-            })
-          }
-        }
+    const msgs = await MessageV2.filterCompacted(MessageV2.stream(sessionID))
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const msg = msgs[i]
+      if (msg.info?.role === "user" && msg.info.agent) {
+        const agent = await Agent.get(msg.info.agent)
+        if (agent && agent.hidden !== true) return msg.info.agent
       }
-    } catch (error) {
-      log.error("Error in lastAgent, falling back to default agent", { 
-        sessionID, 
-        error: error instanceof Error ? error.message : String(error) 
-      })
     }
     
-    try {
-      const defaultAgentName = await Agent.defaultAgent()
-      log.info("Using default agent as fallback", { sessionID, agent: defaultAgentName })
-      return defaultAgentName
-    } catch (defaultError) {
-      log.error("Failed to get default agent, using hardcoded fallback", { 
-        sessionID, 
-        error: defaultError instanceof Error ? defaultError.message : String(defaultError) 
-      })
-      // Ultimate fallback to 'build' agent which should always exist
-      return "build"
-    }
+    const defaultAgentName = await Agent.defaultAgent()
+    return defaultAgentName
   }
 
   async function resolveTools(input: {
@@ -1359,403 +842,103 @@ export namespace SessionPrompt {
       extra: { model: input.model, bypassAgentCheck: input.bypassAgentCheck },
       agent: input.agent.name,
       metadata: async (val: { title?: string; metadata?: any }) => {
-        let match: any = null
-        try {
-          match = input.processor.partFromToolCall(options.toolCallId)
-          if (!match) {
-            log.warn("No matching part found for tool metadata update", { 
-              sessionID: input.session.id, 
-              toolCallId: options.toolCallId
-            })
-            return
-          }
-          
-          if (match.state?.status === "running") {
-            // Type safety: Ensure match.state exists before spreading
-            const currentState = match.state || {}
-            
-            try {
-              await Session.updatePart({
-                ...match,
-                state: {
-                  ...currentState,
-                  ...val,
-                },
-              })
-            } catch (updateError) {
-              log.error("Failed to update part in metadata", { 
-                sessionID: input.session.id, 
-                toolCallId: options.toolCallId,
-                error: updateError instanceof Error ? updateError.message : String(updateError)
-              })
-              
-              // Try to set error state if update fails
-              try {
-                await Session.updatePart({
-                  ...match,
-                  state: {
-                    ...currentState,
-                    status: "error",
-                    error: `Failed to update metadata: ${updateError instanceof Error ? updateError.message : String(updateError)}`,
-                  },
-                })
-              } catch (errorStateError) {
-                log.error("Failed to set error state in metadata", { 
-                  sessionID: input.session.id, 
-                  toolCallId: options.toolCallId,
-                  error: errorStateError instanceof Error ? errorStateError.message : String(errorStateError)
-                })
-              }
-            }
-          }
-        } catch (error) {
-          log.error("Failed to update tool metadata", { 
-            sessionID: input.session.id, 
-            toolCallId: options.toolCallId,
-            error: error instanceof Error ? error.message : String(error)
+        const match = input.processor.partFromToolCall(options.toolCallId)
+        if (!match) return
+        
+        if (match.state?.status === "running") {
+          const currentState = match.state || {}
+          await Session.updatePart({
+            ...match,
+            state: {
+              ...currentState,
+              ...val,
+            },
           })
-          
-          // Attempt to cleanup if possible
-          if (match && match.state) {
-            try {
-               await Session.updatePart({
-                 ...match,
-                 state: {
-                   ...match.state,
-                   status: "error",
-                   error: `Metadata update failed: ${error instanceof Error ? error.message : String(error)}`,
-                 },
-               })
-             } catch (cleanupError) {
-               log.error("Failed to cleanup after metadata error", { 
-                 sessionID: input.session.id, 
-                 toolCallId: options.toolCallId,
-                 error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
-               })
-             }
-            }
-          }
-        },
-       async ask(req) {
-        try {
-          await PermissionNext.ask({
-            ...req,
-            sessionID: input.session.id,
-            tool: { messageID: input.processor.message.id, callID: options.toolCallId },
-            ruleset: PermissionNext.merge(input.agent.permission || [], input.session.permission || []),
-          })
-        } catch (error) {
-          log.error("Failed to ask for permission", { 
-            sessionID: input.session.id, 
-            toolCallId: options.toolCallId,
-            permission: req.permission,
-            error: error instanceof Error ? error.message : String(error) 
-          })
-          throw error // Re-throw permission errors as they're critical
         }
+      },
+      async ask(req) {
+        await PermissionNext.ask({
+          ...req,
+          sessionID: input.session.id,
+          tool: { messageID: input.processor.message.id, callID: options.toolCallId },
+          ruleset: PermissionNext.merge(input.agent.permission || [], input.session.permission || []),
+        })
       },
     })
 
-    // Load tool registry tools with error handling and resource cleanup
-    let registryTools: any[] = []
-    let modelParams: { providerID: string; modelID: string }
+    const modelParams = input.model.api?.id
+      ? { providerID: input.model.providerID, modelID: input.model.api.id }
+      : { providerID: input.model.providerID, modelID: input.model.id || input.model.providerID || "unknown" }
     
-    try {
-      // Fix: Correct parameter order for ToolRegistry.tools() - providerID first, then modelID
-      // Add backwards compatibility for both new and old parameter structures
-      
-      // Handle different model object structures for backwards compatibility
-      if (input.model.api && input.model.api.id) {
-        // New structure with nested api.id
-        modelParams = { 
-          providerID: input.model.providerID, 
-          modelID: input.model.api.id 
-        }
-      } else if (input.model.id) {
-        // Direct id property (fallback for older structures)
-        modelParams = { 
-          providerID: input.model.providerID, 
-          modelID: input.model.id 
-        }
-      } else {
-        // Ultimate fallback: use providerID as modelID if available
-        const fallbackModelID = input.model.id || input.model.providerID || "unknown"
-        modelParams = { 
-          providerID: input.model.providerID, 
-          modelID: fallbackModelID
-        }
-        log.warn("Using fallback model ID for ToolRegistry", { 
-          sessionID: input.session.id,
-          providerID: input.model.providerID,
-          fallbackModelID 
-        })
-      }
-      
-      registryTools = await ToolRegistry.tools(modelParams, input.agent)
-      
-        for (const item of registryTools) {
-          // Validate tool item before processing
-          if (!item || !item.id) {
-            log.warn("Skipping invalid tool item", { 
-              sessionID: input.session.id,
-              item: item ? Object.keys(item) : 'null'
-            })
-            continue
-          }
+    const registryTools = await ToolRegistry.tools(modelParams, input.agent)
+    
+    for (const item of registryTools) {
+      if (!item?.id || !item.parameters || !item.description || !item.execute) continue
 
-          // Type safety: Safely check tool properties
-          const hasParameters = !!item.parameters
-          const hasDescription = !!item.description
-          const hasExecute = !!item.execute && typeof item.execute === 'function'
-
-          // Validate that tool has required properties
-          if (!hasParameters || !hasDescription || !hasExecute) {
-            log.warn("Tool missing required properties", { 
-              tool: item.id,
-              sessionID: input.session.id,
-              hasParameters,
-              hasDescription,
-              hasExecute
-            })
-            continue
-          }
-
-          try {
-            const schema = ProviderTransform.schema(input.model, z.toJSONSchema(item.parameters))
-            tools[item.id] = tool({
-              id: item.id as any,
-              description: item.description,
-              inputSchema: jsonSchema(schema as any),
-              async execute(args, options) {
-                const ctx = context(args, options)
-                let executionResult: any
-                try {
-                  // Pre-execution plugin hook
-                  await Plugin.trigger(
-                    "tool.execute.before",
-                    {
-                      tool: item.id,
-                      sessionID: ctx.sessionID,
-                      callID: ctx.callID,
-                    },
-                    {
-                      args,
-                    },
-                  )
-                  
-                  // Execute the tool with proper resource tracking
-                  executionResult = await item.execute(args, ctx)
-                  
-                  // Post-execution plugin hook
-                  await Plugin.trigger(
-                    "tool.execute.after",
-                    {
-                      tool: item.id,
-                      sessionID: ctx.sessionID,
-                      callID: ctx.callID,
-                    },
-                    executionResult,
-                  )
-                  
-                  return executionResult
-                } catch (error) {
-                  log.error("Tool execution failed", { 
-                    tool: item.id, 
-                    sessionID: ctx.sessionID, 
-                    callID: ctx.callID,
-                    error: error instanceof Error ? error.message : String(error) 
-                  })
-                  
-                  // Ensure cleanup on tool execution failure
-                  try {
-                    await Plugin.trigger(
-                      "tool.execute.error",
-                      {
-                        tool: item.id,
-                        sessionID: ctx.sessionID,
-                        callID: ctx.callID,
-                      },
-                      {
-                        error: error instanceof Error ? error.message : String(error),
-                        args
-                      }
-                    )
-                  } catch (cleanupError) {
-                    log.error("Failed to execute cleanup hook after tool error", { 
-                      tool: item.id,
-                      sessionID: ctx.sessionID,
-                      cleanupError: cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
-                    })
-                  }
-                  
-                  throw error // Re-throw execution errors
-                }
-              },
-            })
-          } catch (error) {
-            log.error("Failed to register tool", { 
-              tool: item?.id || 'unknown', 
-              sessionID: input.session.id,
-              error: error instanceof Error ? error.message : String(error),
-              stack: error instanceof Error ? error.stack : undefined
-            })
-            // Continue with other tools even if one fails to register
-          }
-        }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error)
-      const errorStack = error instanceof Error ? error.stack : undefined
-      
-      log.error("Failed to load tool registry tools", { 
-        sessionID: input.session.id,
-        agent: input.agent.name,
-        modelProvider: input.model.providerID,
-        modelID: input.model.api?.id || input.model.id,
-        error: errorMessage,
-        stack: errorStack
-      })
-      
-      // Try to load with fallback parameters as a recovery mechanism
-      let fallbackTools: any[] = []
-      try {
-        log.info("Attempting fallback tool registry loading", { 
-          sessionID: input.session.id 
-        })
-        
-        const fallbackParams = { 
-          providerID: input.model.providerID || "fallback", 
-          modelID: "fallback" 
-        }
-        
-        fallbackTools = await ToolRegistry.tools(fallbackParams, input.agent)
-        
-        // Register only safe, essential tools from fallback with proper cleanup
-        for (const item of fallbackTools) {
-          if (!item?.id || !["read", "write", "bash"].includes(item.id)) {
-            continue // Only include essential tools in fallback
-          }
+      const schema = ProviderTransform.schema(input.model, z.toJSONSchema(item.parameters))
+      tools[item.id] = tool({
+        id: item.id as any,
+        description: item.description,
+        inputSchema: jsonSchema(schema as any),
+        async execute(args, options) {
+          const ctx = context(args, options)
+          await Plugin.trigger("tool.execute.before", {
+            tool: item.id,
+            sessionID: ctx.sessionID,
+            callID: ctx.callID,
+          }, { args })
           
-          try {
-            const schema = ProviderTransform.schema(input.model, z.toJSONSchema(item.parameters))
-            tools[item.id] = tool({
-              id: item.id as any,
-              description: item.description,
-              inputSchema: jsonSchema(schema as any),
-              async execute(args, options) {
-                const ctx = context(args, options)
-                let executionResult: any
-                try {
-                  // Execute fallback tool with resource tracking
-                  executionResult = await item.execute(args, ctx)
-                  return executionResult
-                } catch (execError) {
-                  log.error("Fallback tool execution failed", { 
-                    tool: item.id, 
-                    sessionID: ctx.sessionID, 
-                    callID: ctx.callID,
-                    error: execError instanceof Error ? execError.message : String(execError) 
-                  })
-                  
-                  // Attempt cleanup on fallback tool failure
-                  try {
-                    await Plugin.trigger(
-                      "tool.execute.cleanup",
-                      {
-                        tool: item.id,
-                        sessionID: ctx.sessionID,
-                        callID: ctx.callID,
-                      },
-                      { args, error: execError instanceof Error ? execError.message : String(execError) }
-                    )
-                  } catch (cleanupError) {
-                    log.error("Fallback tool cleanup failed", { 
-                      tool: item.id,
-                      sessionID: ctx.sessionID,
-                      cleanupError: cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
-                    })
-                  }
-                  
-                  throw execError
-                }
-              },
-            })
-          } catch (toolError) {
-            log.warn("Failed to register fallback tool", { 
-              tool: item.id, 
-              sessionID: input.session.id,
-              error: toolError instanceof Error ? toolError.message : String(toolError) 
-            })
-          }
-        }
-        
-        log.info("Fallback tool loading completed", { 
-          sessionID: input.session.id,
-          loadedTools: Object.keys(tools).length 
-        })
-      } catch (fallbackError) {
-        log.error("Fallback tool loading also failed", { 
-          sessionID: input.session.id,
-          fallbackError: fallbackError instanceof Error ? fallbackError.message : String(fallbackError)
-        })
-        // Continue without any registry tools if both primary and fallback fail
-      }
+          const executionResult = await item.execute(args, ctx)
+          
+          await Plugin.trigger("tool.execute.after", {
+            tool: item.id,
+            sessionID: ctx.sessionID,
+            callID: ctx.callID,
+          }, executionResult)
+          
+          return executionResult
+        },
+      })
     }
 
-    // Load MCP tools with error handling
     try {
       const mcpTools = await MCP.tools()
       for (const [key, item] of Object.entries(mcpTools)) {
-        // Type safety: Ensure item exists and has execute method
-        if (!item || typeof item.execute !== 'function') continue
-
-        const execute = item.execute
-        if (!execute) continue
-
         try {
-          // Wrap execute to add plugin hooks and format output
-          item.execute = async (args, opts) => {
-            const ctx = context(args, opts)
+          if (!item?.execute) continue
 
-            try {
-              await Plugin.trigger(
-                "tool.execute.before",
-                {
-                  tool: key,
-                  sessionID: ctx.sessionID,
-                  callID: opts.toolCallId,
-                },
-                {
-                  args,
-                },
-              )
+      const execute = item.execute
+      item.execute = async (args, opts) => {
+        try {
+          const ctx = context(args, opts)
 
-              await ctx.ask({
-                permission: key,
-                metadata: {},
-                patterns: ["*"],
-                always: ["*"],
-              })
+        await Plugin.trigger("tool.execute.before", {
+          tool: key,
+          sessionID: ctx.sessionID,
+          callID: opts.toolCallId,
+        }, { args })
 
-              const result = await execute(args, opts)
+        await ctx.ask({
+          permission: key,
+          metadata: {},
+          patterns: ["*"],
+          always: ["*"],
+        })
 
-              await Plugin.trigger(
-                "tool.execute.after",
-                {
-                  tool: key,
-                  sessionID: ctx.sessionID,
-                  callID: opts.toolCallId,
-                },
-                result,
-              )
+        const result = await execute(args, opts)
 
-              const textParts: string[] = []
-              const attachments: MessageV2.FilePart[] = []
+        await Plugin.trigger("tool.execute.after", {
+          tool: key,
+          sessionID: ctx.sessionID,
+          callID: opts.toolCallId,
+        }, result)
 
-              // Type safety: Ensure result and result.content exist
-              if (result?.content && Array.isArray(result.content)) {
-                for (const contentItem of result.content) {
-                  // Type safety: Ensure contentItem exists and has type
-                  if (!contentItem || typeof contentItem !== 'object' || !contentItem.type) continue
+        const textParts: string[] = []
+        const attachments: MessageV2.FilePart[] = []
+
+        if (result?.content) {
+          for (const contentItem of result.content) {
+            if (!contentItem?.type) continue
 
                   if (contentItem.type === "text" && typeof contentItem.text === 'string') {
                     textParts.push(contentItem.text)
@@ -2214,6 +1397,7 @@ export namespace SessionPrompt {
                           error: symbolError instanceof Error ? symbolError.message : String(symbolError)
                         })
                       }
+                    }
                   }
                 }
                 const args = { filePath: filepath, offset, limit }
@@ -2417,7 +1601,9 @@ export namespace SessionPrompt {
               } finally {
                 // Ensure any temporary resources are cleaned up
                 // Note: Bun automatically manages the file resources, but we ensure proper error handling
-}
+              }
+          }
+        }
 
         if (part.type === "agent") {
           // Type safety: Ensure part.name exists
@@ -3688,36 +2874,13 @@ NOTE: At any point in time through this workflow you should feel free to ask the
            })
          }
        }
-     } else {
-        // Cleanup abort controller if no text was generated
-        try {
-           titleAbortController.abort()
-        } catch (abortError) {
-          log.error("Failed to abort after no title generated", { 
-            sessionID: input.session.id,
-            error: abortError instanceof Error ? abortError.message : String(abortError)
-          })
-        }
-      }
-  }
- }
-}
-  }
-}<think>[\s\S]*?<\/think>\s*/g, "")
-
-}</think>[\s\S]*?<\/think>\s*/g, "")
-              .split("\n")
-              .map((line) => line.trim())
-              .find((line) => line.length > 0)
-            if (!cleaned) return
-
-<think>[\s\S]*?<\/think>\s*/g, "")
-            .split("\n")
-            .map((line) => line.trim())
-         const title = cleaned.length > 100 ? cleaned.substring(0, 97) + "..." : cleaned
-          draft.title = title
-        },
-        { touch: false },
-      )
+    }
+  } catch (error) {
+    log.error("Failed in ensureTitle", {
+      sessionID: input.session.id,
+      error: error instanceof Error ? error.message : String(error)
+    })
+  } finally {
+    // Any final cleanup if needed
   }
 }
