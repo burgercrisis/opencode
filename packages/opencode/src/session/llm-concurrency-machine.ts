@@ -61,8 +61,10 @@ export namespace LLMConcurrencyMachine {
       let exists = true
       try {
         process.kill(pid, 0)
-      } catch (e) {
-        exists = false
+      } catch (e: any) {
+        // ESRCH means the process does not exist.
+        // EPERM means the process exists but we don't have permission to signal it.
+        if (e.code === "ESRCH") exists = false
       }
 
       if (!exists) {
