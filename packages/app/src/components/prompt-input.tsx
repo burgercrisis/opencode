@@ -601,15 +601,19 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     })
 
   const renderEditor = (parts: Prompt) => {
-    editorRef.innerHTML = ""
-    for (const part of parts) {
-      if (part.type === "text") {
-        editorRef.appendChild(createTextFragment(part.content))
-        continue
+    try {
+      editorRef.innerHTML = ""
+      for (const part of parts) {
+        if (part.type === "text") {
+          editorRef.appendChild(createTextFragment(part.content))
+          continue
+        }
+        if (part.type === "file" || part.type === "agent") {
+          editorRef.appendChild(createPill(part))
+        }
       }
-      if (part.type === "file" || part.type === "agent") {
-        editorRef.appendChild(createPill(part))
-      }
+    } finally {
+      mirror.input = false
     }
   }
 
@@ -658,8 +662,10 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
         const inputParts = currentParts.filter((part) => part.type !== "image") as Prompt
 
         if (mirror.input) {
-          mirror.input = false
-          if (isNormalizedEditor()) return
+          if (isNormalizedEditor()) {
+            mirror.input = false
+            return
+          }
 
           const selection = window.getSelection()
           let cursorPosition: number | null = null
