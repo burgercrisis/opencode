@@ -118,16 +118,29 @@ export namespace LLMConcurrencyMachine {
     const limits = input.limits
     if (!limits) return
 
-    const filepath = await createLease({
-      providerID: input.providerID,
-      modelName: input.modelName,
-      sessionID: input.sessionID,
-    }).catch((error) => {
-      log.warn("failed to create lease", { error })
-      return undefined
-    })
+    let attempts = 0
+    let filepath: string | undefined
+    while (attempts < 3) {
+      filepath = await createLease({
+        providerID: input.providerID,
+        modelName: input.modelName,
+        sessionID: input.sessionID,
+      }).catch((error) => {
+        log.warn("failed to create lease", { error, attempt: attempts + 1 })
+        return undefined
+      })
+      if (filepath) break
+      attempts++
+      await new Promise((resolve) => setTimeout(resolve, 100 * attempts))
+    }
 
-    if (!filepath) return
+    if (!filepath) {
+      log.error("failed to acquire concurrency lease after retries", {
+        providerID: input.providerID,
+        modelName: input.modelName,
+      })
+      return
+    }
 
     const beat = Math.floor(limits.staleMs * 0.8)
 
