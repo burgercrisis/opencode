@@ -297,25 +297,35 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
 
     function pruneStore(directory: string, path?: string) {
       const dirs = Object.keys(store.file)
-      if (dirs.length > MAX_STORE_DIRECTORIES) {
-        const drop = dirs.filter((d) => d !== directory).slice(0, dirs.length - MAX_STORE_DIRECTORIES)
+      const isNewDir = !dirs.includes(directory)
+      const effectiveDirsLength = isNewDir ? dirs.length + 1 : dirs.length
+
+      if (effectiveDirsLength > MAX_STORE_DIRECTORIES) {
+        const dropCount = effectiveDirsLength - MAX_STORE_DIRECTORIES
+        const drop = dirs.filter((d) => d !== directory).slice(0, dropCount)
         for (const d of drop) {
           setStore("file", d, undefined!)
         }
       }
 
-      const files = Object.keys(store.file[directory] || {})
-      if (files.length > MAX_STORE_FILES_PER_DIRECTORY) {
-        const drop = files.filter((f) => f !== path).slice(0, files.length - MAX_STORE_FILES_PER_DIRECTORY)
-        setStore(
-          "file",
-          directory,
-          produce((draft) => {
-            for (const f of drop) {
-              delete draft[f]
-            }
-          }),
-        )
+      if (path && store.file[directory]) {
+        const files = Object.keys(store.file[directory])
+        const isNewFile = !files.includes(path)
+        const effectiveFilesLength = isNewFile ? files.length + 1 : files.length
+
+        if (effectiveFilesLength > MAX_STORE_FILES_PER_DIRECTORY) {
+          const dropCount = effectiveFilesLength - MAX_STORE_FILES_PER_DIRECTORY
+          const drop = files.filter((f) => f !== path).slice(0, dropCount)
+          setStore(
+            "file",
+            directory,
+            produce((draft) => {
+              for (const f of drop) {
+                delete draft[f]
+              }
+            }),
+          )
+        }
       }
     }
 
