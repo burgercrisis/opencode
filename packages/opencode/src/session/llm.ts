@@ -280,7 +280,13 @@ export namespace LLM {
     const request = LLMConcurrencyMachine.request(limits, [key])
     let blocks = LLMConcurrencyMachine.blocked(limits, snapshot, request)
 
+    const start = Date.now()
+    const timeout = 60_000 // 60 seconds
     while (blocks.length > 0) {
+      if (Date.now() - start > timeout) {
+        l.warn("concurrency wait timed out, proceeding anyway", { blocks })
+        break
+      }
       l.info("concurrency limit reached, waiting...", { blocks })
       await new Promise((resolve) => setTimeout(resolve, 5000))
       if (input.abort.aborted) throw new Error("aborted while waiting for concurrency lease")
