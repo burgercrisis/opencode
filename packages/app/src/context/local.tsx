@@ -1,5 +1,6 @@
 import { createStore, produce, reconcile } from "solid-js/store"
-import { batch, createEffect, createMemo, onCleanup } from "solid-js"
+import { batch, createEffect, createMemo, onCleanup, createResource } from "solid-js"
+import { useMarked } from "./marked"
 import { filter, firstBy, flat, groupBy, mapValues, pipe, uniqueBy, values } from "remeda"
 import type { FileContent, FileNode, Model, Provider, File as FileStatus } from "@opencode-ai/sdk/v2"
 import { createSimpleContext } from "@opencode-ai/ui/context"
@@ -46,6 +47,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
     const sync = useSync()
     const providers = useProviders()
     const language = useLanguage()
+    const marked = useMarked()
 
     function isModelValid(model: ModelKey) {
       const provider = providers.all().find((x) => x.id === model.providerID)
@@ -545,6 +547,19 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       const searchFilesAndDirectories = (query: string) =>
         sdk.client.find.files({ query, dirs: "true" }).then((x) => x.data!)
 
+      const html = (path: string) => {
+        const node = store.node[path]
+        if (!node?.content || typeof node.content !== "string") return undefined
+
+        const [data] = createResource(
+          () => ({ path, content: node.content as string }),
+          async ({ content }) => {
+            return marked.parse(content)
+          },
+        )
+        return data
+      }
+
       const unsub = sdk.event.on("file.watcher.updated", (event) => {
         const relativePath = relative(event.properties.file)
         if (relativePath.startsWith(".git/")) return
@@ -613,6 +628,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         },
         searchFiles,
         searchFilesAndDirectories,
+        html,
         relative,
       }
     })()
