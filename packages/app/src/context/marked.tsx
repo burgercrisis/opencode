@@ -1,6 +1,7 @@
 import { useContext, type ParentProps } from "solid-js"
 import { useShiki } from "@/context"
 import { marked } from "marked"
+import markedKatex from "marked-katex-extension"
 import markedShiki from "marked-shiki"
 import { bundledLanguages, type BundledLanguage } from "shiki"
 import { MarkedContext, type NativeMarkdownParser } from "@opencode-ai/ui/context/marked"
@@ -15,6 +16,9 @@ function init(highlighter: ReturnType<typeof useShiki>) {
         },
       },
     },
+    markedKatex({
+      throwOnError: false,
+    }),
     markedShiki({
       async highlight(code, lang) {
         if (!(lang in bundledLanguages)) {
