@@ -160,7 +160,13 @@ fn spawn_sidecar(app: &AppHandle, hostname: &str, port: u32, password: &str) -> 
 
     let (mut rx, child) = cli::create_command(
         app,
-        format!("serve --hostname {hostname} --port {port}").as_str(),
+        vec![
+            "serve".to_string(),
+            "--hostname".to_string(),
+            hostname.to_string(),
+            "--port".to_string(),
+            port.to_string(),
+        ],
     )
     .env("OPENCODE_SERVER_USERNAME", "opencode")
     .env("OPENCODE_SERVER_PASSWORD", password)
