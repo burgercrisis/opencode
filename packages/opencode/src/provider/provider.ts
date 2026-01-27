@@ -15,6 +15,7 @@ import { Flag } from "../flag/flag"
 import { iife } from "@/util/iife"
 
 // Bundled providers are loaded dynamically to improve cold-start performance
+export namespace Provider {
   const BUNDLED_PROVIDERS: Record<string, (options: any) => Promise<SDK>> = {
     "@ai-sdk/amazon-bedrock": async (options) => {
       const { createAmazonBedrock } = await import("@ai-sdk/amazon-bedrock")
