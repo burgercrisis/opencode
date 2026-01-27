@@ -552,6 +552,10 @@ export namespace ACP {
       }
     }
 
+    async listSessions(params: ListSessionsRequest): Promise<ListSessionsResponse> {
+      return this.unstable_listSessions(params)
+    }
+
     async unstable_listSessions(params: ListSessionsRequest): Promise<ListSessionsResponse> {
       try {
         const cursor = params.cursor ? Number(params.cursor) : undefined
@@ -595,6 +599,10 @@ export namespace ACP {
         }
         throw e
       }
+    }
+
+    async forkSession(params: ForkSessionRequest): Promise<ForkSessionResponse> {
+      return this.unstable_forkSession(params)
     }
 
     async unstable_forkSession(params: ForkSessionRequest): Promise<ForkSessionResponse> {
@@ -658,6 +666,10 @@ export namespace ACP {
         }
         throw e
       }
+    }
+
+    async resumeSession(params: ResumeSessionRequest): Promise<ResumeSessionResponse> {
+      return this.unstable_resumeSession(params)
     }
 
     async unstable_resumeSession(params: ResumeSessionRequest): Promise<ResumeSessionResponse> {
@@ -1085,6 +1097,10 @@ export namespace ACP {
     }
 
     async setSessionModel(params: SetSessionModelRequest) {
+      return this.unstable_setSessionModel(params)
+    }
+
+    async unstable_setSessionModel(params: SetSessionModelRequest) {
       const session = this.sessionManager.get(params.sessionId)
 
       const model = Provider.parseModel(params.modelId)
