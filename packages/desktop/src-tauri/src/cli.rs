@@ -16,7 +16,7 @@ pub struct Config {
 }
 
 pub async fn get_config(app: &AppHandle) -> Option<Config> {
-    create_command(app, "debug config")
+    create_command(app, vec!["debug".to_string(), "config".to_string()])
         .output()
         .await
         .inspect_err(|e| eprintln!("Failed to read OC config: {e}"))
@@ -146,7 +146,7 @@ fn get_user_shell() -> String {
     std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string())
 }
 
-pub fn create_command(app: &tauri::AppHandle, args: &str) -> Command {
+pub fn create_command(app: &tauri::AppHandle, args: Vec<String>) -> Command {
     let state_dir = app
         .path()
         .resolve("", BaseDirectory::AppLocalData)
@@ -157,7 +157,7 @@ pub fn create_command(app: &tauri::AppHandle, args: &str) -> Command {
         .shell()
         .sidecar("opencode-cli")
         .unwrap()
-        .args(args.split_whitespace())
+        .args(args)
         .env("OPENCODE_EXPERIMENTAL_ICON_DISCOVERY", "true")
         .env("OPENCODE_CLIENT", "desktop")
         .env("XDG_STATE_HOME", &state_dir);
@@ -167,16 +167,24 @@ pub fn create_command(app: &tauri::AppHandle, args: &str) -> Command {
         let sidecar = get_sidecar_path(app);
         let shell = get_user_shell();
 
+        // Properly escape arguments for shell execution
+        let sidecar_quoted = format!("'{}'", sidecar.display().to_string().replace("'", "'\\''"));
+        let args_quoted = args
+            .iter()
+            .map(|a| format!("'{}'", a.replace("'", "'\\''")))
+            .collect::<Vec<_>>()
+            .join(" ");
+
         let cmd = if shell.ends_with("/nu") {
-            format!("^\"{}\" {}", sidecar.display(), args)
+            format!("^{} {}", sidecar_quoted, args_quoted)
         } else {
-            format!("\"{}\" {}", sidecar.display(), args)
+            format!("{} {}", sidecar_quoted, args_quoted)
         };
 
         let shell_args = if shell.ends_with("/sh") || shell.ends_with("/dash") {
-            vec!["-c", &cmd]
+            vec!["-c".to_string(), cmd]
         } else {
-            vec!["-il", "-c", &cmd]
+            vec!["-il".to_string(), "-c".to_string(), cmd]
         };
 
         app.shell()
