@@ -1020,17 +1020,29 @@ export namespace Provider {
         // Message, Reasoning, FunctionCall, LocalShellCall, CustomToolCall, WebSearchCall
         // IDs are only re-attached for Azure with store=true
         const stripIds = options["stripIds"] !== false
-        if (stripIds && model.api.npm === "@ai-sdk/openai" && opts.body && opts.method === "POST") {
+        if (
+          stripIds &&
+          model.api.npm === "@ai-sdk/openai" &&
+          opts.body &&
+          opts.method === "POST" &&
+          (opts.body as string).includes('"id"')
+        ) {
           const body = JSON.parse(opts.body as string)
           const isAzure = model.providerID.includes("azure") || model.api.npm.includes("azure")
           const keepIds = isAzure && body.store === true
           if (!keepIds && Array.isArray(body.input)) {
-            for (const item of body.input) {
-              if ("id" in item) {
-                delete item.id
+            let changed = false
+            const input = body.input.map((item: any) => {
+              if (item && typeof item === "object" && "id" in item) {
+                changed = true
+                const { id, ...rest } = item
+                return rest
               }
+              return item
+            })
+            if (changed) {
+              opts.body = JSON.stringify({ ...body, input })
             }
-            opts.body = JSON.stringify(body)
           }
         }
 
