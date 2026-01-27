@@ -345,20 +345,24 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
         .then((x) => setStore("session", reconcile((x.data ?? []).toSorted((a, b) => a.id.localeCompare(b.id)))))
 
       // blocking - include session.list when continuing a session
+      // group critical config for atomic-like update to prevent inconsistent states
+      const configPromise = Promise.all([
+        sdk.client.config.providers({}, { throwOnError: true }),
+        sdk.client.provider.list({}, { throwOnError: true }),
+        sdk.client.app.agents({}, { throwOnError: true }),
+        sdk.client.config.get({}, { throwOnError: true }),
+      ]).then(([providers, next, agents, config]) => {
+        batch(() => {
+          setStore("provider", reconcile(providers.data!.providers))
+          setStore("provider_default", reconcile(providers.data!.default))
+          setStore("provider_next", reconcile(next.data!))
+          setStore("agent", reconcile(agents.data ?? []))
+          setStore("config", reconcile(config.data!))
+        })
+      })
+
       const blockingRequests: Promise<unknown>[] = [
-        sdk.client.config.providers({}, { throwOnError: true }).then((x) => {
-          batch(() => {
-            setStore("provider", reconcile(x.data!.providers))
-            setStore("provider_default", reconcile(x.data!.default))
-          })
-        }),
-        sdk.client.provider.list({}, { throwOnError: true }).then((x) => {
-          batch(() => {
-            setStore("provider_next", reconcile(x.data!))
-          })
-        }),
-        sdk.client.app.agents({}, { throwOnError: true }).then((x) => setStore("agent", reconcile(x.data ?? []))),
-        sdk.client.config.get({}, { throwOnError: true }).then((x) => setStore("config", reconcile(x.data!))),
+        configPromise,
         ...(args.continue ? [sessionListPromise] : []),
       ]
 
