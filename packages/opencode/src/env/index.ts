@@ -7,7 +7,13 @@ export namespace Env {
 
   export function get(key: string) {
     const env = state()
-    return env[key]
+    const value = env[key]
+    if (value !== undefined) return value
+
+    // Case-insensitive lookup as fallback
+    const upper = key.toUpperCase()
+    const found = Object.keys(env).find((k) => k.toUpperCase() === upper)
+    return found ? env[found] : undefined
   }
 
   export function all() {
