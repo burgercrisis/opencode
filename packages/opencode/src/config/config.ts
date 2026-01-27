@@ -1156,6 +1156,10 @@ export namespace Config {
       return process.env[varName] || ""
     })
 
+    text = text.replace(/\{\{([^}|]+)(?:\|([^}]+))?\}\}/g, (_, varName, defaultValue) => {
+      return process.env[varName] || defaultValue || ""
+    })
+
     const fileMatches = text.match(/\{file:[^}]+\}/g)
     if (fileMatches) {
       const configDir = path.dirname(configFilepath)
