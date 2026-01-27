@@ -38,12 +38,14 @@ export function Code(props: Props) {
     let ticking = false
     const onScroll = () => {
       if (!container) return
-      if (ctx.file.active()?.path !== local.path) return
+      const path = local.path
+      if (ctx.file.active()?.path !== path) return
       if (ticking) return
       ticking = true
       requestAnimationFrame(() => {
         ticking = false
-        ctx.file.scroll(local.path, container!.scrollTop)
+        if (!container || ctx.file.active()?.path !== path) return
+        ctx.file.scroll(path, container.scrollTop)
       })
     }
 
@@ -201,6 +203,30 @@ export function Code(props: Props) {
   })
 
   // Highlight groups + scroll coupling
+  let groupMap = new Map<number, HTMLElement[]>()
+
+  createEffect(() => {
+    const content = html()
+    if (!container || !content) {
+      groupMap.clear()
+      return
+    }
+
+    const view = ctx.file.view(local.path)
+    // Wait for Solid to update innerHTML and for any split-diff/folding logic to run
+    queueMicrotask(() => {
+      if (!container) return
+      groupMap.clear()
+      const all = container.querySelectorAll<HTMLElement>("[data-chgrp]")
+      for (const el of Array.from(all)) {
+        const gid = parseInt(el.getAttribute("data-chgrp") || "-1", 10)
+        if (gid === -1) continue
+        if (!groupMap.has(gid)) groupMap.set(gid, [])
+        groupMap.get(gid)!.push(el)
+      }
+    })
+  })
+
   const clearHighlights = () => {
     if (!container) return
     container.querySelectorAll<HTMLElement>(".diff-selected").forEach((el) => el.classList.remove("diff-selected"))
@@ -213,21 +239,22 @@ export function Code(props: Props) {
 
     clearHighlights()
 
-    const nodes: HTMLElement[] = []
-    if (view === "diff-split") {
-      const left = container.querySelector<HTMLElement>(".diff-split pre:nth-child(1) code")
-      const right = container.querySelector<HTMLElement>(".diff-split pre:nth-child(2) code")
-      if (left)
-        nodes.push(...Array.from(left.querySelectorAll<HTMLElement>(`[data-chgrp="${idx}"][data-diff="remove"]`)))
-      if (right)
-        nodes.push(...Array.from(right.querySelectorAll<HTMLElement>(`[data-chgrp="${idx}"][data-diff="add"]`)))
-    } else {
-      const code = container.querySelector<HTMLElement>("pre code")
-      if (code) nodes.push(...Array.from(code.querySelectorAll<HTMLElement>(`[data-chgrp="${idx}"]`)))
-    }
+    const nodes = groupMap.get(idx) || []
+    const filtered =
+      view === "diff-split"
+        ? nodes.filter((n) => {
+            const diff = n.getAttribute("data-diff")
+            const pre = n.closest("pre")
+            const isLeft = pre === container?.querySelector(".diff-split pre:first-child")
+            const isRight = pre === container?.querySelector(".diff-split pre:last-child")
+            if (diff === "remove" && isLeft) return true
+            if (diff === "add" && isRight) return true
+            return false
+          })
+        : nodes
 
-    for (const n of nodes) n.classList.add("diff-selected")
-    if (scroll && nodes.length) nodes[0].scrollIntoView({ block: "center", behavior: "smooth" })
+    for (const n of filtered) n.classList.add("diff-selected")
+    if (scroll && filtered.length) filtered[0].scrollIntoView({ block: "center", behavior: "smooth" })
   }
 
   const countGroups = () => {
