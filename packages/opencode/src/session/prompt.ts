@@ -69,10 +69,10 @@ export namespace SessionPrompt {
       return data
     },
     async (current) => {
-      for (const item of Object.values(current)) {
-        item.abort.abort()
-        for (const item of item.callbacks) {
-          item.reject()
+      for (const entry of Object.values(current)) {
+        entry.abort.abort()
+        for (const cb of entry.callbacks) {
+          cb.reject()
         }
       }
     },
