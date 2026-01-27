@@ -87,6 +87,8 @@ function normalizeSelectedLines(range: SelectedLineRange): SelectedLineRange {
 const WORKSPACE_KEY = "__workspace__"
 const MAX_FILE_VIEW_SESSIONS = 20
 const MAX_VIEW_FILES = 500
+const MAX_STORE_DIRECTORIES = 5
+const MAX_STORE_FILES_PER_DIRECTORY = 100
 
 type ViewSession = ReturnType<typeof createViewSession>
 
@@ -233,7 +235,7 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
     const inflight = new Map<string, Promise<void>>()
 
     const [store, setStore] = createStore<{
-      file: Record<string, FileState>
+      file: Record<string, Record<string, FileState>>
     }>({
       file: {},
     })
@@ -241,7 +243,6 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
     createEffect(() => {
       scope()
       inflight.clear()
-      setStore("file", {})
     })
 
     const viewCache = new Map<string, ViewCacheEntry>()
@@ -294,10 +295,39 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
       return get(path)
     })
 
+    function pruneStore(directory: string, path?: string) {
+      const dirs = Object.keys(store.file)
+      if (dirs.length > MAX_STORE_DIRECTORIES) {
+        const drop = dirs.filter((d) => d !== directory).slice(0, dirs.length - MAX_STORE_DIRECTORIES)
+        for (const d of drop) {
+          setStore("file", d, undefined!)
+        }
+      }
+
+      const files = Object.keys(store.file[directory] || {})
+      if (files.length > MAX_STORE_FILES_PER_DIRECTORY) {
+        const drop = files.filter((f) => f !== path).slice(0, files.length - MAX_STORE_FILES_PER_DIRECTORY)
+        setStore(
+          "file",
+          directory,
+          produce((draft) => {
+            for (const f of drop) {
+              delete draft[f]
+            }
+          }),
+        )
+      }
+    }
+
     function ensure(path: string) {
       if (!path) return
-      if (store.file[path]) return
-      setStore("file", path, { path, name: getFilename(path) })
+      const directory = scope()
+      pruneStore(directory, path)
+      if (!store.file[directory]) {
+        setStore("file", directory, {})
+      }
+      if (store.file[directory][path]) return
+      setStore("file", directory, path, { path, name: getFilename(path) })
     }
 
     function load(input: string, options?: { force?: boolean }) {
@@ -310,7 +340,7 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
 
       ensure(path)
 
-      const current = store.file[path]
+      const current = store.file[directory]?.[path]
       if (!options?.force && current?.loaded) return Promise.resolve()
 
       const pending = inflight.get(key)
@@ -318,6 +348,7 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
 
       setStore(
         "file",
+        directory,
         path,
         produce((draft) => {
           draft.loading = true
@@ -331,6 +362,7 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
           if (scope() !== directory) return
           setStore(
             "file",
+            directory,
             path,
             produce((draft) => {
               draft.loaded = true
@@ -343,6 +375,7 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
           if (scope() !== directory) return
           setStore(
             "file",
+            directory,
             path,
             produce((draft) => {
               draft.loading = false
@@ -369,11 +402,12 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
       const path = normalize(event.properties.file)
       if (!path) return
       if (path.startsWith(".git/")) return
-      if (!store.file[path]) return
+      const directory = scope()
+      if (!store.file[directory]?.[path]) return
       load(path, { force: true })
     })
 
-    const get = (input: string) => store.file[normalize(input)]
+    const get = (input: string) => store.file[scope()]?.[normalize(input)]
 
     const scrollTop = (input: string) => view().scrollTop(normalize(input))
     const scrollLeft = (input: string) => view().scrollLeft(normalize(input))
