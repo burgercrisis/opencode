@@ -563,14 +563,36 @@ const theme: ThemeInput = {
 const highlighter = await createHighlighter({
   themes: [theme],
   langs: [],
+}).catch((e) => {
+  console.error("[shiki] failed to initialize highlighter", e)
+  return undefined
 })
 
-type ShikiContext = typeof highlighter
+type ShikiContext = {
+  ready: () => boolean
+  highlighter: () => any // ReturnType<typeof createHighlighter> but we want to avoid complex types in simple ctx
+  getLoadedLanguages: () => string[]
+  loadLanguage: (lang: any) => Promise<void>
+  codeToHtml: (code: string, options: any) => string
+}
 
 const ctx = createContext<ShikiContext>()
 
 export function ShikiProvider(props: ParentProps) {
-  return <ctx.Provider value={highlighter}>{props.children}</ctx.Provider>
+  const value: ShikiContext = {
+    ready: () => !!highlighter,
+    highlighter: () => highlighter,
+    getLoadedLanguages: () => highlighter?.getLoadedLanguages() ?? [],
+    loadLanguage: async (lang) => {
+      if (!highlighter) return
+      await highlighter.loadLanguage(lang)
+    },
+    codeToHtml: (code, options) => {
+      if (!highlighter) return code
+      return highlighter.codeToHtml(code, options)
+    },
+  }
+  return <ctx.Provider value={value}>{props.children}</ctx.Provider>
 }
 
 export function useShiki() {
