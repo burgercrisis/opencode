@@ -434,6 +434,7 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
     })
 
     return {
+      _store: store, // Export store for testing
       ready: () => view().ready(),
       normalize,
       tab,
