@@ -461,7 +461,7 @@ async function highlightCodeBlocks(html: string): Promise<string> {
 
 export type NativeMarkdownParser = (markdown: string) => Promise<string>
 
-export const { use: useMarked, provider: MarkedProvider } = createSimpleContext({
+const context = createSimpleContext({
   name: "Marked",
   init: (props: { nativeParser?: NativeMarkdownParser }) => {
     const jsParser = marked.use(
@@ -508,3 +508,6 @@ export const { use: useMarked, provider: MarkedProvider } = createSimpleContext(
     return jsParser
   },
 })
+
+export const { use: useMarked, provider: MarkedProvider, ctx: MarkedContext } = context
+

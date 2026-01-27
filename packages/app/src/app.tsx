@@ -51,6 +51,11 @@ declare global {
   }
 }
 
+function MarkedProviderWithNativeParser(props: ParentProps) {
+  const platform = usePlatform()
+  return <MarkedProvider nativeParser={platform.parseMarkdown}>{props.children}</MarkedProvider>
+}
+
 export function AppBaseProviders(props: ParentProps) {
   return (
     <MetaProvider>
@@ -61,11 +66,11 @@ export function AppBaseProviders(props: ParentProps) {
             <UiI18nBridge>
               <ErrorBoundary fallback={(error) => <ErrorPage error={error} />}>
                 <DialogProvider>
-                  <MarkedProvider>
+                  <MarkedProviderWithNativeParser>
                     <DiffComponentProvider component={Diff}>
                       <CodeComponentProvider component={Code}>{props.children}</CodeComponentProvider>
                     </DiffComponentProvider>
-                  </MarkedProvider>
+                  </MarkedProviderWithNativeParser>
                 </DialogProvider>
               </ErrorBoundary>
             </UiI18nBridge>
