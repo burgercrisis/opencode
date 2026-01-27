@@ -32,7 +32,7 @@ jobs:
           # SECURITY: Never log secrets or tokens
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           # SECURITY: Restrictive permissions - principle of least privilege
-          OPENCODE_PERMISSION: '{"bash": "deny", "webfetch": "deny", "edit": "deny", "write": "deny", "read": "deny"}'
+          OPENCODE_PERMISSION: '{"bash": "deny", "webfetch": "deny", "edit": "deny", "write": "deny", "read": "allow"}'
           # SECURITY: Prevent secret leakage in logs
           GITHUB_LOG_LEVEL: error
         with:
