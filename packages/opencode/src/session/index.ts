@@ -42,7 +42,7 @@ export namespace Session {
   export const Info = z
     .object({
       id: Identifier.schema("session"),
-      slug: z.string(),
+      slug: z.string().optional(),
       projectID: z.string(),
       directory: z.string(),
       parentID: Identifier.schema("session").optional(),
@@ -241,7 +241,11 @@ export namespace Session {
 
   export const get = fn(Identifier.schema("session"), async (id) => {
     const read = await Storage.read<Info>(["session", Instance.project.id, id])
-    return read as Info
+    // Backwards compatibility: ensure slug exists
+    if (!read.slug) {
+      read.slug = Slug.create()
+    }
+    return read
   })
 
   export const getShare = fn(Identifier.schema("session"), async (id) => {
@@ -285,7 +289,7 @@ export namespace Session {
     const result = await Storage.update<Info>(["session", project.id, id], (draft) => {
       editor(draft)
       if (options?.touch !== false) {
-        draft.time.updated = Date.now()
+        draft.time.updated = Math.max(draft.time.updated, Date.now())
       }
     })
     Bus.publish(Event.Updated, {
