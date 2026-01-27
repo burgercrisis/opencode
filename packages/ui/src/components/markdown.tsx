@@ -171,7 +171,7 @@ export function Markdown(
   const marked = useMarked()
   const i18n = useI18n()
   const [root, setRoot] = createSignal<HTMLDivElement>()
-  const [html] = createResource(
+  const [html, { mutate }] = createResource(
     () => local.text,
     async (markdown) => {
       if (isServer) return ""
@@ -183,14 +183,38 @@ export function Markdown(
         const cached = cache.get(key)
         if (cached && cached.hash === hash) {
           touch(key, cached)
+          if (cached.enhanced || !marked.enhance) {
+            return cached.html
+          }
+          // If cached but not enhanced, return cached and trigger enhancement
+          marked.enhance(cached.html).then((enhanced) => {
+            const safeEnhanced = sanitize(enhanced)
+            touch(key, { hash, html: safeEnhanced, enhanced: true })
+            mutate(safeEnhanced)
+          })
           return cached.html
         }
       }
 
-      const next = await marked.parse(markdown)
-      const safe = sanitize(next)
-      if (key && hash) touch(key, { hash, html: safe })
-      return safe
+      let finalHtml = ""
+      if (marked.fastParse && marked.enhance) {
+        const fast = await marked.fastParse(markdown)
+        const safeFast = sanitize(fast)
+        finalHtml = safeFast
+
+        // Trigger enhancement in the background
+        marked.enhance(fast).then((enhanced) => {
+          const safeEnhanced = sanitize(enhanced)
+          if (key && hash) touch(key, { hash, html: safeEnhanced, enhanced: true })
+          mutate(safeEnhanced)
+        })
+      } else {
+        const next = await marked.parse(markdown)
+        finalHtml = sanitize(next)
+      }
+
+      if (key && hash) touch(key, { hash, html: finalHtml, enhanced: false })
+      return finalHtml
     },
     { initialValue: "" },
   )
