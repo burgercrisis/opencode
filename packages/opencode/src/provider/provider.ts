@@ -806,8 +806,7 @@ export namespace Provider {
           },
           options: mergeDeep(existingModel?.options ?? {}, model.options ?? {}),
           limit: {
-            context:
-              model.limit?.context ?? existingModel?.limit?.context ?? (model.limit?.output ? 0 : 128_000),
+            context: model.limit?.context ?? existingModel?.limit?.context ?? 128_000,
             output: model.limit?.output ?? existingModel?.limit?.output ?? 0,
           },
           headers: mergeDeep(existingModel?.headers ?? {}, model.headers ?? {}),
