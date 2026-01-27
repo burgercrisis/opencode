@@ -436,30 +436,36 @@ export namespace Ripgrep {
     // we alternate: src/index.ts, docs/README.md, src/utils.ts, docs/api.md...
     // This gives a balanced view of the entire repo structure.
     let selectedCount = 0
-    let nodesAtCurrentDepth: FileNode[] = [root]
-
-    while (nodesAtCurrentDepth.length > 0 && selectedCount < limit) {
-      // Collect all children for the next BFS depth level
-      const nodesAtNextDepth: FileNode[] = []
-      for (const parent of nodesAtCurrentDepth) {
-        parent.sort()
-        nodesAtNextDepth.push(...parent.children)
-      }
-
-      // Round-robin: take 1st child from each parent, then 2nd from each, etc.
-      // This ensures fair distribution across all branches at this depth.
-      const mostChildrenAnyParentHas = Math.max(0, ...nodesAtCurrentDepth.map((n) => n.children.length))
-      roundRobin: for (let childIndex = 0; childIndex < mostChildrenAnyParentHas; childIndex++) {
+    const selectNodes = (predicate: (node: FileNode) => boolean) => {
+      let nodesAtCurrentDepth: FileNode[] = [root]
+      while (nodesAtCurrentDepth.length > 0 && selectedCount < limit) {
+        // Collect all children for the next BFS depth level
+        const nodesAtNextDepth: FileNode[] = []
         for (const parent of nodesAtCurrentDepth) {
-          const child = parent.children[childIndex]
-          if (!child) continue
-          child.select() // Also selects ancestors via parent chain
-          if (++selectedCount >= limit) break roundRobin
+          parent.sort()
+          nodesAtNextDepth.push(...parent.children)
         }
-      }
 
-      nodesAtCurrentDepth = nodesAtNextDepth
+        // Round-robin: take 1st child from each parent, then 2nd from each, etc.
+        // This ensures fair distribution across all branches at this depth.
+        const mostChildrenAnyParentHas = Math.max(0, ...nodesAtCurrentDepth.map((n) => n.children.length))
+        roundRobin: for (let childIndex = 0; childIndex < mostChildrenAnyParentHas; childIndex++) {
+          for (const parent of nodesAtCurrentDepth) {
+            const child = parent.children[childIndex]
+            if (!child || child.selected || !predicate(child)) continue
+            child.select() // Also selects ancestors via parent chain
+            if (++selectedCount >= limit) return
+          }
+        }
+
+        nodesAtCurrentDepth = nodesAtNextDepth
+      }
     }
+
+    // Pass 1: Prioritize folder structure and main root before any files
+    selectNodes((n) => n.isDir)
+    // Pass 2: Fill remaining limit with files
+    selectNodes((n) => !n.isDir)
 
     return root.render()
   }
