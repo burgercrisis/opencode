@@ -56,27 +56,31 @@ function MarkedProviderWithNativeParser(props: ParentProps) {
   return <MarkedProvider nativeParser={platform.parseMarkdown}>{props.children}</MarkedProvider>
 }
 
+function Combined(props: { providers: [any, any?][]; children: any }) {
+  return props.providers.reduceRight((acc, [Provider, providerProps]) => {
+    return <Provider {...(providerProps || {})}>{acc}</Provider>
+  }, props.children)
+}
+
 export function AppBaseProviders(props: ParentProps) {
   return (
     <MetaProvider>
       <Font />
-      <ShikiProvider>
-        <ThemeProvider>
-          <LanguageProvider>
-            <UiI18nBridge>
-              <ErrorBoundary fallback={(error) => <ErrorPage error={error} />}>
-                <DialogProvider>
-                  <MarkedProviderWithNativeParser>
-                    <DiffComponentProvider component={Diff}>
-                      <CodeComponentProvider component={Code}>{props.children}</CodeComponentProvider>
-                    </DiffComponentProvider>
-                  </MarkedProviderWithNativeParser>
-                </DialogProvider>
-              </ErrorBoundary>
-            </UiI18nBridge>
-          </LanguageProvider>
-        </ThemeProvider>
-      </ShikiProvider>
+      <Combined
+        providers={[
+          [ShikiProvider],
+          [ThemeProvider],
+          [LanguageProvider],
+          [UiI18nBridge],
+          [ErrorBoundary, { fallback: (error: any) => <ErrorPage error={error} /> }],
+          [DialogProvider],
+          [MarkedProviderWithNativeParser],
+          [DiffComponentProvider, { component: Diff }],
+          [CodeComponentProvider, { component: Code }],
+        ]}
+      >
+        {props.children}
+      </Combined>
     </MetaProvider>
   )
 }
@@ -101,58 +105,60 @@ export function AppInterface(props: { defaultUrl?: string }) {
   }
 
   return (
-    <ServerProvider defaultUrl={defaultServerUrl()}>
-      <ServerKey>
-        <GlobalSDKProvider>
-          <GlobalSyncProvider>
-            <Router
-              root={(props) => (
-                <SettingsProvider>
-                  <PermissionProvider>
-                    <LayoutProvider>
-                      <NotificationProvider>
-                        <CommandProvider>
-                          <Layout>{props.children}</Layout>
-                        </CommandProvider>
-                      </NotificationProvider>
-                    </LayoutProvider>
-                  </PermissionProvider>
-                </SettingsProvider>
-              )}
-            >
-              <Route
-                path="/"
-                component={() => (
+    <Combined
+      providers={[
+        [ServerProvider, { defaultUrl: defaultServerUrl() }],
+        [ServerKey],
+        [GlobalSDKProvider],
+        [GlobalSyncProvider],
+      ]}
+    >
+      <Router
+        root={(props) => (
+          <Combined
+            providers={[
+              [SettingsProvider],
+              [PermissionProvider],
+              [LayoutProvider],
+              [NotificationProvider],
+              [CommandProvider],
+            ]}
+          >
+            <Layout>{props.children}</Layout>
+          </Combined>
+        )}
+      >
+        <Route
+          path="/"
+          component={() => (
+            <Suspense fallback={<Loading />}>
+              <Home />
+            </Suspense>
+          )}
+        />
+        <Route path="/:dir" component={DirectoryLayout}>
+          <Route path="/" component={() => <Navigate href="session" />} />
+          <Route
+            path="/session/:id?"
+            component={(p) => (
+              <Show when={p.params.id ?? "new"}>
+                <Combined
+                  providers={[
+                    [TerminalProvider],
+                    [FileProvider],
+                    [PromptProvider],
+                    [CommentsProvider],
+                  ]}
+                >
                   <Suspense fallback={<Loading />}>
-                    <Home />
+                    <Session />
                   </Suspense>
-                )}
-              />
-              <Route path="/:dir" component={DirectoryLayout}>
-                <Route path="/" component={() => <Navigate href="session" />} />
-                <Route
-                  path="/session/:id?"
-                  component={(p) => (
-                    <Show when={p.params.id ?? "new"}>
-                      <TerminalProvider>
-                        <FileProvider>
-                          <PromptProvider>
-                            <CommentsProvider>
-                              <Suspense fallback={<Loading />}>
-                                <Session />
-                              </Suspense>
-                            </CommentsProvider>
-                          </PromptProvider>
-                        </FileProvider>
-                      </TerminalProvider>
-                    </Show>
-                  )}
-                />
-              </Route>
-            </Router>
-          </GlobalSyncProvider>
-        </GlobalSDKProvider>
-      </ServerKey>
-    </ServerProvider>
+                </Combined>
+              </Show>
+            )}
+          />
+        </Route>
+      </Router>
+    </Combined>
   )
 }
