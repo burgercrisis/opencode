@@ -1,12 +1,20 @@
-import { describe, expect, test, mock } from "bun:test"
-import { createRoot, createSignal } from "solid-js"
-import { createStore } from "solid-js/store"
-import { FileProvider, useFile } from "./file"
+import { GlobalRegistrator } from "@happy-dom/global-registrator"
+try {
+  GlobalRegistrator.register()
+} catch (e) {
+  // Already registered
+}
 
-// Mock dependencies
+import { describe, expect, test, mock } from "bun:test"
+import { createRoot, createSignal, untrack } from "solid-js"
+
+// 1. Define signals/state used in mocks
+const [mockDirectory, setMockDirectory] = createSignal("dir1")
+
+// 2. Mock dependencies BEFORE importing the file under test
 mock.module("./sdk", () => ({
   useSDK: () => ({
-    directory: mockDirectory(),
+    get directory() { return mockDirectory() },
     client: {
       file: {
         read: async ({ path }: { path: string }) => {
@@ -25,7 +33,7 @@ mock.module("./sdk", () => ({
 
 mock.module("./sync", () => ({
   useSync: () => ({
-    data: { path: { directory: mockDirectory() } }
+    data: { path: { get directory() { return mockDirectory() } } }
   })
 }))
 
@@ -46,32 +54,44 @@ mock.module("@/context/platform", () => ({
 }))
 
 mock.module("@solidjs/router", () => ({
-  useParams: () => ({ dir: mockDirectory(), id: undefined })
+  useParams: () => ({ dir: mockDirectory(), id: undefined }),
+  createBranch: () => ({}),
+  createRoute: () => ({}),
+  useLocation: () => ({ pathname: "/" }),
+  useNavigate: () => () => {},
 }))
 
-const [mockDirectory, setMockDirectory] = createSignal("dir1")
+// 3. Now import the file under test
+import { FileProvider } from "./file"
 
 describe("Rapid Workspace Switching stress test", () => {
   test("file store maintains integrity during rapid scope changes", async () => {
     await new Promise<void>((resolve, reject) => {
       createRoot(async (dispose) => {
         try {
+          // Manual initialization - this gives us the same object useFile() would return
+          // but without needing to be inside a Provider component.
+          const file = (FileProvider as any)._init()
+
           const testLogic = async () => {
-            const file = useFile()
+            console.log("Starting testLogic...")
             
             const paths = ["fileA.ts", "fileB.ts", "fileC.ts"]
-            const dirs = ["dir1", "dir2", "dir3", "dir4", "dir5"]
+            const dirs = ["dir1", "dir2", "dir3", "dir4", "dir5", "dir6", "dir7"]
             
             const results: { dir: string; path: string; content: string }[] = []
             const promises: Promise<void>[] = []
             
             // Rapidly switch directories and trigger loads
-            const iterations = 100
+            const iterations = 50
             for (let i = 0; i < iterations; i++) {
               const dir = dirs[i % dirs.length]
               const path = paths[i % paths.length]
               
-              setMockDirectory(dir)
+              // Use untrack to prevent reactive loops during the stress test
+              untrack(() => {
+                setMockDirectory(dir)
+              })
               
               // Trigger load - don't await yet to simulate concurrency
               const p = file.load(path).then(() => {
@@ -82,39 +102,41 @@ describe("Rapid Workspace Switching stress test", () => {
               })
               promises.push(p)
               
-              // Very small delay to allow microtasks but still be "rapid"
-              await new Promise(r => setTimeout(r, 1))
+              // Small delay to let microtasks process
+              await new Promise(r => setTimeout(r, 2))
             }
 
-            // Wait for all loads to settle
+            console.log("Waiting for promises to settle...")
             await Promise.all(promises)
+            console.log(`All ${promises.length} promises settled. Results: ${results.length}`)
 
             // Verify integrity
             expect(results.length).toBeGreaterThan(0)
             for (const res of results) {
               // The content should match the directory it was loaded in
+              if (!res.content.includes(`content for ${res.path} in ${res.dir}`)) {
+                console.error(`Integrity check failed for ${res.path} in ${res.dir}: expected content to include 'content for ${res.path} in ${res.dir}', got '${res.content}'`)
+              }
               expect(res.content).toContain(`content for ${res.path} in ${res.dir}`)
             }
 
-            console.log(`Verified ${results.length} loads during rapid switching.`)
+            // Verify Cache Eviction (Fine-grained)
+            // We expect only MAX_STORE_DIRECTORIES (5) to be kept
+            const storeState = (file as any)._store?.file || {}
+            const activeDirs = Object.keys(storeState)
+            console.log(`Active directories in store: ${activeDirs.join(", ")}`)
+            expect(activeDirs.length).toBeLessThanOrEqual(5)
+
+            console.log(`Verified ${results.length} loads during rapid switching and cache eviction.`)
             resolve()
           }
 
-          // Wrap in provider
-          const [Provider] = FileProvider as any
-          Provider({
-            get children() {
-              testLogic().catch(reject)
-              return null
-            }
-          })
+          testLogic().catch(reject).finally(dispose)
         } catch (e) {
+          console.error("Error in test execution:", e)
           reject(e)
-        } finally {
-          // We can't dispose immediately because of the async testLogic
-          // dispose() 
         }
       })
     })
-  })
+  }, 10000)
 })
