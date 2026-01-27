@@ -57,6 +57,7 @@
     "ghostty-web": "0.3.0",
     "luxon": "catalog:",
     "marked": "catalog:",
+    "marked-katex-extension": "5.1.6",
     "marked-shiki": "catalog:",
     "remeda": "catalog:",
     "shiki": "catalog:",
