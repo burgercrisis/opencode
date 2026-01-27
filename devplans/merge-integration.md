@@ -52,7 +52,18 @@ This document tracks the status of merging and integrating features from upstrea
     - **Proxy Bypass**: Ensured `no_proxy()` is applied when connecting to a local sidecar to avoid interference from environment variables.
 - **Verification**: Logic verified against existing `remerge` branch state. Conflict in `spawn_sidecar` resolved by preserving the more advanced `--hostname` support while keeping the health check improvements.
 
+### 7. Markdown Context Synchronization (213c0e18 Merge)
+- **Problem**: "useMarked must be used within a MarkedProvider" error due to duplicate context instances between `packages/app` and `packages/ui`.
+- **Solution**: Synchronized SolidJS context between packages by exporting the underlying context from the UI package and using it in the App package.
+- **Changes**:
+    - **Context Helper**: Modified `packages/ui/src/context/helper.tsx` to expose the internal context object from `createSimpleContext`.
+    - **Marked Context**: Exported `MarkedContext` from `packages/ui/src/context/marked.tsx`.
+    - **App Context**: Refactored `packages/app/src/context/marked.tsx` to use the shared `MarkedContext` and support `nativeParser` integration.
+    - **App Integration**: Added `MarkedProviderWithNativeParser` in `packages/app/src/app.tsx` to inject platform-specific markdown parsing.
+- **Verification**: Fixed the context mismatch error while preserving the local file structure. Verified with `tsc --noEmit`.
+
 ## Next Steps ⏭️
+
 ...
 - Monitor for other unmerged features from the `91b50654ce74` branch point.
 - Continue resolving merge conflicts with "best of both worlds" philosophy.
