@@ -15,7 +15,10 @@ export const ServeCommand = cmd({
     const server = Server.listen(opts)
     console.log(`opencode server listening on http://${server.hostname}:${server.port}`)
 
+    let shuttingDown = false
     const shutdown = async (signal: string) => {
+      if (shuttingDown) return
+      shuttingDown = true
       console.log(`Received ${signal}, shutting down...`)
       await server.stop()
       process.exit(0)
@@ -23,11 +26,12 @@ export const ServeCommand = cmd({
 
     process.on("SIGINT", () => shutdown("SIGINT"))
     process.on("SIGTERM", () => shutdown("SIGTERM"))
+    process.on("SIGHUP", () => shutdown("SIGHUP"))
     if (process.platform === "win32") {
       process.on("SIGBREAK", () => shutdown("SIGBREAK"))
     }
 
     await new Promise(() => {})
-    await server.stop()
+    await shutdown("EXIT")
   },
 })
