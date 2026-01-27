@@ -186,16 +186,19 @@ export function processPowerShellOutput(output: string, command: string): {outpu
   )
 
   // Detect actual PowerShell errors that should result in non-zero exit codes
-  // Focus on Write-Error and other terminal error conditions
+  // We look for:
+  // 1. Our own "Error: " prefix added by replacements above
+  // 2. PowerShell's characteristic error markers (+ CategoryInfo, + FullyQualifiedErrorId)
+  // 3. Explicit error commands (Write-Error, throw)
+  // 4. Common Exception patterns (e.g., System.NullReferenceException: ...)
   const hasErrors = (
+    processed.includes("Error: ") ||
     processed.includes("Write-Error") ||
     processed.includes("throw") ||
-    processed.includes("Exception") ||
-    processed.includes("not recognized") ||
-    processed.includes("not found") ||
-    processed.includes("cannot be found") ||
-    processed.includes("Object reference not set") ||
-    processed.includes("NullReferenceException")
+    /\+ CategoryInfo\s+:/.test(processed) ||
+    /\+ FullyQualifiedErrorId\s+:/.test(processed) ||
+    // Match "Exception:" or common exception names at start of line or after space
+     /(?:^|\s)(?:[\w.]+Exception|Exception):/.test(processed)
   )
 
   return { output: processed, hasErrors }
@@ -475,60 +478,6 @@ export const BashTool = Tool.define("bash", async () => {
       }
 
       let exitCode = Shell.normalizeExitCode(proc.exitCode, hasErrors)
-
-      // Special handling for PowerShell exit codes
-      if (Shell.isPowerShellCommand(processedCommand)) {
-        // Don't treat debug output as errors
-        // We need to be careful not to flag exit code 0 as failure just because "Write-Debug" is in the output
-        // This is especially important for commands with -Debug or -Verbose flags as they may produce debug output
-        // But don't skip if the command contains error-producing cmdlets like Write-Error, Throw, etc.
-        const hasDebugVerbose = /-(?:Debug|Verbose)(?:\s|$)/i.test(processedCommand)
-        const hasErrorCmdlets = /\b(Write-Error|Throw|Stop-Process|Exit)\b/i.test(processedCommand)
-        
-        // If we have errors but also debug flags, we might want to ignore errors unless they are explicit error cmdlets
-        // Note: we check proc.exitCode === 0 because exitCode might have been normalized to 1 by Shell.normalizeExitCode
-        if (proc.exitCode === 0 && hasErrors && hasDebugVerbose && !hasErrorCmdlets) {
-          // Reset exit code to 0 if we think it's just debug noise
-          exitCode = 0
-        }
-        
-        // Ensure explicit error cmdlets always fail
-        if (exitCode === 0 && hasErrorCmdlets && hasErrors) {
-          exitCode = 1
-        }
-      }
-
-      // CMD-specific exit code normalization
-      if (process.platform === "win32") {
-        // Handle special CMD exit codes
-        if (exitCode === 1 || exitCode === 127) {
-          // Check if this should be a different exit code based on the command
-          if (processedCommand.includes("call") && processedCommand.includes("nonexistent")) {
-            exitCode = 2 // Expected exit code for call nonexistent.bat
-          } else if (processedCommand.includes("nonexistent_command")) {
-            exitCode = 9009 // Expected exit code for nonexistent command
-          } else if (processedCommand.includes("dir") && processedCommand.includes("2>&1") && processedCommand.includes("findstr")) {
-            // Pipe operations with error redirection should succeed if findstr finds the pattern
-            exitCode = 0 // Expected exit code for successful pipe operation
-          }
-        }
-        // Handle if not exist command - should return exit code 1 when condition is true
-        if (processedCommand.includes("if not exist") && exitCode === 0) {
-          // Check if the file actually doesn't exist (which would make the condition true)
-          const match = processedCommand.match(/if not exist\s+([^\s]+)/i)
-          if (match) {
-            const filename = match[1]
-            const fs = await import('fs/promises')
-            try {
-              await fs.access(filename)
-              // File exists, so condition is false - exit code 0 is correct
-            } catch (error) {
-              // File doesn't exist, so condition is true - should return exit code 1
-              exitCode = 1
-            }
-          }
-        }
-      }
 
       const resultMetadata: string[] = []
 
