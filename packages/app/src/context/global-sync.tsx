@@ -155,7 +155,13 @@ function createGlobalSync() {
   }
 
   const [projectCache, setProjectCache, , projectCacheReady] = persisted(
-    Persist.global("globalSync.project", ["globalSync.project.v1"]),
+    {
+      ...Persist.global("globalSync.project", ["globalSync.project.v1"]),
+      migrate: (val: any) => {
+        if (Array.isArray(val)) return { value: val }
+        return val
+      },
+    },
     createStore({ value: [] as Project[] }),
   )
 
@@ -229,7 +235,13 @@ function createGlobalSync() {
     if (!children[directory]) {
       const vcs = runWithOwner(owner, () =>
         persisted(
-          Persist.workspace(directory, "vcs", ["vcs.v1"]),
+          {
+            ...Persist.workspace(directory, "vcs", ["vcs.v1"]),
+            migrate: (val: any) => {
+              if (val && typeof val === "object" && "branch" in val) return { value: val }
+              return val
+            },
+          },
           createStore({ value: undefined as VcsInfo | undefined }),
         ),
       )
@@ -240,7 +252,13 @@ function createGlobalSync() {
 
       const meta = runWithOwner(owner, () =>
         persisted(
-          Persist.workspace(directory, "project", ["project.v1"]),
+          {
+            ...Persist.workspace(directory, "project", ["project.v1"]),
+            migrate: (val: any) => {
+              if (val && typeof val === "object" && ("name" in val || "commands" in val)) return { value: val }
+              return val
+            },
+          },
           createStore({ value: undefined as ProjectMeta | undefined }),
         ),
       )
@@ -249,7 +267,13 @@ function createGlobalSync() {
 
       const icon = runWithOwner(owner, () =>
         persisted(
-          Persist.workspace(directory, "icon", ["icon.v1"]),
+          {
+            ...Persist.workspace(directory, "icon", ["icon.v1"]),
+            migrate: (val: any) => {
+              if (typeof val === "string") return { value: val }
+              return val
+            },
+          },
           createStore({ value: undefined as string | undefined }),
         ),
       )
