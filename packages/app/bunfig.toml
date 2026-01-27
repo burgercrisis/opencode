@@ -1,2 +1,2 @@
 [test]
-preload = ["./happydom.ts"]
+jsx-import-source = "solid-js"
