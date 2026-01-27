@@ -7,6 +7,14 @@ import { MarkedContext, type NativeMarkdownParser } from "@opencode-ai/ui/contex
 
 function init(highlighter: ReturnType<typeof useShiki>) {
   return marked.use(
+    {
+      renderer: {
+        link({ href, title, text }) {
+          const titleAttr = title ? ` title="${title}"` : ""
+          return `<a href="${href}"${titleAttr} class="external-link" target="_blank" rel="noopener noreferrer">${text}</a>`
+        },
+      },
+    },
     markedShiki({
       async highlight(code, lang) {
         if (!(lang in bundledLanguages)) {
