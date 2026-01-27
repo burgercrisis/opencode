@@ -14,68 +14,92 @@ import { Instance } from "../project/instance"
 import { Flag } from "../flag/flag"
 import { iife } from "@/util/iife"
 
-// Direct imports for bundled providers
-import { createAmazonBedrock, type AmazonBedrockProviderSettings } from "@ai-sdk/amazon-bedrock"
-import { createAnthropic } from "@ai-sdk/anthropic"
-import { createAzure } from "@ai-sdk/azure"
-import { createGoogleGenerativeAI } from "@ai-sdk/google"
-import { createVertex } from "@ai-sdk/google-vertex"
-import { createVertexAnthropic } from "@ai-sdk/google-vertex/anthropic"
-import { createOpenAI } from "@ai-sdk/openai"
-import { createOpenAICompatible } from "@ai-sdk/openai-compatible"
-import { createOpenRouter, type LanguageModelV2 } from "@openrouter/ai-sdk-provider"
-import { createOpenaiCompatible as createGitHubCopilotOpenAICompatible } from "./sdk/openai-compatible/src"
-import { createXai } from "@ai-sdk/xai"
-import { createMistral } from "@ai-sdk/mistral"
-import { createGroq } from "@ai-sdk/groq"
-import { createDeepInfra } from "@ai-sdk/deepinfra"
-import { createCerebras } from "@ai-sdk/cerebras"
-import { createCohere } from "@ai-sdk/cohere"
-import { createGateway } from "@ai-sdk/gateway"
-import { createTogetherAI } from "@ai-sdk/togetherai"
-import { createPerplexity } from "@ai-sdk/perplexity"
-import { createVercel } from "@ai-sdk/vercel"
-import { createGitLab } from "@gitlab/gitlab-ai-provider"
-import { ProviderTransform } from "./transform"
-
-export namespace Provider {
-  const log = Log.create({ service: "provider" })
-
-  function isGpt5OrLater(modelID: string): boolean {
-    const match = /^gpt-(\d+)/.exec(modelID)
-    if (!match) {
-      return false
-    }
-    return Number(match[1]) >= 5
-  }
-
-  function shouldUseCopilotResponsesApi(modelID: string): boolean {
-    return isGpt5OrLater(modelID) && !modelID.startsWith("gpt-5-mini")
-  }
-
-  const BUNDLED_PROVIDERS: Record<string, (options: any) => SDK> = {
-    "@ai-sdk/amazon-bedrock": createAmazonBedrock,
-    "@ai-sdk/anthropic": createAnthropic,
-    "@ai-sdk/azure": createAzure,
-    "@ai-sdk/google": createGoogleGenerativeAI,
-    "@ai-sdk/google-vertex": createVertex,
-    "@ai-sdk/google-vertex/anthropic": createVertexAnthropic,
-    "@ai-sdk/openai": createOpenAI,
-    "@ai-sdk/openai-compatible": createOpenAICompatible,
-    "@openrouter/ai-sdk-provider": createOpenRouter,
-    "@ai-sdk/xai": createXai,
-    "@ai-sdk/mistral": createMistral,
-    "@ai-sdk/groq": createGroq,
-    "@ai-sdk/deepinfra": createDeepInfra,
-    "@ai-sdk/cerebras": createCerebras,
-    "@ai-sdk/cohere": createCohere,
-    "@ai-sdk/gateway": createGateway,
-    "@ai-sdk/togetherai": createTogetherAI,
-    "@ai-sdk/perplexity": createPerplexity,
-    "@ai-sdk/vercel": createVercel,
-    "@gitlab/gitlab-ai-provider": createGitLab,
-    // @ts-ignore (TODO: kill this code so we dont have to maintain it)
-    "@ai-sdk/github-copilot": createGitHubCopilotOpenAICompatible,
+// Bundled providers are loaded dynamically to improve cold-start performance
+  const BUNDLED_PROVIDERS: Record<string, (options: any) => Promise<SDK>> = {
+    "@ai-sdk/amazon-bedrock": async (options) => {
+      const { createAmazonBedrock } = await import("@ai-sdk/amazon-bedrock")
+      return createAmazonBedrock(options)
+    },
+    "@ai-sdk/anthropic": async (options) => {
+      const { createAnthropic } = await import("@ai-sdk/anthropic")
+      return createAnthropic(options)
+    },
+    "@ai-sdk/azure": async (options) => {
+      const { createAzure } = await import("@ai-sdk/azure")
+      return createAzure(options)
+    },
+    "@ai-sdk/google": async (options) => {
+      const { createGoogleGenerativeAI } = await import("@ai-sdk/google")
+      return createGoogleGenerativeAI(options)
+    },
+    "@ai-sdk/google-vertex": async (options) => {
+      const { createVertex } = await import("@ai-sdk/google-vertex")
+      return createVertex(options)
+    },
+    "@ai-sdk/google-vertex/anthropic": async (options) => {
+      const { createVertexAnthropic } = await import("@ai-sdk/google-vertex/anthropic")
+      return createVertexAnthropic(options)
+    },
+    "@ai-sdk/openai": async (options) => {
+      const { createOpenAI } = await import("@ai-sdk/openai")
+      return createOpenAI(options)
+    },
+    "@ai-sdk/openai-compatible": async (options) => {
+      const { createOpenAICompatible } = await import("@ai-sdk/openai-compatible")
+      return createOpenAICompatible(options)
+    },
+    "@openrouter/ai-sdk-provider": async (options) => {
+      const { createOpenRouter } = await import("@openrouter/ai-sdk-provider")
+      return createOpenRouter(options)
+    },
+    "@ai-sdk/xai": async (options) => {
+      const { createXai } = await import("@ai-sdk/xai")
+      return createXai(options)
+    },
+    "@ai-sdk/mistral": async (options) => {
+      const { createMistral } = await import("@ai-sdk/mistral")
+      return createMistral(options)
+    },
+    "@ai-sdk/groq": async (options) => {
+      const { createGroq } = await import("@ai-sdk/groq")
+      return createGroq(options)
+    },
+    "@ai-sdk/deepinfra": async (options) => {
+      const { createDeepInfra } = await import("@ai-sdk/deepinfra")
+      return createDeepInfra(options)
+    },
+    "@ai-sdk/cerebras": async (options) => {
+      const { createCerebras } = await import("@ai-sdk/cerebras")
+      return createCerebras(options)
+    },
+    "@ai-sdk/cohere": async (options) => {
+      const { createCohere } = await import("@ai-sdk/cohere")
+      return createCohere(options)
+    },
+    "@ai-sdk/gateway": async (options) => {
+      const { createGateway } = await import("@ai-sdk/gateway")
+      return createGateway(options)
+    },
+    "@ai-sdk/togetherai": async (options) => {
+      const { createTogetherAI } = await import("@ai-sdk/togetherai")
+      return createTogetherAI(options)
+    },
+    "@ai-sdk/perplexity": async (options) => {
+      const { createPerplexity } = await import("@ai-sdk/perplexity")
+      return createPerplexity(options)
+    },
+    "@ai-sdk/vercel": async (options) => {
+      const { createVercel } = await import("@ai-sdk/vercel")
+      return createVercel(options)
+    },
+    "@gitlab/gitlab-ai-provider": async (options) => {
+      const { createGitLab } = await import("@gitlab/gitlab-ai-provider")
+      return createGitLab(options)
+    },
+    "@ai-sdk/github-copilot": async (options) => {
+      const { createOpenaiCompatible } = await import("./sdk/openai-compatible/src")
+      return createOpenaiCompatible(options)
+    },
   }
 
   type CustomModelLoader = (sdk: any, model: Model, options?: Record<string, any>) => Promise<any>
