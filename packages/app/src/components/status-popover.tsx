@@ -26,7 +26,11 @@ async function checkHealth(url: string, platform: ReturnType<typeof usePlatform>
   })
   return sdk.global
     .health()
-    .then((x) => ({ healthy: x.data?.healthy === true, version: x.data?.version }))
+    .then((x) => {
+      const data = x.data
+      const healthy = typeof data === "boolean" ? data : data?.healthy === true
+      return { healthy, version: (data as any)?.version }
+    })
     .catch(() => ({ healthy: false }))
 }
 
