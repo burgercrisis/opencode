@@ -1,6 +1,5 @@
 import { Log } from "@/util/log"
 import { Bonjour } from "bonjour-service"
-import os from "os"
 
 const log = Log.create({ service: "mdns" })
 
@@ -8,15 +7,15 @@ export namespace MDNS {
   let bonjour: Bonjour | undefined
   let currentPort: number | undefined
 
-  export function publish(port: number, name?: string) {
+  export function publish(port: number) {
     if (currentPort === port) return
     if (bonjour) unpublish()
 
     try {
-      const serviceName = name ?? `opencode-${os.hostname().toLowerCase()}-${port}`
+      const name = `opencode-${port}`
       bonjour = new Bonjour()
       const service = bonjour.publish({
-        name: serviceName,
+        name,
         type: "http",
         host: "opencode.local",
         port,
@@ -24,7 +23,7 @@ export namespace MDNS {
       })
 
       service.on("up", () => {
-        log.info("mDNS service published", { name: serviceName, port })
+        log.info("mDNS service published", { name, port })
       })
 
       service.on("error", (err) => {
