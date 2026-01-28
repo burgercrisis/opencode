@@ -389,28 +389,43 @@ export namespace Ripgrep {
        * Shows "[N truncated]" for directories with unselected children,
        * so users know there's more content they're not seeing.
        *
-       * @param indentLevel - Current indentation level (0 for root's children)
+       * Uses an iterative approach to avoid stack overflow on deep trees.
+       *
        * @returns Newline-separated tree with tab indentation
        */
-      render(indentLevel = 0): string {
+      render(): string {
         if (!this.selected) return ""
 
         const outputLines: string[] = []
-        // Root node has no name, so children stay at same indent level
-        const childIndentLevel = this.name ? indentLevel + 1 : indentLevel
+        const stack: { node: FileNode; indent: number; visited: boolean }[] = [{ node: this, indent: 0, visited: false }]
 
-        if (this.name) {
-          outputLines.push("\t".repeat(indentLevel) + this.name + (this.isDir ? "/" : ""))
-        }
+        while (stack.length > 0) {
+          const entry = stack.pop()!
+          const { node, indent, visited } = entry
 
-        for (const child of this.children) {
-          const renderedChild = child.render(childIndentLevel)
-          if (renderedChild) outputLines.push(renderedChild)
-        }
+          if (!node.selected) continue
 
-        const unselectedChildCount = this.children.filter((c) => !c.selected).length
-        if (unselectedChildCount > 0) {
-          outputLines.push("\t".repeat(childIndentLevel) + `[${unselectedChildCount} truncated]`)
+          const childIndent = node.name ? indent + 1 : indent
+
+          if (!visited) {
+            if (node.name) {
+              outputLines.push("\t".repeat(indent) + node.name + (node.isDir ? "/" : ""))
+            }
+
+            // Push an entry to handle the truncated marker AFTER children
+            stack.push({ node, indent: childIndent, visited: true })
+
+            // Push children in reverse order to maintain alphabetical order when popping
+            for (let i = node.children.length - 1; i >= 0; i--) {
+              stack.push({ node: node.children[i], indent: childIndent, visited: false })
+            }
+          } else {
+            // This is the post-order visit for this node to handle truncation markers
+            const unselectedChildCount = node.children.filter((c) => !c.selected).length
+            if (unselectedChildCount > 0) {
+              outputLines.push("\t".repeat(indent) + `[${unselectedChildCount} truncated]`)
+            }
+          }
         }
 
         return outputLines.join("\n")
@@ -449,7 +464,7 @@ export namespace Ripgrep {
         // Round-robin: take 1st child from each parent, then 2nd from each, etc.
         // This ensures fair distribution across all branches at this depth.
         const mostChildrenAnyParentHas = Math.max(0, ...nodesAtCurrentDepth.map((n) => n.children.length))
-        roundRobin: for (let childIndex = 0; childIndex < mostChildrenAnyParentHas; childIndex++) {
+        for (let childIndex = 0; childIndex < mostChildrenAnyParentHas; childIndex++) {
           for (const parent of nodesAtCurrentDepth) {
             const child = parent.children[childIndex]
             if (!child || child.selected || !predicate(child)) continue
