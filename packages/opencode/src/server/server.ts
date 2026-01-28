@@ -363,7 +363,7 @@ export namespace Server {
             },
           }),
           async (c) => {
-            const skills = await Skill.list()
+            const skills = await Skill.all()
             return c.json(skills)
           },
         )
