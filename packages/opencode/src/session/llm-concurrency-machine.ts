@@ -28,11 +28,13 @@ export namespace LLMConcurrencyMachine {
   export type Limits = {
     staleMs: number
     rules: Rule[]
+    perModelLimit?: number
   }
 
   export type Snapshot = {
     total: number
     counts: Record<string, number>
+    models: Record<string, number>
   }
 
   export type Lease = {
@@ -76,22 +78,18 @@ export namespace LLMConcurrencyMachine {
   }
 
   export function limits(cfg: Config.Info): Limits | undefined {
-    // @ts-expect-error
-    const llm = cfg.experimental?.llmConcurrency
-    if (!llm) return
+    const concurrency = cfg.llm?.concurrency
+    if (!concurrency) return
 
-    const global = llm.global
-    if (!global?.limits) return
+    const rules: Rule[] = []
+    if (concurrency.global !== undefined) {
+      rules.push(compile({ pattern: "*", limit: concurrency.global }))
+    }
 
-    const entries = Object.entries(global.limits)
-    if (entries.length === 0) return
-
-    const rules = entries.map(([pattern, limit]) => compile({ pattern, limit: limit as number }))
-
-    const staleMs = global.staleMs ?? DEFAULT_STALE_MS
     return {
-      staleMs,
+      staleMs: concurrency.staleMs ?? DEFAULT_STALE_MS,
       rules,
+      perModelLimit: concurrency.model,
     }
   }
 
@@ -171,9 +169,10 @@ export namespace LLMConcurrencyMachine {
     const result: Snapshot = {
       total: 0,
       counts: {},
+      models: {},
     }
 
-    const anyRulesNeedKey = rules.some((rule) => !rule.all)
+    const anyRulesNeedKey = rules.some((rule) => !rule.all) || limits.perModelLimit !== undefined
     for (const name of entries) {
       if (!name.startsWith("lease_")) continue
       if (!name.endsWith(".json")) continue
@@ -203,6 +202,8 @@ export namespace LLMConcurrencyMachine {
       if (typeof modelName !== "string") continue
 
       const key = bucketKey({ providerID, modelName })
+      result.models[key] = (result.models[key] ?? 0) + 1
+
       for (const rule of rules) {
         if (rule.all) continue
         if (!rule.match(key)) continue
@@ -222,6 +223,11 @@ export namespace LLMConcurrencyMachine {
     const result: Snapshot = {
       total: keys.length,
       counts: {},
+      models: {},
+    }
+
+    for (const key of keys) {
+      result.models[key] = (result.models[key] ?? 0) + 1
     }
 
     for (const rule of limits.rules) {
@@ -250,6 +256,16 @@ export namespace LLMConcurrencyMachine {
       const req = request.counts[rule.pattern] ?? (rule.all ? request.total : 0)
       if (cur + req <= rule.limit) continue
       blocks.push(rule.pattern)
+    }
+
+    if (limits.perModelLimit !== undefined) {
+      for (const key of Object.keys(request.models)) {
+        const cur = current.models[key] ?? 0
+        const req = request.models[key] ?? 0
+        if (cur + req > limits.perModelLimit) {
+          blocks.push(`model:${key}`)
+        }
+      }
     }
 
     return blocks
