@@ -2,7 +2,10 @@ import { sortBy, pipe } from "remeda"
 
 export namespace Wildcard {
   export function match(str: string, pattern: string) {
-    let escaped = pattern
+    const s = str.replace(/\\/g, "/")
+    const p = pattern.replace(/\\/g, "/")
+
+    let escaped = p
       .replace(/[.+^${}()|[\]\\]/g, "\\$&") // escape special regex chars
       .replace(/\*/g, ".*") // * becomes .*
       .replace(/\?/g, ".") // ? becomes .
@@ -13,7 +16,7 @@ export namespace Wildcard {
       escaped = escaped.slice(0, -3) + "( .*)?"
     }
 
-    return new RegExp("^" + escaped + "$", "s").test(str)
+    return new RegExp("^" + escaped + "$", "s").test(s)
   }
 
   export function all(input: string, patterns: Record<string, any>) {
