@@ -177,15 +177,25 @@ export namespace Shell {
   }
 
   /**
-   * Detects if PowerShell arguments contain debug or verbose flags
+   * Detects if PowerShell arguments contain common parameters that should be moved to preferences
    * @param argsString - The PowerShell arguments string to analyze
-   * @returns Object with hasDebug and hasVerbose boolean properties
    */
-  function detectDebugAndVerboseFlags(argsString: string): { hasDebug: boolean; hasVerbose: boolean } {
+  function detectCommonPreferences(argsString: string): {
+    hasDebug: boolean
+    hasVerbose: boolean
+    errorAction?: string
+    warningAction?: string
+  } {
     const hasDebug = /-(?:Debug|d)(?:\s+|$)/i.test(argsString)
     const hasVerbose = /-(?:Verbose|v)(?:\s+|$)/i.test(argsString)
 
-    return { hasDebug, hasVerbose }
+    const errorActionMatch = argsString.match(/-ErrorAction\s+(\w+)/i)
+    const errorAction = errorActionMatch ? errorActionMatch[1] : undefined
+
+    const warningActionMatch = argsString.match(/-WarningAction\s+(\w+)/i)
+    const warningAction = warningActionMatch ? warningActionMatch[1] : undefined
+
+    return { hasDebug, hasVerbose, errorAction, warningAction }
   }
 
   /**
@@ -271,40 +281,61 @@ export namespace Shell {
   }
 
   /**
-   * Transforms a PowerShell command to handle common parameters like -Debug and -Verbose
-   * by injecting preference variables into the command body.
+   * Parses a PowerShell argument string into an array of arguments,
+   * specifically handling the -Command/-c flag and injecting preferences.
    */
-  function transformPowerShellCommand(argsString: string): string {
-    const { hasDebug, hasVerbose } = detectDebugAndVerboseFlags(argsString)
-    if (!hasDebug && !hasVerbose) return argsString
-
-    // If we have debug or verbose, we need to ensure they are handled inside -Command
-    // Remove the flags from the argsString
-    let cleaned = argsString
-      .replace(/-(?:Debug|d)(?:\s+|$)/gi, " ")
-      .replace(/-(?:Verbose|v)(?:\s+|$)/gi, " ")
-      .trim()
-
-    // Find the -Command or -c flag and its content
-    const commandMatch = cleaned.match(/^(-Command|-c)(?:\s+|$)(.*)$/i)
+  function getPowerShellArgs(argsString: string): string[] {
+    const { hasDebug, hasVerbose, errorAction, warningAction } = detectCommonPreferences(argsString)
     
-    let preferences = ""
-    if (hasDebug) preferences += "$DebugPreference='Continue'; "
-    if (hasVerbose) preferences += "$VerbosePreference='Continue'; "
+    // Find the -Command or -c flag and its content
+    const commandMatch = argsString.match(/(-Command|-c)(?:\s+|$)(.*)$/i)
+    
+    const preferences = [
+      hasDebug ? "$DebugPreference='Continue';" : "",
+      hasVerbose ? "$VerbosePreference='Continue';" : "",
+      errorAction ? `$ErrorActionPreference='${errorAction}';` : "",
+      warningAction ? `$WarningActionPreference='${warningAction}';` : "",
+    ].filter(Boolean).join(" ")
 
     if (commandMatch) {
-      const [, flag, body] = commandMatch
-      let commandBody = body.trim()
-      // Remove surrounding quotes if present
-      if ((commandBody.startsWith('"') && commandBody.endsWith('"')) ||
-          (commandBody.startsWith("'") && commandBody.endsWith("'"))) {
-        commandBody = commandBody.slice(1, -1)
+      const flag = commandMatch[1]
+      const rawBody = commandMatch[2].trim()
+      
+      // Remove surrounding quotes if present to inject preferences inside
+      const body = ((rawBody.startsWith('"') && rawBody.endsWith('"')) ||
+                    (rawBody.startsWith("'") && rawBody.endsWith("'")))
+        ? rawBody.slice(1, -1)
+        : rawBody
+
+      // Extract flags BEFORE the -Command flag
+      const beforeCommand = argsString.slice(0, commandMatch.index).trim()
+      const resultArgs: string[] = ["-NoProfile"]
+      
+      if (beforeCommand) {
+        // Clean and split flags. This is a simple split, but usually enough for PS flags
+        const cleanedBefore = beforeCommand
+          .replace(/-(?:Debug|d)(?:\s+|$)/gi, " ")
+          .replace(/-(?:Verbose|v)(?:\s+|$)/gi, " ")
+          .replace(/-ErrorAction\s+\w+/gi, " ")
+          .replace(/-WarningAction\s+\w+/gi, " ")
+          .split(/\s+/)
+          .filter(Boolean)
+        resultArgs.push(...cleanedBefore)
       }
-      return `${flag} "${preferences}${commandBody}"`
+
+      resultArgs.push(flag, preferences ? `${preferences} ${body}` : body)
+      return resultArgs
     }
 
-    // If no -Command flag found, wrap the whole thing in -Command
-    return `-Command "${preferences}${cleaned}"`
+    // If no -Command flag found, wrap everything in -Command
+    const cleaned = argsString
+      .replace(/-(?:Debug|d)(?:\s+|$)/gi, " ")
+      .replace(/-(?:Verbose|v)(?:\s+|$)/gi, " ")
+      .replace(/-ErrorAction\s+\w+/gi, " ")
+      .replace(/-WarningAction\s+\w+/gi, " ")
+      .trim()
+
+    return ["-NoProfile", "-Command", preferences ? `${preferences} ${cleaned}` : cleaned]
   }
 
   /**
@@ -330,20 +361,19 @@ export namespace Shell {
       if (match) {
         const [, requestedShell, argsString] = match
 
-        // Determine which PowerShell executable to use
-        let executable = "powershell.exe"
-        if (requestedShell.toLowerCase() === "pwsh") {
-          executable = Bun.which("pwsh.exe") || Bun.which("pwsh") || "powershell.exe"
-        }
+        const isPwsh = requestedShell.toLowerCase() === "pwsh"
+        const executable = isPwsh
+          ? (Bun.which("pwsh.exe") || Bun.which("pwsh") || "powershell.exe")
+          : "powershell.exe"
 
-        // Transform command to handle -Debug/-Verbose if present
-        const transformedArgs = transformPowerShellCommand(argsString)
+        // Get array of arguments for PowerShell
+        const psArgs = getPowerShellArgs(argsString)
 
         return {
           executable,
-          args: [transformedArgs],
+          args: psArgs,
           useShellFlag: false,
-          windowsVerbatimArguments: true,
+          windowsVerbatimArguments: false, // Use standard quoting for PS
         }
       }
     }
