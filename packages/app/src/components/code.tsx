@@ -1,6 +1,7 @@
 import { bundledLanguages, type BundledLanguage, type ShikiTransformer } from "shiki"
 import { splitProps, type ComponentProps, createEffect, onMount, onCleanup, createMemo, createResource } from "solid-js"
-import { useLocal, useShiki } from "@/context"
+import { useLocal } from "@/context/local"
+import { useShiki } from "@/context/shiki"
 import { getFileExtension, getNodeOffsetInLine, getSelectionInContainer } from "@/utils"
 
 interface Props extends ComponentProps<"div"> {
