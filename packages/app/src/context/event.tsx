@@ -1,7 +1,8 @@
 import { createContext, useContext, type ParentProps, onCleanup } from "solid-js"
 import { createEventBus } from "@solid-primitives/event-bus"
 import type { Event as SDKEvent } from "@opencode-ai/sdk/v2/client"
-import { useSDK, useGlobalSDK } from "@/context"
+import { useSDK } from "./sdk"
+import { useGlobalSDK } from "./global-sdk"
 
 export type Event = SDKEvent // can extend with custom events later
 
