@@ -13,6 +13,24 @@ import { Env } from "../env"
 import { Instance } from "../project/instance"
 import { Flag } from "../flag/flag"
 import { iife } from "@/util/iife"
+import { ProviderTransform } from "./transform"
+import type { AmazonBedrockProviderSettings } from "@ai-sdk/amazon-bedrock"
+import type { LanguageModelV2 } from "@openrouter/ai-sdk-provider"
+
+export namespace Provider {
+  const log = Log.create({ service: "provider" })
+
+  function isGpt5OrLater(modelID: string): boolean {
+    const match = /^gpt-(\d+)/.exec(modelID)
+    if (!match) {
+      return false
+    }
+    return Number(match[1]) >= 5
+  }
+
+  function shouldUseCopilotResponsesApi(modelID: string): boolean {
+    return isGpt5OrLater(modelID) && !modelID.startsWith("gpt-5-mini")
+  }
 
 // Bundled providers are loaded dynamically to improve cold-start performance
   const BUNDLED_PROVIDERS: Record<string, (options: any) => Promise<SDK>> = {
@@ -830,7 +848,7 @@ import { iife } from "@/util/iife"
           },
           options: mergeDeep(existingModel?.options ?? {}, model.options ?? {}),
           limit: {
-            context: model.limit?.context ?? existingModel?.limit?.context ?? 128_000,
+            context: model.limit?.context ?? existingModel?.limit?.context ?? 0,
             output: model.limit?.output ?? existingModel?.limit?.output ?? 0,
           },
           headers: mergeDeep(existingModel?.headers ?? {}, model.headers ?? {}),
@@ -1083,7 +1101,7 @@ import { iife } from "@/util/iife"
       const bundledFn = BUNDLED_PROVIDERS[bundledKey]
       if (bundledFn) {
         log.info("using bundled provider", { providerID: model.providerID, pkg: bundledKey })
-        const loaded = bundledFn({
+        const loaded = await bundledFn({
           name: model.providerID,
           ...options,
         })
