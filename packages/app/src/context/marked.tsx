@@ -1,5 +1,5 @@
 import { useContext, type ParentProps } from "solid-js"
-import { useShiki } from "@/context"
+import { useShiki } from "./shiki"
 import { marked } from "marked"
 import markedKatex from "marked-katex-extension"
 import markedShiki from "marked-shiki"
