@@ -33,11 +33,6 @@ export namespace Wildcard {
     if (patterns.length === 0) return true
     const [pattern, ...rest] = patterns
     if (pattern === "*") return matchSequence(items, rest)
-    for (let i = 0; i < items.length; i++) {
-      if (match(items[i], pattern) && matchSequence(items.slice(i + 1), rest)) {
-        return true
-      }
-    }
-    return false
+    return items.some((item, i) => match(item, pattern) && matchSequence(items.slice(i + 1), rest))
   }
 }
