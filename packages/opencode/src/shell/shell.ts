@@ -265,6 +265,46 @@ export namespace Shell {
     useShellFlag: boolean
     /** The shell to use if useShellFlag is true */
     shell?: string
+    /** Optional environment variables to merge into the process environment */
+    env?: Record<string, string>
+    windowsVerbatimArguments?: boolean
+  }
+
+  /**
+   * Transforms a PowerShell command to handle common parameters like -Debug and -Verbose
+   * by injecting preference variables into the command body.
+   */
+  function transformPowerShellCommand(argsString: string): string {
+    const { hasDebug, hasVerbose } = detectDebugAndVerboseFlags(argsString)
+    if (!hasDebug && !hasVerbose) return argsString
+
+    // If we have debug or verbose, we need to ensure they are handled inside -Command
+    // Remove the flags from the argsString
+    let cleaned = argsString
+      .replace(/-(?:Debug|d)(?:\s+|$)/gi, " ")
+      .replace(/-(?:Verbose|v)(?:\s+|$)/gi, " ")
+      .trim()
+
+    // Find the -Command or -c flag and its content
+    const commandMatch = cleaned.match(/^(-Command|-c)(?:\s+|$)(.*)$/i)
+    
+    let preferences = ""
+    if (hasDebug) preferences += "$DebugPreference='Continue'; "
+    if (hasVerbose) preferences += "$VerbosePreference='Continue'; "
+
+    if (commandMatch) {
+      const [, flag, body] = commandMatch
+      let commandBody = body.trim()
+      // Remove surrounding quotes if present
+      if ((commandBody.startsWith('"') && commandBody.endsWith('"')) ||
+          (commandBody.startsWith("'") && commandBody.endsWith("'"))) {
+        commandBody = commandBody.slice(1, -1)
+      }
+      return `${flag} "${preferences}${commandBody}"`
+    }
+
+    // If no -Command flag found, wrap the whole thing in -Command
+    return `-Command "${preferences}${cleaned}"`
   }
 
   /**
@@ -286,106 +326,24 @@ export namespace Shell {
 
     // Check for PowerShell commands first
     if (isPowerShellCommand(command)) {
-      // Extract the powershell executable and arguments
-      // Match pattern: powershell[.exe] or pwsh[.exe] <args>
       const match = command.match(/^(powershell|pwsh)(?:\.exe)?\s+(.*)$/i)
       if (match) {
         const [, requestedShell, argsString] = match
 
-        // Check for debug/verbose flags in the arguments
-        const { hasDebug, hasVerbose } = detectDebugAndVerboseFlags(argsString)
-
-        // Parse PowerShell arguments - split on -Command, -File, etc. but keep quoted strings intact
-        const args: string[] = []
-        let current = argsString.trim()
-
-        while (current.length > 0) {
-          // Check for -Command or -c flag - everything after is a single argument
-          const commandFlagMatch = current.match(/^(-Command|-c)(?:\s+|$)/i)
-          if (commandFlagMatch) {
-            args.push(commandFlagMatch[1])
-            current = current.slice(commandFlagMatch[0].length).trim()
-            // Everything remaining is the command argument
-            if (current.length > 0) {
-              // Remove surrounding quotes if present
-              let commandArg = current;
-              if ((commandArg.startsWith('"') && commandArg.endsWith('"')) ||
-                  (commandArg.startsWith("'") && commandArg.endsWith("'"))) {
-                commandArg = commandArg.slice(1, -1);
-              }
-
-              // Prepend appropriate preference variables if debug/verbose flags were detected
-              const preferenceStatements = []
-              if (hasDebug) {
-                preferenceStatements.push(`$DebugPreference='Continue'`)
-              }
-              if (hasVerbose) {
-                preferenceStatements.push(`$VerbosePreference='Continue'`)
-              }
-              if (preferenceStatements.length > 0) {
-                commandArg = `${preferenceStatements.join('; ')}; ${commandArg}`
-              }
-
-              args.push(commandArg)
-            }
-            break
-          }
-
-          // Match other flags (starts with -)
-          const flagMatch = current.match(/^(-\w+)(?:\s+|$)/)
-          if (flagMatch) {
-            // Preserve all flags including -Debug and -Verbose since we handle them via preference variables
-            const flag = flagMatch[1]
-            args.push(flag)
-            current = current.slice(flagMatch[0].length).trim()
-            continue
-          }
-
-          // Match quoted string (double quotes)
-          const quotedMatch = current.match(/^"((?:[^"\\]|\\.)*)"/s)
-          if (quotedMatch) {
-            args.push(quotedMatch[1])
-            current = current.slice(quotedMatch[0].length).trim()
-            continue
-          }
-
-          // Match single quoted string
-          const singleQuotedMatch = current.match(/^'((?:[^'\\]|\\.)*)'/s)
-          if (singleQuotedMatch) {
-            args.push(singleQuotedMatch[1])
-            current = current.slice(singleQuotedMatch[0].length).trim()
-            continue
-          }
-
-          // Match unquoted word
-          const wordMatch = current.match(/^(\S+)/)
-          if (wordMatch) {
-            args.push(wordMatch[1])
-            current = current.slice(wordMatch[0].length).trim()
-            continue
-          }
-
-          // Should not reach here, but break to prevent infinite loop
-          break
-        }
-
         // Determine which PowerShell executable to use
         let executable = "powershell.exe"
         if (requestedShell.toLowerCase() === "pwsh") {
-          // Try pwsh.exe first, fall back to powershell.exe if not available
-          const pwshPath = Bun.which("pwsh.exe") || Bun.which("pwsh")
-          if (pwshPath) {
-            executable = "pwsh.exe"
-          } else {
-            // pwsh.exe not found, use powershell.exe
-            executable = "powershell.exe"
-          }
+          executable = Bun.which("pwsh.exe") || Bun.which("pwsh") || "powershell.exe"
         }
+
+        // Transform command to handle -Debug/-Verbose if present
+        const transformedArgs = transformPowerShellCommand(argsString)
 
         return {
           executable,
-          args,
+          args: [transformedArgs],
           useShellFlag: false,
+          windowsVerbatimArguments: true,
         }
       }
     }
