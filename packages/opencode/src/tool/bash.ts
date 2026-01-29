@@ -377,6 +377,11 @@ export const BashTool = Tool.define("bash", async () => {
         })
       }
 
+      // Log regardless of OPENCODE_DEBUG_SHELL for now to see why tests fail
+      console.log(`[BashTool] Executing: ${processedCommand}`)
+      console.log(`[BashTool] Executable: ${spawnConfig.executable}`)
+      console.log(`[BashTool] Args: ${JSON.stringify(spawnConfig.args)}`)
+
       const proc = spawnConfig.useShellFlag
         ? spawn(spawnConfig.executable, {
             shell: spawnConfig.shell,
@@ -423,12 +428,12 @@ export const BashTool = Tool.define("bash", async () => {
 
       proc.stdout?.on("data", (chunk) => {
         const text = chunk.toString()
-        if (Flag.OPENCODE_DEBUG_SHELL) console.log(`[Bash STDOUT] ${text}`)
+        console.log(`[BashTool STDOUT] ${text}`)
         append(chunk)
       })
       proc.stderr?.on("data", (chunk) => {
         const text = chunk.toString()
-        if (Flag.OPENCODE_DEBUG_SHELL) console.log(`[Bash STDERR] ${text}`)
+        console.log(`[BashTool STDERR] ${text}`)
         append(chunk)
       })
 
