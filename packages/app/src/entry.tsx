@@ -1,6 +1,6 @@
 // @refresh reload
 import { render } from "solid-js/web"
-import { AppBaseProviders, AppInterface } from "@/app"
+import { AppProviders } from "@/app"
 import { Platform, PlatformProvider } from "@/context/platform"
 import { dict as en } from "@/i18n/en"
 import { dict as zh } from "@/i18n/zh"
@@ -67,9 +67,7 @@ const platform: Platform = {
 render(
   () => (
     <PlatformProvider value={platform}>
-      <AppBaseProviders>
-        <AppInterface />
-      </AppBaseProviders>
+      <AppProviders />
     </PlatformProvider>
   ),
   root!,
