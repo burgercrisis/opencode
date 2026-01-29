@@ -27,96 +27,46 @@ export namespace Shell {
       return
     }
 
-    try {
-      process.kill(-pid, "SIGTERM")
-      await Bun.sleep(SIGKILL_TIMEOUT_MS)
-      if (!opts?.exited?.()) {
-        process.kill(-pid, "SIGKILL")
-      }
-    } catch (_e) {
-      proc.kill("SIGTERM")
-      await Bun.sleep(SIGKILL_TIMEOUT_MS)
-      if (!opts?.exited?.()) {
-        proc.kill("SIGKILL")
+    const kill = (sig: "SIGTERM" | "SIGKILL") => {
+      try {
+        process.kill(-pid, sig)
+      } catch {
+        proc.kill(sig)
       }
     }
+
+    kill("SIGTERM")
+    await Bun.sleep(SIGKILL_TIMEOUT_MS)
+    if (!opts?.exited?.()) kill("SIGKILL")
   }
 
   const BLACKLIST = new Set(["fish", "nu"])
 
   function fallback() {
     if (process.platform === "win32") {
-      // First try to find bash in PATH (most reliable)
-      const bashInPath = Bun.which("bash")
-      if (bashInPath) {
-        if (Flag.OPENCODE_DEBUG_SHELL) {
-          console.log(`[Shell Fallback] Found bash in PATH: ${bashInPath}`)
-        }
-        return bashInPath
+      const bash = Bun.which("bash")
+      if (bash) return bash
+
+      if (Flag.OPENCODE_GIT_BASH_PATH && Bun.file(Flag.OPENCODE_GIT_BASH_PATH).size) {
+        return Flag.OPENCODE_GIT_BASH_PATH
       }
 
-      // Then try explicit flag if set
-      if (Flag.OPENCODE_GIT_BASH_PATH) {
-        try {
-          if (Bun.file(Flag.OPENCODE_GIT_BASH_PATH).size) {
-            if (Flag.OPENCODE_DEBUG_SHELL) {
-              console.log(`[Shell Fallback] Using explicit flag path: ${Flag.OPENCODE_GIT_BASH_PATH}`)
-            }
-            return Flag.OPENCODE_GIT_BASH_PATH
-          }
-        } catch (e) {
-          // File doesn't exist, continue with fallback
-          if (Flag.OPENCODE_DEBUG_SHELL) {
-            console.log(`[Shell Fallback] Explicit flag path invalid: ${Flag.OPENCODE_GIT_BASH_PATH}`)
-          }
-        }
-      }
-
-      // Try to find Git Bash via git.exe location
       const git = Bun.which("git")
       if (git) {
-        // Try multiple possible locations for bash
-        const possibleBashPaths = [
-          // Standard location: git.exe at cmd/, bash.exe at bin/
+        const paths = [
           path.join(git, "..", "..", "bin", "bash.exe"),
-          // Alternative: git.exe at bin/, bash.exe at bin/
           path.join(git, "..", "bash.exe"),
-          // git.exe at root, bash.exe at root
-          path.join(git, "..", "bash.exe"),
-          // Also try sh.exe as fallback
           path.join(git, "..", "..", "bin", "sh.exe"),
           path.join(git, "..", "sh.exe"),
         ]
-
-        for (const bashPath of possibleBashPaths) {
-          try {
-            if (Bun.file(bashPath).size > 0) {
-              if (Flag.OPENCODE_DEBUG_SHELL) {
-                console.log(`[Shell Fallback] Found bash via git location: ${bashPath}`)
-              }
-              return bashPath
-            }
-          } catch (e) {
-            // Continue to next path
-          }
-        }
-
-        if (Flag.OPENCODE_DEBUG_SHELL) {
-          console.log(`[Shell Fallback] No valid bash found at git locations`)
-        }
+        const found = paths.find(p => Bun.file(p).size > 0)
+        if (found) return found
       }
 
-      // Graceful fallback to CMD.exe when Git Bash is unavailable
-      const cmdPath = process.env.COMSPEC || "cmd.exe"
-      if (Flag.OPENCODE_DEBUG_SHELL) {
-        console.log(`[Shell Fallback] Using CMD fallback: ${cmdPath}`)
-      }
-      return cmdPath
+      return process.env.COMSPEC || "cmd.exe"
     }
     if (process.platform === "darwin") return "/bin/zsh"
-    const bash = Bun.which("bash")
-    if (bash) return bash
-    return "/bin/sh"
+    return Bun.which("bash") || "/bin/sh"
   }
 
   export const preferred = lazy(() => {
@@ -347,10 +297,9 @@ export namespace Shell {
     // Only apply special handling on Windows
     if (process.platform !== "win32") {
       const shellPath = configShell || acceptable()
-      const args = getShellArgs(shellPath, command)
       return {
         executable: shellPath,
-        args: args,
+        args: getShellArgs(shellPath, command),
         useShellFlag: false,
       }
     }
@@ -359,104 +308,49 @@ export namespace Shell {
     if (isPowerShellCommand(command)) {
       const match = command.match(/^(powershell|pwsh)(?:\.exe)?\s+(.*)$/i)
       if (match) {
-        const [, requestedShell, argsString] = match
-
+        const requestedShell = match[1]
+        const argsString = match[2]
         const isPwsh = requestedShell.toLowerCase() === "pwsh"
         const executable = isPwsh
           ? (Bun.which("pwsh.exe") || Bun.which("pwsh") || "powershell.exe")
           : "powershell.exe"
 
-        // Get array of arguments for PowerShell
-        const psArgs = getPowerShellArgs(argsString)
-
         return {
           executable,
-          args: psArgs,
+          args: getPowerShellArgs(argsString),
           useShellFlag: false,
-          windowsVerbatimArguments: false, // Use standard quoting for PS
+          windowsVerbatimArguments: false,
         }
       }
     }
 
     // Check for CMD commands
     if (isCmdCommand(command)) {
-      // Extract the cmd executable and arguments
-      // Match pattern: cmd[.exe] <args>
       const match = command.match(/^(cmd(?:\.exe)?)\s+(.*)$/i)
       if (match) {
-        const [, , argsString] = match
-        // For CMD, we want to split on /c or /k but keep the rest as a single argument
-        // e.g., "cmd /c echo hello" -> ["/c", "echo hello"]
-        const cmdArgs: string[] = []
+        const argsString = match[2]
         const cmdMatch = argsString.match(/^(\/[ck])\s+(.*)$/i)
-        let commandToExecute = argsString
-
-        if (cmdMatch) {
-          cmdArgs.push(cmdMatch[1])
-          commandToExecute = cmdMatch[2]
-        }
-        // After extracting commandToExecute (around line 258)
-        // For CMD commands, ensure the entire command string is passed correctly
-        // Do NOT parse pipes, quotes, or other shell syntax - CMD.exe handles that
-
-        // Verify proper quoting for echo commands
-        if (/^\s*echo\s+/i.test(commandToExecute)) {
-          // Push the full command as a single argument
-          cmdArgs.push(commandToExecute)
-          return {
-            executable: process.env.COMSPEC || "cmd.exe",
-            args: cmdArgs,
-            useShellFlag: false,
-          }
-        }
-        if (commandToExecute.includes('|') || commandToExecute.includes('"')) {
-          cmdArgs.push(commandToExecute);
-          return {
-            executable: process.env.COMSPEC || "cmd.exe",
-            args: cmdArgs,
-            useShellFlag: false,
-          };
-        }
-
-        // Fix for chained commands (&& or ||) with dynamic environment variables (e.g., %cd%)
-        // CMD expands %variables% at parse time, not execution time, which breaks `cd /d %temp% && echo %cd%`
-        // We enable delayed expansion (/V:ON) and convert %var% to !var! for dynamic variables.
-        const isChained = /(&&|\|\|)/.test(commandToExecute)
-        const hasDynamicVars = hasDynamicEnvVars(commandToExecute)
+        const initialArgs = cmdMatch ? [cmdMatch[1]] : []
+        const rawToExecute = cmdMatch ? cmdMatch[2] : argsString
+        
+        const isChained = /(&&|\|\|)/.test(rawToExecute)
         const hasVOn = argsString.match(/\/V:ON/i)
-
-        if (isChained && hasDynamicVars && !hasVOn) {
-          // Add /V:ON flag for delayed expansion
-          cmdArgs.unshift("/V:ON")
-          // Convert dynamic variables to delayed expansion syntax
-          commandToExecute = convertToDelayedExpansion(commandToExecute)
-        }
-
-
-
-        cmdArgs.push(commandToExecute)
+        const useVOn = isChained && hasDynamicEnvVars(rawToExecute) && !hasVOn
+        
+        const cmdArgs = useVOn ? ["/V:ON", ...initialArgs] : initialArgs
+        const finalToExecute = useVOn ? convertToDelayedExpansion(rawToExecute) : rawToExecute
 
         return {
           executable: process.env.COMSPEC || "cmd.exe",
-          args: cmdArgs,
+          args: [...cmdArgs, finalToExecute],
           useShellFlag: false,
         }
       }
     }
 
-    // Check for bare CMD builtin commands that should be executed via CMD.exe
-    if (isCmdBuiltin(command) && process.platform === "win32") {
-      // For bare CMD builtins, wrap them in cmd /c to ensure proper execution
-      // Special case: bare "dir" command should show all files including hidden ones
-      let finalCommand = command
-      if (command.trim() === "dir") {
-        finalCommand = "dir /a"
-      }
-
-      if (Flag.OPENCODE_DEBUG_SHELL) {
-        console.log(`[Bare CMD Builtin] Command: "${command}" -> "${finalCommand}"`)
-      }
-
+    // Check for bare CMD builtin commands
+    if (isCmdBuiltin(command)) {
+      const finalCommand = command.trim() === "dir" ? "dir /a" : command
       return {
         executable: process.env.COMSPEC || "cmd.exe",
         args: ["/c", finalCommand],
@@ -464,17 +358,10 @@ export namespace Shell {
       }
     }
  
-    // For all other commands (git, npm, etc.), use the shell
     const shellPath = configShell || acceptable()
-    const args = getShellArgs(shellPath, command)
-
-    if (Flag.OPENCODE_DEBUG_SHELL) {
-      console.log(`[Spawn Config] Using shell for command "${command}": ${shellPath}`)
-    }
-
     return {
       executable: shellPath,
-      args: args,
+      args: getShellArgs(shellPath, command),
       useShellFlag: false,
     }
   }
