@@ -5,44 +5,28 @@ export namespace Wildcard {
     const s = str.replace(/\\/g, "/")
     const p = pattern.replace(/\\/g, "/")
 
-    let escaped = p
+    const escaped = p
       .replace(/[.+^${}()|[\]\\]/g, "\\$&") // escape special regex chars
       .replace(/\*/g, ".*") // * becomes .*
       .replace(/\?/g, ".") // ? becomes .
-
-    // If pattern ends with " *" (space + wildcard), make the trailing part optional
-    // This allows "ls *" to match both "ls" and "ls -la"
-    if (escaped.endsWith(" .*")) {
-      escaped = escaped.slice(0, -3) + "( .*)?"
-    }
+      .replace(/ \.\*$/, "( .*)?") // If pattern ends with " *" (space + wildcard), make it optional
 
     return new RegExp("^" + escaped + "$", "s").test(s)
   }
 
   export function all(input: string, patterns: Record<string, any>) {
     const sorted = pipe(patterns, Object.entries, sortBy([([key]) => key.length, "asc"], [([key]) => key, "asc"]))
-    let result = undefined
-    for (const [pattern, value] of sorted) {
-      if (match(input, pattern)) {
-        result = value
-        continue
-      }
-    }
-    return result
+    return sorted.reduce((acc, [pattern, value]) => match(input, pattern) ? value : acc, undefined)
   }
 
   export function allStructured(input: { head: string; tail: string[] }, patterns: Record<string, any>) {
     const sorted = pipe(patterns, Object.entries, sortBy([([key]) => key.length, "asc"], [([key]) => key, "asc"]))
-    let result = undefined
-    for (const [pattern, value] of sorted) {
+    return sorted.reduce((acc, [pattern, value]) => {
       const parts = pattern.split(/\s+/)
-      if (!match(input.head, parts[0])) continue
-      if (parts.length === 1 || matchSequence(input.tail, parts.slice(1))) {
-        result = value
-        continue
-      }
-    }
-    return result
+      if (!match(input.head, parts[0])) return acc
+      if (parts.length === 1 || matchSequence(input.tail, parts.slice(1))) return value
+      return acc
+    }, undefined)
   }
 
   function matchSequence(items: string[], patterns: string[]): boolean {
