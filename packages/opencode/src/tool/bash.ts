@@ -369,6 +369,8 @@ export const BashTool = Tool.define("bash", async () => {
       const config = await Config.get()
       const spawnConfig = Shell.getSpawnConfig(processedCommand, config.shell)
 
+      const finalEnv = { ...env, ...spawnConfig.env }
+
       if (Shell.isCmdBuiltin(processedCommand)) {
         log.info("Detected bare CMD builtin, automatically wrapping", {
           command: processedCommand.substring(0, 100),
@@ -379,19 +381,19 @@ export const BashTool = Tool.define("bash", async () => {
         ? spawn(spawnConfig.executable, {
             shell: spawnConfig.shell,
             cwd,
-            env,
+            env: finalEnv,
             stdio: ["ignore", "pipe", "pipe"],
             detached: process.platform !== "win32",
           })
         : spawn(spawnConfig.executable, spawnConfig.args, {
             cwd,
-            env,
+            env: finalEnv,
             stdio: ["ignore", "pipe", "pipe"],
             detached: process.platform !== "win32", // Use detached for Unix to support process group killing
             ...(process.platform === "win32" &&
-              Shell.isCmdCommand(processedCommand) && {
+              (Shell.isCmdCommand(processedCommand) || Shell.isPowerShellCommand(processedCommand)) && {
                 windowsHide: true,
-                windowsVerbatimArguments: true,
+                windowsVerbatimArguments: spawnConfig.windowsVerbatimArguments ?? Shell.isCmdCommand(processedCommand),
               }),
           })
 
@@ -419,8 +421,16 @@ export const BashTool = Tool.define("bash", async () => {
         })
       }
 
-      proc.stdout?.on("data", append)
-      proc.stderr?.on("data", append)
+      proc.stdout?.on("data", (chunk) => {
+        const text = chunk.toString()
+        if (Flag.OPENCODE_DEBUG_SHELL) console.log(`[Bash STDOUT] ${text}`)
+        append(chunk)
+      })
+      proc.stderr?.on("data", (chunk) => {
+        const text = chunk.toString()
+        if (Flag.OPENCODE_DEBUG_SHELL) console.log(`[Bash STDERR] ${text}`)
+        append(chunk)
+      })
 
       let timedOut = false
       let aborted = false
