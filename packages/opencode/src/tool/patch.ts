@@ -20,111 +20,83 @@ export const PatchTool = Tool.define("patch", {
   description: DESCRIPTION,
   parameters: PatchParams,
   async execute(params, ctx) {
-    if (!params.patchText) {
-      throw new Error("patchText is required")
-    }
+    if (!params.patchText) throw new Error("patchText is required")
 
-    // Parse the patch to get hunks
-    let hunks: Patch.Hunk[]
-    try {
-      const parseResult = Patch.parsePatch(params.patchText)
-      hunks = parseResult.hunks
-    } catch (error) {
-      throw new Error(`Failed to parse patch: ${error}`)
-    }
+    const { hunks } = (() => {
+      try {
+        return Patch.parsePatch(params.patchText)
+      } catch (error) {
+        throw new Error(`Failed to parse patch: ${error}`)
+      }
+    })()
 
-    if (hunks.length === 0) {
-      throw new Error("No file changes found in patch")
-    }
+    if (hunks.length === 0) throw new Error("No file changes found in patch")
 
-    // Validate file paths and check permissions
-    const fileChanges: Array<{
-      filePath: string
-      oldContent: string
-      newContent: string
-      type: "add" | "update" | "delete" | "move"
-      movePath?: string
-    }> = []
-
-    let totalDiff = ""
-
-    for (const hunk of hunks) {
+    const fileChanges = await Promise.all(hunks.map(async (hunk) => {
       const filePath = Filesystem.resolvePath(Instance.directory, hunk.path)
       await assertExternalDirectory(ctx, filePath)
 
-      switch (hunk.type) {
-        case "add":
-          if (hunk.type === "add") {
-            const oldContent = ""
-            const newContent = hunk.contents
-            const diff = createTwoFilesPatch(filePath, filePath, oldContent, newContent)
+      if (hunk.type === "add") {
+        const oldContent = ""
+        const newContent = hunk.contents
+        const diff = createTwoFilesPatch(filePath, filePath, oldContent, newContent)
+        return {
+          filePath,
+          oldContent,
+          newContent,
+          type: "add" as const,
+          diff,
+        }
+      }
 
-            fileChanges.push({
-              filePath,
-              oldContent,
-              newContent,
-              type: "add",
-            })
+      if (hunk.type === "update") {
+        const stats = await fs.stat(filePath).catch(() => null)
+        if (!stats || stats.isDirectory()) throw new Error(`File not found or is directory: ${filePath}`)
 
-            totalDiff += diff + "\n"
-          }
-          break
+        await FileTime.assert(ctx.sessionID, filePath)
+        const oldContent = await fs.readFile(filePath, "utf-8")
 
-        case "update":
-          // Check if file exists for update
-          const stats = await fs.stat(filePath).catch(() => null)
-          if (!stats || stats.isDirectory()) {
-            throw new Error(`File not found or is directory: ${filePath}`)
-          }
-
-          // Read file and update time tracking (like edit tool does)
-          await FileTime.assert(ctx.sessionID, filePath)
-          const oldContent = await fs.readFile(filePath, "utf-8")
-          let newContent = oldContent
-
-          // Apply the update chunks to get new content
+        const newContent = await (async () => {
           try {
-            const fileUpdate = Patch.deriveNewContentsFromChunks(filePath, hunk.chunks)
-            newContent = fileUpdate.content
+            const fileUpdate = await Patch.deriveNewContentsFromChunks(filePath, hunk.chunks)
+            return fileUpdate.content
           } catch (error) {
             throw new Error(`Failed to apply update to ${filePath}: ${error}`)
           }
+        })()
 
-          const diff = createTwoFilesPatch(filePath, filePath, oldContent, newContent)
+        const diff = createTwoFilesPatch(filePath, filePath, oldContent, newContent)
+        const movePath = hunk.move_path ? Filesystem.resolvePath(Instance.directory, hunk.move_path) : undefined
+        if (movePath) await assertExternalDirectory(ctx, movePath)
 
-          const movePath = hunk.move_path ? Filesystem.resolvePath(Instance.directory, hunk.move_path) : undefined
-          await assertExternalDirectory(ctx, movePath)
-
-          fileChanges.push({
-            filePath,
-            oldContent,
-            newContent,
-            type: hunk.move_path ? "move" : "update",
-            movePath,
-          })
-
-          totalDiff += diff + "\n"
-          break
-
-        case "delete":
-          // Check if file exists for deletion
-          await FileTime.assert(ctx.sessionID, filePath)
-          const contentToDelete = await fs.readFile(filePath, "utf-8")
-          const deleteDiff = createTwoFilesPatch(filePath, filePath, contentToDelete, "")
-
-          fileChanges.push({
-            filePath,
-            oldContent: contentToDelete,
-            newContent: "",
-            type: "delete",
-          })
-
-          totalDiff += deleteDiff + "\n"
-          break
+        return {
+          filePath,
+          oldContent,
+          newContent,
+          type: (hunk.move_path ? "move" : "update") as const,
+          movePath,
+          diff,
+        }
       }
-    }
 
-    // Check permissions if needed
+      if (hunk.type === "delete") {
+        await FileTime.assert(ctx.sessionID, filePath)
+        const oldContent = await fs.readFile(filePath, "utf-8")
+        const diff = createTwoFilesPatch(filePath, filePath, oldContent, "")
+        return {
+          filePath,
+          oldContent,
+          newContent: "",
+          type: "delete" as const,
+          diff,
+        }
+      }
+
+      throw new Error(`Unknown hunk type: ${(hunk as any).type}`)
+    }))
+
+    const totalDiff = fileChanges.map(c => c.diff).join("\n")
+
     await ctx.ask({
       permission: "edit",
       patterns: fileChanges.map((c) => Filesystem.relativePath(Instance.worktree, c.filePath)),
@@ -134,61 +106,48 @@ export const PatchTool = Tool.define("patch", {
       },
     })
 
-    // Apply the changes
-    const changedFiles: string[] = []
-
-    for (const change of fileChanges) {
-      switch (change.type) {
-        case "add":
-          // Create parent directories
-          const addDir = Filesystem.dirname(change.filePath)
-          if (addDir !== "." && addDir !== "/") {
-            await fs.mkdir(addDir, { recursive: true })
-          }
-          await fs.writeFile(change.filePath, change.newContent, "utf-8")
-          changedFiles.push(change.filePath)
-          break
-
-        case "update":
-          await fs.writeFile(change.filePath, change.newContent, "utf-8")
-          changedFiles.push(change.filePath)
-          break
-
-        case "move":
-          if (change.movePath) {
-            // Create parent directories for destination
-            const moveDir = Filesystem.dirname(change.movePath)
-            if (moveDir !== "." && moveDir !== "/") {
-              await fs.mkdir(moveDir, { recursive: true })
-            }
-            // Write to new location
-            await fs.writeFile(change.movePath, change.newContent, "utf-8")
-            // Remove original
-            await fs.unlink(change.filePath)
-            changedFiles.push(change.movePath)
-          }
-          break
-
-        case "delete":
-          await fs.unlink(change.filePath)
-          changedFiles.push(change.filePath)
-          break
+    const changedFiles = await Promise.all(fileChanges.map(async (change) => {
+      if (change.type === "add") {
+        const dir = Filesystem.dirname(change.filePath)
+        if (dir !== "." && dir !== "/") await fs.mkdir(dir, { recursive: true })
+        await fs.writeFile(change.filePath, change.newContent, "utf-8")
+        return change.filePath
       }
 
-      // Update file time tracking
-      FileTime.read(ctx.sessionID, change.filePath)
-      if (change.movePath) {
-        FileTime.read(ctx.sessionID, change.movePath)
+      if (change.type === "update") {
+        await fs.writeFile(change.filePath, change.newContent, "utf-8")
+        return change.filePath
       }
-    }
 
-    // Publish file change events
-    for (const filePath of changedFiles) {
-      await Bus.publish(FileWatcher.Event.Updated, { file: filePath, event: "change" })
-    }
+      if (change.type === "move" && change.movePath) {
+        const dir = Filesystem.dirname(change.movePath)
+        if (dir !== "." && dir !== "/") await fs.mkdir(dir, { recursive: true })
+        await fs.writeFile(change.movePath, change.newContent, "utf-8")
+        await fs.unlink(change.filePath)
+        return change.movePath
+      }
 
-    // Generate output summary
-    const relativePaths = changedFiles.map((filePath) => Filesystem.relativePath(Instance.worktree, filePath))
+      if (change.type === "delete") {
+        await fs.unlink(change.filePath)
+        return change.filePath
+      }
+
+      return ""
+    }))
+
+    // Update file time tracking and publish events
+    await Promise.all(fileChanges.flatMap(change => {
+      const paths = [change.filePath, change.movePath].filter((p): p is string => !!p)
+      return paths.map(async (p) => {
+        FileTime.read(ctx.sessionID, p)
+      })
+    }))
+
+    await Promise.all(changedFiles.filter(Boolean).map(async (p) => {
+      await Bus.publish(FileWatcher.Event.Updated, { file: p, event: "change" })
+    }))
+
+    const relativePaths = changedFiles.filter(Boolean).map((p) => Filesystem.relativePath(Instance.worktree, p))
     const summary = `${fileChanges.length} files changed`
 
     return {

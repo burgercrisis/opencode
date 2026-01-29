@@ -27,13 +27,14 @@ export const ApplyPatchTool = Tool.define("apply_patch", {
     }
 
     // Parse the patch to get hunks
-    let hunks: Patch.Hunk[]
-    try {
-      const parseResult = Patch.parsePatch(params.patchText)
-      hunks = parseResult.hunks
-    } catch (error) {
-      throw new Error(`apply_patch verification failed: ${error}`)
-    }
+    const hunks = (() => {
+      try {
+        const parseResult = Patch.parsePatch(params.patchText)
+        return parseResult.hunks
+      } catch (error) {
+        throw new Error(`apply_patch verification failed: ${error}`)
+      }
+    })()
 
     if (hunks.length === 0) {
       const normalized = params.patchText.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim()
@@ -55,113 +56,103 @@ export const ApplyPatchTool = Tool.define("apply_patch", {
       deletions: number
     }> = []
 
-    let totalDiff = ""
-
-    for (const hunk of hunks) {
+    const totalDiff = (await Promise.all(hunks.map(async (hunk) => {
       const filePath = path.resolve(Instance.directory, hunk.path)
       await assertExternalDirectory(ctx, filePath)
 
-      switch (hunk.type) {
-        case "add": {
-          const oldContent = ""
-          const newContent =
-            hunk.contents.length === 0 || hunk.contents.endsWith("\n") ? hunk.contents : `${hunk.contents}\n`
-          const diff = trimDiff(createTwoFilesPatch(filePath, filePath, oldContent, newContent))
+      if (hunk.type === "add") {
+        const oldContent = ""
+        const newContent =
+          hunk.contents.length === 0 || hunk.contents.endsWith("\n") ? hunk.contents : `${hunk.contents}\n`
+        const diff = trimDiff(createTwoFilesPatch(filePath, filePath, oldContent, newContent))
 
-          let additions = 0
-          let deletions = 0
-          for (const change of diffLines(oldContent, newContent)) {
-            if (change.added) additions += change.count || 0
-            if (change.removed) deletions += change.count || 0
-          }
+        const counts = diffLines(oldContent, newContent).reduce((acc, change) => {
+          if (change.added) acc.additions += change.count || 0
+          if (change.removed) acc.deletions += change.count || 0
+          return acc
+        }, { additions: 0, deletions: 0 })
 
-          fileChanges.push({
-            filePath,
-            oldContent,
-            newContent,
-            type: "add",
-            diff,
-            additions,
-            deletions,
-          })
+        fileChanges.push({
+          filePath,
+          oldContent,
+          newContent,
+          type: "add",
+          diff,
+          additions: counts.additions,
+          deletions: counts.deletions,
+        })
 
-          totalDiff += diff + "\n"
-          break
+        return diff + "\n"
+      }
+
+      if (hunk.type === "update") {
+        // Check if file exists for update
+        const stats = await fs.stat(filePath).catch(() => null)
+        if (!stats || stats.isDirectory()) {
+          throw new Error(`apply_patch verification failed: Failed to read file to update: ${filePath}`)
         }
 
-        case "update": {
-          // Check if file exists for update
-          const stats = await fs.stat(filePath).catch(() => null)
-          if (!stats || stats.isDirectory()) {
-            throw new Error(`apply_patch verification failed: Failed to read file to update: ${filePath}`)
-          }
-
-          const oldContent = await fs.readFile(filePath, "utf-8")
-          let newContent = oldContent
-
-          // Apply the update chunks to get new content
+        const oldContent = await fs.readFile(filePath, "utf-8")
+        const newContent = await (async () => {
           try {
-            const fileUpdate = Patch.deriveNewContentsFromChunks(filePath, hunk.chunks)
-            newContent = fileUpdate.content
+            const fileUpdate = await Patch.deriveNewContentsFromChunks(filePath, hunk.chunks)
+            return fileUpdate.content
           } catch (error) {
             throw new Error(`apply_patch verification failed: ${error}`)
           }
+        })()
 
-          const diff = trimDiff(createTwoFilesPatch(filePath, filePath, oldContent, newContent))
+        const diff = trimDiff(createTwoFilesPatch(filePath, filePath, oldContent, newContent))
 
-          let additions = 0
-          let deletions = 0
-          for (const change of diffLines(oldContent, newContent)) {
-            if (change.added) additions += change.count || 0
-            if (change.removed) deletions += change.count || 0
-          }
+        const counts = diffLines(oldContent, newContent).reduce((acc, change) => {
+          if (change.added) acc.additions += change.count || 0
+          if (change.removed) acc.deletions += change.count || 0
+          return acc
+        }, { additions: 0, deletions: 0 })
 
-          const movePath = hunk.move_path ? path.resolve(Instance.directory, hunk.move_path) : undefined
-          await assertExternalDirectory(ctx, movePath)
+        const movePath = hunk.move_path ? path.resolve(Instance.directory, hunk.move_path) : undefined
+        await assertExternalDirectory(ctx, movePath)
 
-          fileChanges.push({
-            filePath,
-            oldContent,
-            newContent,
-            type: hunk.move_path ? "move" : "update",
-            movePath,
-            diff,
-            additions,
-            deletions,
-          })
+        fileChanges.push({
+          filePath,
+          oldContent,
+          newContent,
+          type: hunk.move_path ? "move" : "update",
+          movePath,
+          diff,
+          additions: counts.additions,
+          deletions: counts.deletions,
+        })
 
-          totalDiff += diff + "\n"
-          break
-        }
-
-        case "delete": {
-          const contentToDelete = await fs.readFile(filePath, "utf-8").catch((error) => {
-            throw new Error(`apply_patch verification failed: ${error}`)
-          })
-          const deleteDiff = trimDiff(createTwoFilesPatch(filePath, filePath, contentToDelete, ""))
-
-          const deletions = contentToDelete.split("\n").length
-
-          fileChanges.push({
-            filePath,
-            oldContent: contentToDelete,
-            newContent: "",
-            type: "delete",
-            diff: deleteDiff,
-            additions: 0,
-            deletions,
-          })
-
-          totalDiff += deleteDiff + "\n"
-          break
-        }
+        return diff + "\n"
       }
-    }
+
+      if (hunk.type === "delete") {
+        const contentToDelete = await fs.readFile(filePath, "utf-8").catch((error) => {
+          throw new Error(`apply_patch verification failed: ${error}`)
+        })
+        const deleteDiff = trimDiff(createTwoFilesPatch(filePath, filePath, contentToDelete, ""))
+        const deletions = contentToDelete.split("\n").length
+
+        fileChanges.push({
+          filePath,
+          oldContent: contentToDelete,
+          newContent: "",
+          type: "delete",
+          diff: deleteDiff,
+          additions: 0,
+          deletions,
+        })
+
+        return deleteDiff + "\n"
+      }
+      return ""
+    }))).join("")
 
     // Build per-file metadata for UI rendering (used for both permission and result)
     const files = fileChanges.map((change) => ({
       filePath: change.filePath,
-      relativePath: path.relative(Instance.worktree, change.movePath ?? change.filePath),
+      relativePath: path.relative(Instance.worktree, change.movePath ?? change.filePath).replaceAll(path.sep, "/"),
       type: change.type,
       diff: change.diff,
       before: change.oldContent,
@@ -172,7 +163,7 @@ export const ApplyPatchTool = Tool.define("apply_patch", {
     }))
 
     // Check permissions if needed
-    const relativePaths = fileChanges.map((c) => path.relative(Instance.worktree, c.filePath))
+    const relativePaths = fileChanges.map((c) => path.relative(Instance.worktree, c.filePath).replaceAll(path.sep, "/"))
     await ctx.ask({
       permission: "edit",
       patterns: relativePaths,
