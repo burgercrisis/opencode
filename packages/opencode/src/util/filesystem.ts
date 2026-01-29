@@ -244,10 +244,15 @@ export namespace Filesystem {
   export async function* up(options: { targets: string[]; start: string; stop?: string }) {
     const { targets, start, stop } = options
     const iterate = async function* (curr: string): AsyncGenerator<string> {
-      for (const target of targets) {
-        const search = join(curr, target)
-        if (await exists(search)) yield search
-      }
+      const matches = await Promise.all(
+        targets.map(async (target) => {
+          const search = join(curr, target)
+          return (await exists(search)) ? search : undefined
+        }),
+      )
+
+      yield* matches.filter((x): x is string => !!x)
+
       if (stop === curr) return
       const next = dirname(curr)
       if (next === curr) return
@@ -259,16 +264,15 @@ export namespace Filesystem {
   export async function globUp(pattern: string, start: string, stop?: string): Promise<string[]> {
     const glob = new Bun.Glob(pattern)
     const scan = async (curr: string, acc: string[]): Promise<string[]> => {
-      const matches = []
-      for await (const match of glob.scan({
-        cwd: curr,
-        absolute: true,
-        onlyFiles: true,
-        followSymlinks: true,
-        dot: true,
-      })) {
-        matches.push(match)
-      }
+      const matches = await Array.fromAsync(
+        glob.scan({
+          cwd: curr,
+          absolute: true,
+          onlyFiles: true,
+          followSymlinks: true,
+          dot: true,
+        }),
+      )
       const nextAcc = [...acc, ...matches]
       if (stop === curr) return nextAcc
       const next = dirname(curr)
