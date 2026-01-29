@@ -8,25 +8,21 @@ import { CodeComponentProvider } from "@opencode-ai/ui/context/code"
 import { I18nProvider } from "@opencode-ai/ui/context"
 import { Diff } from "@opencode-ai/ui/diff"
 import { ThemeProvider } from "@opencode-ai/ui/theme"
-import {
-  GlobalSyncProvider,
-  PermissionProvider,
-  LayoutProvider,
-  GlobalSDKProvider,
-  ServerProvider,
-  useServer,
-  SettingsProvider,
-  TerminalProvider,
-  PromptProvider,
-  FileProvider,
-  CommentsProvider,
-  NotificationProvider,
-  CommandProvider,
-  LanguageProvider,
-  useLanguage,
-  ShikiProvider,
-  MarkedProvider,
-} from "@/context"
+import { GlobalSyncProvider } from "@/context/global-sync"
+import { PermissionProvider } from "@/context/permission"
+import { LayoutProvider } from "@/context/layout"
+import { GlobalSDKProvider } from "@/context/global-sdk"
+import { ServerProvider, useServer } from "@/context/server"
+import { SettingsProvider } from "@/context/settings"
+import { TerminalProvider } from "@/context/terminal"
+import { PromptProvider } from "@/context/prompt"
+import { FileProvider } from "@/context/file"
+import { CommentsProvider } from "@/context/comments"
+import { NotificationProvider } from "@/context/notification"
+import { CommandProvider } from "@/context/command"
+import { LanguageProvider, useLanguage } from "@/context/language"
+import { ShikiProvider } from "@/context/shiki"
+import { MarkedProvider } from "@/context/marked"
 import { usePlatform } from "@/context/platform"
 import { Logo } from "@opencode-ai/ui/logo"
 import { DialogProvider } from "@opencode-ai/ui/context/dialog"
@@ -56,31 +52,35 @@ function MarkedProviderWithNativeParser(props: ParentProps) {
   return <MarkedProvider nativeParser={platform.parseMarkdown}>{props.children}</MarkedProvider>
 }
 
-function Combined(props: { providers: [any, any?][]; children: any }) {
-  return props.providers.reduceRight((acc, [Provider, providerProps]) => {
-    return <Provider {...(providerProps || {})}>{acc}</Provider>
-  }, props.children)
+export function AppProviders(props: ParentProps) {
+  return (
+    <AppBaseProviders>
+      <AppInterface />
+    </AppBaseProviders>
+  )
 }
 
 export function AppBaseProviders(props: ParentProps) {
   return (
     <MetaProvider>
       <Font />
-      <Combined
-        providers={[
-          [ShikiProvider],
-          [ThemeProvider],
-          [LanguageProvider],
-          [UiI18nBridge],
-          [ErrorBoundary, { fallback: (error: any) => <ErrorPage error={error} /> }],
-          [DialogProvider],
-          [MarkedProviderWithNativeParser],
-          [DiffComponentProvider, { component: Diff }],
-          [CodeComponentProvider, { component: Code }],
-        ]}
-      >
-        {props.children}
-      </Combined>
+      <ShikiProvider>
+        <ThemeProvider>
+          <LanguageProvider>
+            <UiI18nBridge>
+              <ErrorBoundary fallback={(error) => <ErrorPage error={error} />}>
+                <DialogProvider>
+                  <MarkedProviderWithNativeParser>
+                    <DiffComponentProvider component={Diff}>
+                      <CodeComponentProvider component={Code}>{props.children}</CodeComponentProvider>
+                    </DiffComponentProvider>
+                  </MarkedProviderWithNativeParser>
+                </DialogProvider>
+              </ErrorBoundary>
+            </UiI18nBridge>
+          </LanguageProvider>
+        </ThemeProvider>
+      </ShikiProvider>
     </MetaProvider>
   )
 }
@@ -105,60 +105,58 @@ export function AppInterface(props: { defaultUrl?: string }) {
   }
 
   return (
-    <Combined
-      providers={[
-        [ServerProvider, { defaultUrl: defaultServerUrl() }],
-        [ServerKey],
-        [GlobalSDKProvider],
-        [GlobalSyncProvider],
-      ]}
-    >
-      <Router
-        root={(props) => (
-          <Combined
-            providers={[
-              [SettingsProvider],
-              [PermissionProvider],
-              [LayoutProvider],
-              [NotificationProvider],
-              [CommandProvider],
-            ]}
-          >
-            <Layout>{props.children}</Layout>
-          </Combined>
-        )}
-      >
-        <Route
-          path="/"
-          component={() => (
-            <Suspense fallback={<Loading />}>
-              <Home />
-            </Suspense>
-          )}
-        />
-        <Route path="/:dir" component={DirectoryLayout}>
-          <Route path="/" component={() => <Navigate href="session" />} />
-          <Route
-            path="/session/:id?"
-            component={(p) => (
-              <Show when={p.params.id ?? "new"}>
-                <Combined
-                  providers={[
-                    [TerminalProvider],
-                    [FileProvider],
-                    [PromptProvider],
-                    [CommentsProvider],
-                  ]}
-                >
+    <ServerProvider defaultUrl={defaultServerUrl()}>
+      <ServerKey>
+        <GlobalSDKProvider>
+          <GlobalSyncProvider>
+            <Router
+              root={(props) => (
+                <SettingsProvider>
+                  <PermissionProvider>
+                    <LayoutProvider>
+                      <NotificationProvider>
+                        <CommandProvider>
+                          <Layout>{props.children}</Layout>
+                        </CommandProvider>
+                      </NotificationProvider>
+                    </LayoutProvider>
+                  </PermissionProvider>
+                </SettingsProvider>
+              )}
+            >
+              <Route
+                path="/"
+                component={() => (
                   <Suspense fallback={<Loading />}>
-                    <Session />
+                    <Home />
                   </Suspense>
-                </Combined>
-              </Show>
-            )}
-          />
-        </Route>
-      </Router>
-    </Combined>
+                )}
+              />
+              <Route path="/:dir" component={DirectoryLayout}>
+                <Route path="/" component={() => <Navigate href="session" />} />
+                <Route
+                  path="/session/:id?"
+                  component={(p) => (
+                    <Show when={p.params.id ?? "new"}>
+                      <TerminalProvider>
+                        <FileProvider>
+                          <PromptProvider>
+                            <CommentsProvider>
+                              <Suspense fallback={<Loading />}>
+                                <Session />
+                              </Suspense>
+                            </CommentsProvider>
+                          </PromptProvider>
+                        </FileProvider>
+                      </TerminalProvider>
+                    </Show>
+                  )}
+                />
+              </Route>
+            </Router>
+          </GlobalSyncProvider>
+        </GlobalSDKProvider>
+      </ServerKey>
+    </ServerProvider>
   )
 }
