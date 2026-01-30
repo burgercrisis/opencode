@@ -58,70 +58,73 @@ export const ReadTool = Tool.define("read", {
     const isPdf = file.type === "application/pdf"
 
     return (isImage || isPdf)
-      ? file.bytes().then((bytes) => ({
-          title,
-          output: `${isImage ? "Image" : "PDF"} read successfully`,
-          metadata: {
-            preview: `${isImage ? "Image" : "PDF"} read successfully`,
-            truncated: false,
-          },
-          attachments: [
-            {
-              id: Identifier.ascending("part"),
-              sessionID: ctx.sessionID,
-              messageID: ctx.messageID,
-              type: "file" as const,
-              mime: file.type,
-              url: `data:${file.type};base64,${Buffer.from(bytes).toString("base64")}`,
+      ? (async () => {
+          const bytes = await file.bytes()
+          return {
+            title,
+            output: `${isImage ? "Image" : "PDF"} read successfully`,
+            metadata: {
+              preview: `${isImage ? "Image" : "PDF"} read successfully`,
+              truncated: false,
             },
-          ],
-        }))
-      : Filesystem.isBinaryFile(filepath).then((isBinary) =>
-           isBinary
-             ? (() => { throw new Error(`Cannot read binary file: ${filepath}`) })()
-             : file.text().then((text) => {
-                 const lines = text.split(/\r?\n/)
-                 const limit = params.limit ?? DEFAULT_READ_LIMIT
-                 const offset = params.offset || 0
-                 const subset = lines.slice(offset, offset + limit)
- 
-                 const process = (items: string[], acc: string[], bytes: number): { raw: string[]; bytes: number; truncated: boolean } => {
-                   const item = items[0]
-                   if (item === undefined) return { raw: acc, bytes, truncated: false }
- 
-                   const line = item.length > 2000 ? item.substring(0, 2000) + "..." : item
-                   const size = Buffer.byteLength(line, "utf-8") + (acc.length > 0 ? 1 : 0)
- 
-                   return (bytes + size > MAX_BYTES)
-                     ? { raw: acc, bytes, truncated: true }
-                     : process(items.slice(1), [...acc, line], bytes + size)
-                 }
- 
-                 const result = process(subset, [], 0)
-                 const lastReadLine = offset + result.raw.length
-                 const hasMoreLines = lines.length > lastReadLine
-                 const truncated = hasMoreLines || result.truncated
-                 const output = `<file>\n${result.raw.map((line, i) => `${(offset + i + 1).toString().padStart(5, "0")}| ${line}`).join("\n")}${
-                   result.truncated
-                     ? `\n\n(Output truncated at ${MAX_BYTES} bytes. Use 'offset' parameter to read beyond line ${lastReadLine})`
-                     : hasMoreLines
-                       ? `\n\n(File has more lines. Use 'offset' parameter to read beyond line ${lastReadLine})`
-                       : `\n\n(End of file - total ${lines.length} lines)`
-                 }\n</file>`
- 
-                 LSP.touchFile(filepath, false)
-                 FileTime.read(ctx.sessionID, filepath)
- 
-                 return {
-                   title,
-                   output,
-                   metadata: {
-                     preview: result.raw.slice(0, 20).join("\n"),
-                     truncated,
-                   },
-                 }
-               })
-         )
+            attachments: [
+              {
+                id: Identifier.ascending("part"),
+                sessionID: ctx.sessionID,
+                messageID: ctx.messageID,
+                type: "file" as const,
+                mime: file.type,
+                url: `data:${file.type};base64,${Buffer.from(bytes).toString("base64")}`,
+              },
+            ],
+          }
+        })()
+      : (async () => {
+          const isBinary = await Filesystem.isBinaryFile(filepath)
+          if (isBinary) throw new Error(`Cannot read binary file: ${filepath}`)
+          
+          const text = await file.text()
+          const lines = text.split(/\r?\n/)
+          const limit = params.limit ?? DEFAULT_READ_LIMIT
+          const offset = params.offset || 0
+          const subset = lines.slice(offset, offset + limit)
+
+          const processLines = (items: string[], acc: string[], bytes: number): { raw: string[]; bytes: number; truncated: boolean } => {
+            const item = items[0]
+            if (item === undefined) return { raw: acc, bytes, truncated: false }
+
+            const line = item.length > 2000 ? item.substring(0, 2000) + "..." : item
+            const size = Buffer.byteLength(line, "utf-8") + (acc.length > 0 ? 1 : 0)
+
+            return (bytes + size > MAX_BYTES)
+              ? { raw: acc, bytes, truncated: true }
+              : processLines(items.slice(1), [...acc, line], bytes + size)
+          }
+
+          const result = processLines(subset, [], 0)
+          const lastReadLine = offset + result.raw.length
+          const hasMoreLines = lines.length > lastReadLine
+          const truncated = hasMoreLines || result.truncated
+          const output = `<file>\n${result.raw.map((line, i) => `${(offset + i + 1).toString().padStart(5, "0")}| ${line}`).join("\n")}${
+            result.truncated
+              ? `\n\n(Output truncated at ${MAX_BYTES} bytes. Use 'offset' parameter to read beyond line ${lastReadLine})`
+              : hasMoreLines
+                ? `\n\n(File has more lines. Use 'offset' parameter to read beyond line ${lastReadLine})`
+                : `\n\n(End of file - total ${lines.length} lines)`
+          }\n</file>`
+
+          await LSP.touchFile(filepath, false)
+          FileTime.read(ctx.sessionID, filepath)
+
+          return {
+            title,
+            output,
+            metadata: {
+              preview: result.raw.slice(0, 20).join("\n"),
+              truncated,
+            },
+          }
+        })()
   },
 })
 
