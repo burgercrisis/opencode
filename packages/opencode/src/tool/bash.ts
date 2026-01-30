@@ -261,7 +261,6 @@ export const BashTool = Tool.define("bash", async () => {
         metadata: {},
       })
 
-      // Get the appropriate spawn configuration for this command
       const { processedCommand, finalEnv } = (() => {
         const initialProcessedCommand = params.command
         const initialEnv = { ...process.env }
@@ -269,7 +268,6 @@ export const BashTool = Tool.define("bash", async () => {
         return process.platform !== "win32"
           ? { processedCommand: initialProcessedCommand, finalEnv: initialEnv }
           : (() => {
-              // Implement dynamic environment variable expansion for Windows commands
               const step1 =
                 Shell.isCmdCommand(initialProcessedCommand) && initialProcessedCommand.includes("&&")
                   ? (() => {
@@ -317,20 +315,21 @@ export const BashTool = Tool.define("bash", async () => {
       })
 
       const decoder = new TextDecoder()
-      const read = async (reader: ReadableStreamDefaultReader<Uint8Array>, acc: string): Promise<string> =>
-        reader.read().then(({ done, value }) => {
-          const chunk = value ? decoder.decode(value) : ""
-          const newAcc = acc + chunk
-          ctx.metadata({
-            metadata: {
-              output: newAcc.length > MAX_METADATA_LENGTH
-                ? newAcc.slice(0, MAX_METADATA_LENGTH) + "\n\n..."
-                : newAcc,
-              description: params.description,
-            } as any,
-          })
-          return done ? acc : read(reader, newAcc)
+      const read = async (reader: ReadableStreamDefaultReader<Uint8Array>, acc: string): Promise<string> => {
+        const result = await reader.read()
+        const chunk = result.value ? decoder.decode(result.value) : ""
+        const newAcc = acc + chunk
+        ctx.metadata({
+          metadata: {
+            output: newAcc.length > MAX_METADATA_LENGTH
+              ? newAcc.slice(0, MAX_METADATA_LENGTH) + "\n\n..."
+              : newAcc,
+            description: params.description,
+          } as any,
         })
+        if (result.done) return acc
+        return read(reader, newAcc)
+      }
 
       const kill = () => Shell.killTree(proc as any)
 
