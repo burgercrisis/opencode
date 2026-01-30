@@ -16,6 +16,7 @@ import { MessageV2 } from "./message-v2"
 import { Instance } from "../project/instance"
 import { SessionPrompt } from "./prompt"
 import { fn } from "@/util/fn"
+import { iife } from "@/util/iife"
 import { Command } from "../command"
 import { Snapshot } from "@/snapshot"
 
