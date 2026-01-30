@@ -130,23 +130,19 @@ function setupCodeCopy(root: HTMLDivElement, labels: CopyLabels) {
   }
 
   const blocks = Array.from(root.querySelectorAll("pre"))
-  for (const block of blocks) {
-    ensureWrapper(block)
-  }
+  blocks.forEach(ensureWrapper)
 
   const buttons = Array.from(root.querySelectorAll('[data-slot="markdown-copy-button"]'))
-  for (const button of buttons) {
+  buttons.forEach((button) => {
     if (button instanceof HTMLButtonElement) updateLabel(button)
-  }
+  })
 
   root.addEventListener("click", handleClick)
 
   return () => {
     root.removeEventListener("click", handleClick)
-    for (const timeout of timeouts.values()) {
-      clearTimeout(timeout)
-    }
-  }
+  Array.from(timeouts.values()).forEach(clearTimeout)
+}
 }
 
 function touch(key: string, value: Entry) {
@@ -197,11 +193,9 @@ export function Markdown(
         }
       }
 
-      let finalHtml = ""
       if (marked.fastParse && marked.enhance) {
         const fast = await marked.fastParse(markdown)
         const safeFast = sanitize(fast)
-        finalHtml = safeFast
 
         // Trigger enhancement in the background
         marked.enhance(fast).then((enhanced) => {
@@ -209,10 +203,12 @@ export function Markdown(
           if (key && hash) touch(key, { hash, html: safeEnhanced, enhanced: true })
           mutate(safeEnhanced)
         })
-      } else {
-        const next = await marked.parse(markdown)
-        finalHtml = sanitize(next)
+
+        return safeFast
       }
+
+      const next = await marked.parse(markdown)
+      const finalHtml = sanitize(next)
 
       if (key && hash) touch(key, { hash, html: finalHtml, enhanced: false })
       return finalHtml
@@ -220,17 +216,11 @@ export function Markdown(
     { initialValue: "" },
   )
 
-  let copySetupTimer: ReturnType<typeof setTimeout> | undefined
-  let copyCleanup: (() => void) | undefined
-
-  createEffect(() => {
+createEffect(() => {
     const container = root()
     const content = html()
-    if (!container) return
-    if (isServer) return
-
-    if (!content) {
-      container.innerHTML = ""
+    if (!container || !content || isServer) {
+      if (container && !content) container.innerHTML = ""
       return
     }
 
@@ -260,19 +250,12 @@ export function Markdown(
       },
     })
 
-    if (copySetupTimer) clearTimeout(copySetupTimer)
-    copySetupTimer = setTimeout(() => {
-      if (copyCleanup) copyCleanup()
-      copyCleanup = setupCodeCopy(container, {
-        copy: i18n.t("ui.message.copy"),
-        copied: i18n.t("ui.message.copied"),
-      })
-    }, 150)
-  })
+    const cleanup = setupCodeCopy(container, {
+      copy: i18n.t("ui.message.copy"),
+      copied: i18n.t("ui.message.copied"),
+    })
 
-  onCleanup(() => {
-    if (copySetupTimer) clearTimeout(copySetupTimer)
-    if (copyCleanup) copyCleanup()
+    onCleanup(cleanup)
   })
 
   return (
