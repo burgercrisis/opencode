@@ -52,11 +52,13 @@ type DirectoryState = {
 }
 
 function stripFileProtocol(input: string) {
+  if (!input) return input
   if (!input.startsWith("file://")) return input
   return input.slice("file://".length)
 }
 
 function stripQueryAndHash(input: string) {
+  if (!input) return input
   const hashIndex = input.indexOf("#")
   const queryIndex = input.indexOf("?")
 
@@ -70,6 +72,7 @@ function stripQueryAndHash(input: string) {
 }
 
 function unquoteGitPath(input: string) {
+  if (!input) return input
   if (!input.startsWith('"')) return input
   if (!input.endsWith('"')) return input
   const body = input.slice(1, -1)
@@ -321,6 +324,7 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
     const directory = createMemo(() => sync.data.path.directory)
 
     function normalize(input: string) {
+      if (!input) return ""
       const root = directory()
       const prefix = root.endsWith("/") ? root : root + "/"
 
