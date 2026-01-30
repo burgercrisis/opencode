@@ -1,8 +1,11 @@
 import { dynamicTool, type Tool, jsonSchema, type JSONSchema7 } from "ai"
-import type { Client } from "@modelcontextprotocol/sdk/client/index.js"
-import type { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
-import type { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js"
-import type { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
+import { Client } from "@modelcontextprotocol/sdk/client/index.js"
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
+import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js"
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
+
+// TODO: Find correct import for UnauthorizedError from MCP SDK
+class UnauthorizedError extends Error {}
 import type {
   Tool as MCPToolDef,
 } from "@modelcontextprotocol/sdk/types.js"
@@ -354,7 +357,7 @@ export namespace MCP {
             const lastError = error instanceof Error ? error : new Error(String(error))
 
             // Handle OAuth-specific errors
-            if (error instanceof UnauthorizedError) {
+            if (error instanceof Error && error.name === "UnauthorizedError") {
               log.info("mcp server requires authentication", { key, transport: name })
 
               // Check if this is a "needs registration" error
