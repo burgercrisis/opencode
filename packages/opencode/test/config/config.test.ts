@@ -580,7 +580,7 @@ test("resolves scoped npm plugins in config", async () => {
 
       expect(pluginEntries.includes(expected)).toBe(true)
 
-      const scopedEntry = pluginEntries.find((entry) => entry === expected)
+      const scopedEntry = pluginEntries.find((entry: string) => entry === expected)
       expect(scopedEntry).toBeDefined()
       expect(scopedEntry?.includes("/node_modules/@scope/plugin/")).toBe(true)
     },
@@ -622,12 +622,14 @@ test("merges plugin arrays from global and local configs", async () => {
       const plugins = config.plugin ?? []
 
       // Should contain both global and local plugins
-      expect(plugins.some((p) => p.includes("global-plugin-1"))).toBe(true)
-      expect(plugins.some((p) => p.includes("global-plugin-2"))).toBe(true)
-      expect(plugins.some((p) => p.includes("local-plugin-1"))).toBe(true)
+      expect(plugins.some((p: string) => p.includes("global-plugin-1"))).toBe(true)
+      expect(plugins.some((p: string) => p.includes("global-plugin-2"))).toBe(true)
+      expect(plugins.some((p: string) => p.includes("local-plugin-1"))).toBe(true)
 
       // Should have all 3 plugins (not replaced, but merged)
-      const pluginNames = plugins.filter((p) => p.includes("global-plugin") || p.includes("local-plugin"))
+      const pluginNames = plugins.filter(
+        (p: string) => p.includes("global-plugin") || p.includes("local-plugin"),
+      )
       expect(pluginNames.length).toBeGreaterThanOrEqual(3)
     },
   })
@@ -739,7 +741,7 @@ test("deduplicates duplicate instructions from global and local configs", async 
       expect(instructions).toContain("local-only.md")
       expect(instructions).toContain("duplicate.md")
 
-      const duplicates = instructions.filter((i) => i === "duplicate.md")
+      const duplicates = instructions.filter((i: string) => i === "duplicate.md")
       expect(duplicates.length).toBe(1)
       expect(instructions.length).toBe(3)
     },
@@ -781,17 +783,18 @@ test("deduplicates duplicate plugins from global and local configs", async () =>
       const plugins = config.plugin ?? []
 
       // Should contain all unique plugins
-      expect(plugins.some((p) => p.includes("global-plugin-1"))).toBe(true)
-      expect(plugins.some((p) => p.includes("local-plugin-1"))).toBe(true)
-      expect(plugins.some((p) => p.includes("duplicate-plugin"))).toBe(true)
+      expect(plugins.some((p: string) => p.includes("global-plugin-1"))).toBe(true)
+      expect(plugins.some((p: string) => p.includes("local-plugin-1"))).toBe(true)
+      expect(plugins.some((p: string) => p.includes("duplicate-plugin"))).toBe(true)
 
       // Should deduplicate the duplicate plugin
-      const duplicatePlugins = plugins.filter((p) => p.includes("duplicate-plugin"))
+      const duplicatePlugins = plugins.filter((p: string) => p.includes("duplicate-plugin"))
       expect(duplicatePlugins.length).toBe(1)
 
       // Should have exactly 3 unique plugins
       const pluginNames = plugins.filter(
-        (p) => p.includes("global-plugin") || p.includes("local-plugin") || p.includes("duplicate-plugin"),
+        (p: string) =>
+          p.includes("global-plugin") || p.includes("local-plugin") || p.includes("duplicate-plugin"),
       )
       expect(pluginNames.length).toBe(3)
     },
@@ -1482,7 +1485,7 @@ describe("deduplicatePlugins", () => {
         const config = await Config.get()
         const plugins = config.plugin ?? []
 
-        const myPlugins = plugins.filter((p) => Config.getPluginName(p) === "my-plugin")
+        const myPlugins = plugins.filter((p: string) => Config.getPluginName(p) === "my-plugin")
         expect(myPlugins.length).toBe(1)
         expect(myPlugins[0].startsWith("file://")).toBe(true)
       },
