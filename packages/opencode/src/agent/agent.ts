@@ -199,7 +199,7 @@ export namespace Agent {
       },
     }
 
-    for (const [key, value] of Object.entries(cfg.agent ?? {})) {
+    for (const [key, value] of Object.entries((cfg.agent ?? {}) as Record<string, any>)) {
       if (value.disable) {
         delete result[key]
         continue
