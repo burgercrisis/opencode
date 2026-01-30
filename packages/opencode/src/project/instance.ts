@@ -16,23 +16,26 @@ const cache = new Map<string, Promise<Context>>()
 
 export const Instance = {
   async provide<R>(input: { directory: string; init?: () => Promise<any>; fn: () => R }): Promise<R> {
-    let existing = cache.get(input.directory)
-    if (!existing) {
-      Log.Default.info("creating instance", { directory: input.directory })
-      existing = iife(async () => {
-        const { project, sandbox } = await Project.fromDirectory(input.directory)
-        const ctx = {
-          directory: input.directory,
-          worktree: sandbox,
-          project,
-        }
-        await context.provide(ctx, async () => {
-          await input.init?.()
+    const existing =
+      cache.get(input.directory) ??
+      iife(() => {
+        Log.Default.info("creating instance", { directory: input.directory })
+        const promise = iife(async () => {
+          const { project, sandbox } = await Project.fromDirectory(input.directory)
+          const ctx = {
+            directory: input.directory,
+            worktree: sandbox,
+            project,
+          }
+          await context.provide(ctx, async () => {
+            await input.init?.()
+          })
+          return ctx
         })
-        return ctx
+        cache.set(input.directory, promise)
+        return promise
       })
-      cache.set(input.directory, existing)
-    }
+
     const ctx = await existing
     return context.provide(ctx, async () => {
       return input.fn()
@@ -78,14 +81,17 @@ export const Instance = {
   },
   async disposeAll() {
     Log.Default.info("disposing all instances")
-    for (const [_key, value] of cache) {
-      const awaited = await value.catch(() => {})
-      if (awaited) {
-        await context.provide(await value, async () => {
-          await Instance.dispose()
-        })
-      }
-    }
+    await Promise.all(
+      Array.from(cache.values()).map(async (value) => {
+        const awaited = await value.catch(() => {})
+        return (
+          awaited &&
+          context.provide(awaited, async () => {
+            await Instance.dispose()
+          })
+        )
+      }),
+    )
     cache.clear()
   },
 }
