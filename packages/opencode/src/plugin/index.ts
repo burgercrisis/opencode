@@ -126,10 +126,7 @@ export namespace Plugin {
       await promise
       const fn = hook[name]
       if (!fn) return
-      // @ts-expect-error if you feel adventurous, please fix the typing, make sure to bump the try-counter if you
-      // give up.
-      // try-counter: 2
-      await fn(input, output)
+      await (fn as any)(input, output)
     }, Promise.resolve())
 
     return output
@@ -145,8 +142,7 @@ export namespace Plugin {
 
     await hooks.reduce(async (promise, hook) => {
       await promise
-      // @ts-expect-error this is because we haven't moved plugin to sdk v2
-      await hook.config?.(config)
+      await (hook.config as any)?.(config)
     }, Promise.resolve())
 
     Bus.subscribeAll(async (input) => {
