@@ -710,7 +710,7 @@ export namespace MCP {
     // Create a new auth provider for this flow
     // OAuth config is optional - if not provided, we'll use auto-discovery
     const oauthConfig = typeof mcpConfig.oauth === "object" ? mcpConfig.oauth : undefined
-    let capturedUrl: URL | undefined
+    const capture = { url: undefined as URL | undefined }
     const authProvider = new McpOAuthProvider(
       mcpName,
       mcpConfig.url,
@@ -721,7 +721,7 @@ export namespace MCP {
       },
       {
         onRedirect: async (url) => {
-          capturedUrl = url
+          capture.url = url
         },
       },
     )
@@ -741,10 +741,10 @@ export namespace MCP {
       // If we get here, we're already authenticated
       return { authorizationUrl: "" }
     } catch (error) {
-      if (error instanceof UnauthorizedError && capturedUrl) {
+      if (error instanceof UnauthorizedError && capture.url) {
         // Store transport for finishAuth
         pendingOAuthTransports.set(mcpName, transport)
-        return { authorizationUrl: capturedUrl.toString() }
+        return { authorizationUrl: capture.url.toString() }
       }
       throw error
     }
