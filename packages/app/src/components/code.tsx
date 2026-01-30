@@ -1,6 +1,7 @@
 import { bundledLanguages, type BundledLanguage, type ShikiTransformer } from "shiki"
 import { splitProps, type ComponentProps, createEffect, onMount, onCleanup, createMemo, createResource } from "solid-js"
-import { useLocal } from "@/context/local"
+import { useFile } from "@/context/file"
+import { useLayout } from "@/context/layout"
 import { useShiki } from "@/context/shiki"
 import { getFileExtension, getNodeOffsetInLine, getSelectionInContainer } from "@/utils"
 
@@ -10,7 +11,8 @@ interface Props extends ComponentProps<"div"> {
 }
 
 export function Code(props: Props) {
-  const ctx = useLocal()
+  const file = useFile()
+  const layout = useLayout()
   const highlighter = useShiki()
   const [local, others] = splitProps(props, ["class", "classList", "code", "path"])
   const lang = createMemo(() => {
@@ -39,29 +41,29 @@ export function Code(props: Props) {
     let ticking = false
     const onScroll = () => {
       if (!container) return
-      if (ctx.file.active()?.path !== local.path) return
+      if (file.active()?.path !== local.path) return
       if (ticking) return
       ticking = true
       requestAnimationFrame(() => {
         ticking = false
-        ctx.file.scroll(local.path, container!.scrollTop)
+        file.setScrollTop(local.path, container!.scrollTop)
       })
     }
 
     const onSelectionChange = () => {
       if (!container) return
       if (isProgrammaticSelection) return
-      if (ctx.file.active()?.path !== local.path) return
+      if (file.active()?.path !== local.path) return
       const d = getSelectionInContainer(container)
       if (!d) return
-      const p = ctx.file.node(local.path)?.selection
+      const p = file.selection(local.path)
       if (p && p.startLine === d.sl && p.endLine === d.el && p.startChar === d.sch && p.endChar === d.ech) return
-      ctx.file.select(local.path, { startLine: d.sl, startChar: d.sch, endLine: d.el, endChar: d.ech })
+      file.setSelection(local.path, { startLine: d.sl, startChar: d.sch, endLine: d.el, endChar: d.ech })
     }
 
     const MOD = typeof navigator === "object" && /(Mac|iPod|iPhone|iPad)/.test(navigator.platform) ? "Meta" : "Control"
     const onKeyDown = (e: KeyboardEvent) => {
-      if (ctx.file.active()?.path !== local.path) return
+      if (file.active()?.path !== local.path) return
       const ae = document.activeElement as HTMLElement | undefined
       const tag = (ae?.tagName || "").toLowerCase()
       const inputFocused = !!ae && (tag === "input" || tag === "textarea" || ae.isContentEditable)
@@ -77,7 +79,7 @@ export function Code(props: Props) {
         const last = lines[lines.length - 1]
         r.selectNodeContents(last)
         const lastLen = r.toString().length
-        ctx.file.select(local.path, { startLine: 1, startChar: 0, endLine: lines.length, endChar: lastLen })
+        file.setSelection(local.path, { startLine: 1, startChar: 0, endLine: lines.length, endChar: lastLen })
       }
     }
 
@@ -96,7 +98,7 @@ export function Code(props: Props) {
   createEffect(() => {
     const content = html()
     if (!container || !content) return
-    const top = ctx.file.node(local.path)?.scrollTop
+    const top = file.scrollTop(local.path)
     if (top !== undefined && container.scrollTop !== top) container.scrollTop = top
   })
 
@@ -104,10 +106,10 @@ export function Code(props: Props) {
   createEffect(() => {
     const content = html()
     if (!container || !content) return
-    if (ctx.file.active()?.path !== local.path) return
+    if (file.active()?.path !== local.path) return
     const codeEl = container.querySelector("code") as HTMLElement | undefined
     if (!codeEl) return
-    const target = ctx.file.node(local.path)?.selection
+    const target = file.selection(local.path)
     const current = getSelectionInContainer(container)
     const sel = window.getSelection()
     if (!sel) return
@@ -166,7 +168,7 @@ export function Code(props: Props) {
   createEffect(() => {
     const content = html()
     if (!container || !content) return
-    const view = ctx.file.view(local.path)
+    const view = layout.review.diffStyle()
 
     const pres = Array.from(container.querySelectorAll<HTMLPreElement>("pre"))
     if (pres.length === 0) return
@@ -183,20 +185,20 @@ export function Code(props: Props) {
       originalPre.style.display = ""
     }
 
-    const expanded = ctx.file.folded(local.path)
+    const expanded = file.folded(local.path)
     if (view === "diff-split") {
       const left = container.querySelector<HTMLElement>(".diff-split pre:nth-child(1) code")
       const right = container.querySelector<HTMLElement>(".diff-split pre:nth-child(2) code")
       if (left)
-        applyDiffFolding(left, 3, { expanded, onExpand: (key) => ctx.file.unfold(local.path, key), side: "left" })
+        applyDiffFolding(left, 3, { expanded, onExpand: (key) => file.unfold(local.path, key), side: "left" })
       if (right)
-        applyDiffFolding(right, 3, { expanded, onExpand: (key) => ctx.file.unfold(local.path, key), side: "right" })
+        applyDiffFolding(right, 3, { expanded, onExpand: (key) => file.unfold(local.path, key), side: "right" })
     } else {
       const code = container.querySelector<HTMLElement>("pre code")
       if (code)
         applyDiffFolding(code, 3, {
           expanded,
-          onExpand: (key) => ctx.file.unfold(local.path, key),
+          onExpand: (key) => file.unfold(local.path, key),
         })
     }
   })
@@ -209,7 +211,7 @@ export function Code(props: Props) {
 
   const applyHighlight = (idx: number, scroll?: boolean) => {
     if (!container) return
-    const view = ctx.file.view(local.path)
+    const view = layout.review.diffStyle()
     if (view === "raw") return
 
     clearHighlights()
@@ -250,8 +252,8 @@ export function Code(props: Props) {
   createEffect(() => {
     const content = html()
     if (!container || !content) return
-    const view = ctx.file.view(local.path)
-    const raw = ctx.file.changeIndex(local.path)
+    const view = layout.review.diffStyle()
+    const raw = file.changeIndex(local.path)
     if (raw === undefined) return
     const total = countGroups()
     if (total <= 0) return
@@ -260,7 +262,7 @@ export function Code(props: Props) {
     const navigated = lastRawIdx !== undefined && lastRawIdx !== raw
 
     if (next !== raw) {
-      ctx.file.setChangeIndex(local.path, next)
+      file.setChangeIndex(local.path, next)
       applyHighlight(next, true)
     } else {
       if (lastView !== view || lastContent !== content) applyHighlight(next)
