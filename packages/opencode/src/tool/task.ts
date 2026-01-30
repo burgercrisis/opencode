@@ -146,7 +146,9 @@ export const TaskTool = Tool.define("task", async (ctx) => {
           todowrite: false,
           todoread: false,
           ...(hasTaskPermission ? {} : { task: false }),
-          ...Object.fromEntries((config.experimental?.primary_tools ?? []).map((t) => [t, false])),
+          ...Object.fromEntries(
+            (config.experimental?.primary_tools ?? []).map((t: string) => [t, false] as const),
+          ),
         },
         parts: promptParts,
       }).finally(() => {
@@ -156,7 +158,7 @@ export const TaskTool = Tool.define("task", async (ctx) => {
       const messages = await Session.messages({ sessionID: session.id })
       const summary = messages
         .filter((x) => x.info.role === "assistant")
-        .flatMap((msg) => msg.parts.filter((x: any) => x.type === "tool") as MessageV2.ToolPart[])
+        .flatMap((msg) => (msg.parts as MessageV2.Part[]).filter((x) => x.type === "tool") as MessageV2.ToolPart[])
         .map((part) => ({
           id: part.id,
           tool: part.tool,
@@ -174,9 +176,10 @@ export const TaskTool = Tool.define("task", async (ctx) => {
           model,
         },
         output:
-          (result.parts.findLast((x) => x.type === "text")?.text ?? "") +
-          "\n\n" +
-          ["<task_metadata>", `session_id: ${session.id}`, "</task_metadata>"].join("\n"),
+          ((result.parts as MessageV2.Part[]).findLast((x) => x.type === "text") as MessageV2.TextPart | undefined)?.text ??
+          "" +
+            "\n\n" +
+            ["<task_metadata>", `session_id: ${session.id}`, "</task_metadata>"].join("\n"),
       }
     },
   }
