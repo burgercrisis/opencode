@@ -459,6 +459,26 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
 
     const sessionKey = createMemo(() => `${params.dir}${params.id ? "/" + params.id : ""}`)
 
+    function ensure(path: string) {
+      if (!path) return
+      if (store.file[path]) return
+      setStore("file", path, { path, name: getFilename(path) })
+    }
+
+    function get(input: string) {
+      const path = normalize(input)
+      ensure(path)
+      const file = store.file[path]
+      const content = file?.content
+      if (!content) return file
+      if (contentLru.has(path)) {
+        touchContent(path)
+        return file
+      }
+      touchContent(path, approxBytes(content))
+      return file
+    }
+
     const active = createMemo(() => {
       const tabValue = layout.tabs(sessionKey).active()
       if (!tabValue) return
@@ -466,12 +486,6 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
       if (!path) return
       return get(path)
     })
-
-    function ensure(path: string) {
-      if (!path) return
-      if (store.file[path]) return
-      setStore("file", path, { path, name: getFilename(path) })
-    }
 
     function load(input: string, options?: { force?: boolean }) {
       const path = normalize(input)
@@ -704,19 +718,6 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
 
       listDir(parent, { force: true })
     })
-
-    const get = (input: string) => {
-      const path = normalize(input)
-      const file = store.file[path]
-      const content = file?.content
-      if (!content) return file
-      if (contentLru.has(path)) {
-        touchContent(path)
-        return file
-      }
-      touchContent(path, approxBytes(content))
-      return file
-    }
 
     const scrollTop = (input: string) => view().scrollTop(normalize(input))
     const scrollLeft = (input: string) => view().scrollLeft(normalize(input))
