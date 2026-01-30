@@ -945,14 +945,14 @@ export const GithubRunCommand = cmd({
           ],
         })
 
-        if (summary.info.role === "assistant" && summary.info.error) {
-          console.error("Summary agent error:", summary.info.error)
+        if ((summary as any).info.role === "assistant" && (summary as any).info.error) {
+          console.error("Summary agent error:", (summary as any).info.error)
           throw new Error(
-            `${summary.info.error.name}: ${"message" in summary.info.error ? summary.info.error.message : ""}`,
+            `${(summary as any).info.error.name}: ${"message" in (summary as any).info.error ? (summary as any).info.error.message : ""}`,
           )
         }
 
-        const summaryText = extractResponseText(summary.parts)
+        const summaryText = extractResponseText((summary as any).parts)
         if (!summaryText) {
           throw new Error("Failed to get summary from agent")
         }
