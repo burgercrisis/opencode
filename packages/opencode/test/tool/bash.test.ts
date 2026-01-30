@@ -14,9 +14,9 @@ const ctx = {
   callID: "",
   agent: "build",
   abort: AbortSignal.any([]),
-  messages: [],
   metadata: () => {},
   ask: async () => {},
+  messages: [],
 }
 
 const projectRoot = path.join(__dirname, "../..")
