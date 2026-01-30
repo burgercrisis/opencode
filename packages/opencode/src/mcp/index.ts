@@ -213,20 +213,17 @@ export namespace MCP {
       return undefined
     })
 
-    if (!prompts) {
-      return
-    }
-
-    const commands: Record<string, PromptInfo & { client: string }> = {}
-
-    for (const prompt of prompts.prompts) {
-      const sanitizedClientName = clientName.replace(/[^a-zA-Z0-9_-]/g, "_")
-      const sanitizedPromptName = prompt.name.replace(/[^a-zA-Z0-9_-]/g, "_")
-      const key = sanitizedClientName + ":" + sanitizedPromptName
-
-      commands[key] = { ...prompt, client: clientName }
-    }
-    return commands
+    return (
+      prompts &&
+      Object.fromEntries(
+        prompts.prompts.map((prompt) => {
+          const sanitizedClientName = clientName.replace(/[^a-zA-Z0-9_-]/g, "_")
+          const sanitizedPromptName = prompt.name.replace(/[^a-zA-Z0-9_-]/g, "_")
+          const key = sanitizedClientName + ":" + sanitizedPromptName
+          return [key, { ...prompt, client: clientName }]
+        }),
+      )
+    )
   }
 
   async function fetchResourcesForClient(clientName: string, client: Client) {
@@ -235,20 +232,17 @@ export namespace MCP {
       return undefined
     })
 
-    if (!resources) {
-      return
-    }
-
-    const commands: Record<string, ResourceInfo & { client: string }> = {}
-
-    for (const resource of resources.resources) {
-      const sanitizedClientName = clientName.replace(/[^a-zA-Z0-9_-]/g, "_")
-      const sanitizedResourceName = resource.name.replace(/[^a-zA-Z0-9_-]/g, "_")
-      const key = sanitizedClientName + ":" + sanitizedResourceName
-
-      commands[key] = { ...resource, client: clientName }
-    }
-    return commands
+    return (
+      resources &&
+      Object.fromEntries(
+        resources.resources.map((resource) => {
+          const sanitizedClientName = clientName.replace(/[^a-zA-Z0-9_-]/g, "_")
+          const sanitizedResourceName = resource.name.replace(/[^a-zA-Z0-9_-]/g, "_")
+          const key = sanitizedClientName + ":" + sanitizedResourceName
+          return [key, { ...resource, client: clientName }]
+        }),
+      )
+    )
   }
 
   export async function add(name: string, mcp: Config.Mcp) {
@@ -494,15 +488,12 @@ export namespace MCP {
     const s = await state()
     const cfg = await Config.get()
     const config = cfg.mcp ?? {}
-    const result: Record<string, Status> = {}
 
-    // Include all configured MCPs from config, not just connected ones
-    for (const [key, mcp] of Object.entries(config)) {
-      if (!isMcpConfigured(mcp)) continue
-      result[key] = s.status[key] ?? { status: "disabled" }
-    }
-
-    return result
+    return Object.fromEntries(
+      Object.entries(config).reduce((acc, [key, mcp]) => {
+        return isMcpConfigured(mcp) ? [...acc, [key, s.status[key] ?? { status: "disabled" }]] : acc
+      }, [] as [string, Status][]),
+    )
   }
 
   export async function clients() {
@@ -561,42 +552,47 @@ export namespace MCP {
   }
 
   export async function tools() {
-    const result: Record<string, Tool> = {}
     const s = await state()
     const cfg = await Config.get()
     const config = cfg.mcp ?? {}
     const clientsSnapshot = await clients()
     const defaultTimeout = cfg.experimental?.mcp_timeout
 
-    for (const [clientName, client] of Object.entries(clientsSnapshot)) {
-      // Only include tools from connected MCPs (skip disabled ones)
-      if (s.status[clientName]?.status !== "connected") {
-        continue
-      }
-
-      const toolsResult = await client.listTools().catch((e) => {
-        log.error("failed to get tools", { clientName, error: e.message })
-        const failedStatus = {
-          status: "failed" as const,
-          error: e instanceof Error ? e.message : String(e),
+    const toolEntries = await Promise.all(
+      Object.entries(clientsSnapshot).map(async ([clientName, client]) => {
+        // Only include tools from connected MCPs (skip disabled ones)
+        if (s.status[clientName]?.status !== "connected") {
+          return []
         }
-        s.status[clientName] = failedStatus
-        delete s.clients[clientName]
-        return undefined
-      })
-      if (!toolsResult) {
-        continue
-      }
-      const mcpConfig = config[clientName]
-      const entry = isMcpConfigured(mcpConfig) ? mcpConfig : undefined
-      const timeout = entry?.timeout ?? defaultTimeout
-      for (const mcpTool of toolsResult.tools) {
-        const sanitizedClientName = clientName.replace(/[^a-zA-Z0-9_-]/g, "_")
-        const sanitizedToolName = mcpTool.name.replace(/[^a-zA-Z0-9_-]/g, "_")
-        result[sanitizedClientName + "_" + sanitizedToolName] = await convertMcpTool(mcpTool, client, timeout)
-      }
-    }
-    return result
+
+        const toolsResult = await client.listTools().catch((e) => {
+          log.error("failed to get tools", { clientName, error: e.message })
+          const failedStatus = {
+            status: "failed" as const,
+            error: e instanceof Error ? e.message : String(e),
+          }
+          s.status[clientName] = failedStatus
+          delete s.clients[clientName]
+          return undefined
+        })
+
+        if (!toolsResult) return []
+
+        const mcpConfig = config[clientName]
+        const entry = isMcpConfigured(mcpConfig) ? mcpConfig : undefined
+        const timeout = entry?.timeout ?? defaultTimeout
+
+        return Promise.all(
+          toolsResult.tools.map(async (mcpTool) => {
+            const sanitizedClientName = clientName.replace(/[^a-zA-Z0-9_-]/g, "_")
+            const sanitizedToolName = mcpTool.name.replace(/[^a-zA-Z0-9_-]/g, "_")
+            return [sanitizedClientName + "_" + sanitizedToolName, await convertMcpTool(mcpTool, client, timeout)]
+          }),
+        )
+      }),
+    )
+
+    return Object.fromEntries(toolEntries.flat())
   }
 
   export async function prompts() {
