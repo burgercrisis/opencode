@@ -182,7 +182,7 @@ export namespace MCP {
             return
           }
 
-          const result = (await create(key, mcp).catch(() => undefined)) as
+          const result = (await create(key, mcp as any).catch(() => undefined)) as
             | { mcpClient: MCPClient | undefined; status: Status }
             | undefined
           if (!result) return
