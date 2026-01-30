@@ -120,14 +120,18 @@ export namespace Plugin {
     Output = Parameters<Required<Hooks>[Name]>[1],
   >(name: Name, input: Input, output: Output): Promise<Output> {
     if (!name) return output
-    for (const hook of await state().then((x) => x.hooks)) {
+    const hooks = await state().then((x) => x.hooks)
+
+    await hooks.reduce(async (promise, hook) => {
+      await promise
       const fn = hook[name]
-      if (!fn) continue
+      if (!fn) return
       // @ts-expect-error if you feel adventurous, please fix the typing, make sure to bump the try-counter if you
       // give up.
       // try-counter: 2
       await fn(input, output)
-    }
+    }, Promise.resolve())
+
     return output
   }
 
@@ -138,17 +142,20 @@ export namespace Plugin {
   export async function init() {
     const hooks = await state().then((x) => x.hooks)
     const config = await Config.get()
-    for (const hook of hooks) {
+
+    await hooks.reduce(async (promise, hook) => {
+      await promise
       // @ts-expect-error this is because we haven't moved plugin to sdk v2
       await hook.config?.(config)
-    }
+    }, Promise.resolve())
+
     Bus.subscribeAll(async (input) => {
       const hooks = await state().then((x) => x.hooks)
-      for (const hook of hooks) {
+      hooks.forEach((hook) => {
         hook["event"]?.({
           event: input,
         })
-      }
+      })
     })
   }
 }
