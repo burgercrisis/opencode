@@ -33,32 +33,32 @@ export namespace ToolRegistry {
   const log = Log.create({ service: "tool.registry" })
 
   export const state = Instance.state(async () => {
-    const custom = [] as Tool.Info[]
     const glob = new Bun.Glob("{tool,tools}/*.{js,ts}")
+    const directories = await Config.directories()
 
-    for (const dir of await Config.directories()) {
-      for await (const match of glob.scan({
-        cwd: dir,
-        absolute: true,
-        followSymlinks: true,
-        dot: true,
-      })) {
+    const customToolsFromDirs = await directories.reduce(async (accPromise, dir) => {
+      const acc = await accPromise
+      const matches = await Array.fromAsync(glob.scan({ cwd: dir, absolute: true, followSymlinks: true, dot: true }))
+      
+      const dirTools = await matches.reduce(async (dirAccPromise, match) => {
+        const dirAcc = await dirAccPromise
         const namespace = path.basename(match, path.extname(match))
         const mod = await import(match)
-        for (const [id, def] of Object.entries<ToolDefinition>(mod)) {
-          custom.push(fromPlugin(id === "default" ? namespace : `${namespace}_${id}`, def))
-        }
-      }
-    }
+        const entries = Object.entries<ToolDefinition>(mod)
+        const matchedTools = entries.map(([id, def]) => fromPlugin(id === "default" ? namespace : `${namespace}_${id}`, def))
+        return dirAcc.concat(matchedTools)
+      }, Promise.resolve([] as Tool.Info[]))
+
+      return acc.concat(dirTools)
+    }, Promise.resolve([] as Tool.Info[]))
 
     const plugins = await Plugin.list()
-    for (const plugin of plugins) {
-      for (const [id, def] of Object.entries(plugin.tool ?? {})) {
-        custom.push(fromPlugin(id, def))
-      }
-    }
+    const customToolsFromPlugins = plugins.reduce((acc, plugin) => {
+      const pluginTools = Object.entries(plugin.tool ?? {}).map(([id, def]) => fromPlugin(id, def as ToolDefinition))
+      return acc.concat(pluginTools)
+    }, [] as Tool.Info[])
 
-    return { custom }
+    return { custom: [...customToolsFromDirs, ...customToolsFromPlugins] }
   })
 
   function fromPlugin(id: string, def: ToolDefinition): Tool.Info {
@@ -81,13 +81,12 @@ export namespace ToolRegistry {
   }
 
   export async function register(tool: Tool.Info) {
-    const { custom } = await state()
-    const idx = custom.findIndex((t) => t.id === tool.id)
-    if (idx >= 0) {
-      custom.splice(idx, 1, tool)
-      return
-    }
-    custom.push(tool)
+    const s = await state()
+    // Mutate state container directly since state() returns a mutable container
+    // in the Instance.state pattern, but we use declarative methods for the update.
+    s.custom = s.custom.some((t) => t.id === tool.id)
+      ? s.custom.map((t) => (t.id === tool.id ? tool : t))
+      : [...s.custom, tool]
   }
 
   async function all(): Promise<Tool.Info[]> {
@@ -114,7 +113,9 @@ export namespace ToolRegistry {
       PatchTool,
       ...(Flag.OPENCODE_EXPERIMENTAL_LSP_TOOL ? [LspTool] : []),
       ...(config.experimental?.batch_tool === true ? [BatchTool] : []),
-      ...(Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE && Flag.OPENCODE_CLIENT === "cli" ? [PlanExitTool, PlanEnterTool] : []),
+      ...(Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE && Flag.OPENCODE_CLIENT === "cli"
+        ? [PlanExitTool, PlanEnterTool]
+        : []),
       ...custom,
     ]
   }
@@ -130,27 +131,34 @@ export namespace ToolRegistry {
     },
     agent?: Agent.Info,
   ) {
-    const tools = await all()
-    const result = await Promise.all(
-      tools
+    const allTools = await all()
+
+    const usePatch = (() => {
+      const isGpt = model.modelID.includes("gpt-")
+      const isOss = model.modelID.includes("oss")
+      const isGpt4 = model.modelID.includes("gpt-4")
+      const isGpt5 = model.modelID.includes("gpt-5")
+      const isO1 = model.modelID.includes("o1")
+      const isO3 = model.modelID.includes("o3")
+      return isGpt && !isOss && !isGpt4 && !isGpt5 && !isO1 && !isO3
+    })()
+
+    return Promise.all(
+      allTools
         .filter((t) => {
-          // Enable websearch/codesearch for all models
-          if (t.id === "codesearch" || t.id === "websearch") {
-            return true
-          }
+          const isSearch = t.id === "codesearch" || t.id === "websearch"
+          const isPatch = t.id === "patch"
+          const isApplyPatch = t.id === "apply_patch"
+          const isEditOrWrite = t.id === "edit" || t.id === "write"
 
-          // use apply tool in same format as codex
-          const usePatch =
-            model.modelID.includes("gpt-") &&
-            !model.modelID.includes("oss") &&
-            !model.modelID.includes("gpt-4") &&
-            !model.modelID.includes("gpt-5") &&
-            !model.modelID.includes("o1") &&
-            !model.modelID.includes("o3")
-          if (t.id === "apply_patch") return usePatch
-          if (t.id === "edit" || t.id === "write" || t.id === "patch") return !usePatch
-
-          return true
+          return (
+            isSearch ||
+            (isApplyPatch
+              ? usePatch
+              : isEditOrWrite || isPatch
+                ? !usePatch
+                : true)
+          )
         })
         .map(async (t) => {
           using _ = log.time(t.id)
@@ -160,6 +168,5 @@ export namespace ToolRegistry {
           }
         }),
     )
-    return result
   }
 }
