@@ -71,7 +71,7 @@ export const LspTool = Tool.define("lsp", {
       title,
       metadata: { result },
       output: args.operation === "diagnostics"
-        ? (result.length === 0 ? "No diagnostics found for this file." : result.map(LSP.Diagnostic.pretty).join("\n"))
+        ? (result.length === 0 ? "No diagnostics found for this file." : (result as any[]).map(LSP.Diagnostic.pretty).join("\n"))
         : (result.length === 0 ? `No results found for ${args.operation}` : JSON.stringify(result, null, 2)),
     }
   },
