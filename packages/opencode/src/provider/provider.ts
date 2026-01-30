@@ -140,24 +140,22 @@ export namespace Provider {
       }
     },
     async opencode(input) {
-      const hasKey = await (async () => {
-        const env = Env.all()
-        if (input.env.some((item) => env[item])) return true
-        if (await Auth.get(input.id)) return true
-        const config = await Config.get()
-        if (config.provider?.["opencode"]?.options?.apiKey) return true
-        return false
-      })()
+      const env = Env.all()
+      const config = await Config.get()
+      const hasKey =
+        input.env.some((item) => env[item]) ||
+        !!(await Auth.get(input.id)) ||
+        !!config.provider?.["opencode"]?.options?.apiKey
 
-      if (!hasKey) {
-        for (const [key, value] of Object.entries(input.models)) {
-          if (value.cost.input === 0) continue
-          delete input.models[key]
-        }
-      }
+      const models = hasKey ? input.models : pickBy(input.models, (m) => m.cost.input === 0)
+
+      // Sync the input models with filtered models
+      Object.keys(input.models).forEach((key) => {
+        if (!models[key]) delete input.models[key]
+      })
 
       return {
-        autoload: Object.keys(input.models).length > 0,
+        autoload: Object.keys(models).length > 0,
         options: hasKey ? {} : { apiKey: "public" },
       }
     },
@@ -287,10 +285,8 @@ export namespace Provider {
         autoload: true,
         options: providerOptions,
         async getModel(sdk: any, model: Model, options?: Record<string, any>) {
-          let modelID = model.api.id
-          // Skip region prefixing if model already has a cross-region inference profile prefix
-          if (modelID.startsWith("global.") || modelID.startsWith("jp.")) {
-            return sdk.languageModel(modelID)
+          if (model.api.id.startsWith("global.") || model.api.id.startsWith("jp.")) {
+            return sdk.languageModel(model.api.id)
           }
 
           // Region resolution precedence (highest to lowest):
@@ -299,10 +295,11 @@ export namespace Provider {
           // 3. Default "us-east-1" (baked into defaultRegion)
           const region = options?.region ?? defaultRegion
 
-          let regionPrefix = region.split("-")[0]
+          const resolved = iife(() => {
+            const regionPrefix = region.split("-")[0]
+            const modelID = model.api.id
 
-          switch (regionPrefix) {
-            case "us": {
+            if (regionPrefix === "us") {
               const modelRequiresPrefix = [
                 "nova-micro",
                 "nova-lite",
@@ -314,11 +311,12 @@ export namespace Provider {
               ].some((m) => modelID.includes(m))
               const isGovCloud = region.startsWith("us-gov")
               if (modelRequiresPrefix && !isGovCloud) {
-                modelID = `${regionPrefix}.${modelID}`
+                return { regionPrefix, modelID: `${regionPrefix}.${modelID}` }
               }
-              break
+              return { regionPrefix, modelID }
             }
-            case "eu": {
+
+            if (regionPrefix === "eu") {
               const regionRequiresPrefix = [
                 "eu-west-1",
                 "eu-west-2",
@@ -333,27 +331,27 @@ export namespace Provider {
                 modelID.includes(m),
               )
               if (regionRequiresPrefix && modelRequiresPrefix) {
-                modelID = `${regionPrefix}.${modelID}`
+                return { regionPrefix, modelID: `${regionPrefix}.${modelID}` }
               }
-              break
+              return { regionPrefix, modelID }
             }
-            case "ap": {
+
+            if (regionPrefix === "ap") {
               const isAustraliaRegion = ["ap-southeast-2", "ap-southeast-4"].includes(region)
               const isTokyoRegion = region === "ap-northeast-1"
               if (
                 isAustraliaRegion &&
                 ["anthropic.claude-sonnet-4-5", "anthropic.claude-haiku"].some((m) => modelID.includes(m))
               ) {
-                regionPrefix = "au"
-                modelID = `${regionPrefix}.${modelID}`
-              } else if (isTokyoRegion) {
+                return { regionPrefix: "au", modelID: `au.${modelID}` }
+              }
+              if (isTokyoRegion) {
                 // Tokyo region uses jp. prefix for cross-region inference
                 const modelRequiresPrefix = ["claude", "nova-lite", "nova-micro", "nova-pro"].some((m) =>
                   modelID.includes(m),
                 )
                 if (modelRequiresPrefix) {
-                  regionPrefix = "jp"
-                  modelID = `${regionPrefix}.${modelID}`
+                  return { regionPrefix: "jp", modelID: `jp.${modelID}` }
                 }
               } else {
                 // Other APAC regions use apac. prefix
@@ -361,15 +359,16 @@ export namespace Provider {
                   modelID.includes(m),
                 )
                 if (modelRequiresPrefix) {
-                  regionPrefix = "apac"
-                  modelID = `${regionPrefix}.${modelID}`
+                  return { regionPrefix: "apac", modelID: `apac.${modelID}` }
                 }
               }
-              break
+              return { regionPrefix, modelID }
             }
-          }
 
-          return sdk.languageModel(modelID)
+            return { regionPrefix, modelID }
+          })
+
+          return sdk.languageModel(resolved.modelID)
         },
       }
     },
@@ -784,7 +783,7 @@ export namespace Provider {
     }
 
     // extend database from config
-    for (const [providerID, provider] of configProviders) {
+    configProviders.forEach(([providerID, provider]) => {
       const existing = database[providerID]
       const parsed: Info = {
         id: providerID,
@@ -795,7 +794,7 @@ export namespace Provider {
         models: existing?.models ?? {},
       }
 
-      for (const [modelID, model] of Object.entries(provider.models ?? {})) {
+      Object.entries(provider.models ?? {}).forEach(([modelID, model]) => {
         const existingModel = parsed.models[model.id ?? modelID]
         const name = iife(() => {
           if (model.name) return model.name
@@ -862,67 +861,60 @@ export namespace Provider {
           (v) => omit(v, ["disabled"]),
         )
         parsed.models[modelID] = parsedModel
-      }
+      })
       database[providerID] = parsed
-    }
+    })
 
     // load env
     const env = Env.all()
-    for (const [providerID, provider] of Object.entries(database)) {
-      if (disabled.has(providerID)) continue
+    Object.entries(database).forEach(([providerID, provider]) => {
+      if (disabled.has(providerID)) return
       const apiKey = provider.env.map((item) => env[item]).find(Boolean)
-      if (!apiKey) continue
+      if (!apiKey) return
       mergeProvider(providerID, {
         source: "env",
         key: provider.env.length === 1 ? apiKey : undefined,
       })
-    }
+    })
 
     // load apikeys
-    for (const [providerID, provider] of Object.entries(await Auth.all())) {
-      if (disabled.has(providerID)) continue
+    Object.entries(await Auth.all()).forEach(([providerID, provider]) => {
+      if (disabled.has(providerID)) return
       if (provider.type === "api") {
         mergeProvider(providerID, {
           source: "api",
           key: provider.key,
         })
       }
-    }
+    })
 
-    for (const plugin of await Plugin.list()) {
-      if (!plugin.auth) continue
-      const providerID = plugin.auth.provider
-      if (disabled.has(providerID)) continue
+    const plugins = await Plugin.list()
+    await Promise.all(
+      plugins.map(async (plugin) => {
+        if (!plugin.auth) return
+        const providerID = plugin.auth.provider
+        if (disabled.has(providerID)) return
 
-      // For github-copilot plugin, check if auth exists for either github-copilot or github-copilot-enterprise
-      let hasAuth = false
-      const auth = await Auth.get(providerID)
-      if (auth) hasAuth = true
+        // For github-copilot plugin, check if auth exists for either github-copilot or github-copilot-enterprise
+        const auth = await Auth.get(providerID)
+        const enterpriseAuth = providerID === "github-copilot" ? await Auth.get("github-copilot-enterprise") : undefined
+        const hasAuth = !!auth || !!enterpriseAuth
 
-      // Special handling for github-copilot: also check for enterprise auth
-      if (providerID === "github-copilot" && !hasAuth) {
-        const enterpriseAuth = await Auth.get("github-copilot-enterprise")
-        if (enterpriseAuth) hasAuth = true
-      }
+        if (!hasAuth || !plugin.auth.loader) return
 
-      if (!hasAuth) continue
-      if (!plugin.auth.loader) continue
+        // Load for the main provider if auth exists
+        if (auth) {
+          const options = await plugin.auth.loader(() => Auth.get(providerID) as any, database[plugin.auth.provider])
+          mergeProvider(plugin.auth.provider, {
+            source: "custom",
+            options: options,
+          })
+        }
 
-      // Load for the main provider if auth exists
-      if (auth) {
-        const options = await plugin.auth.loader(() => Auth.get(providerID) as any, database[plugin.auth.provider])
-        mergeProvider(plugin.auth.provider, {
-          source: "custom",
-          options: options,
-        })
-      }
-
-      // If this is github-copilot plugin, also register for github-copilot-enterprise if auth exists
-      if (providerID === "github-copilot") {
-        const enterpriseProviderID = "github-copilot-enterprise"
-        if (!disabled.has(enterpriseProviderID)) {
-          const enterpriseAuth = await Auth.get(enterpriseProviderID)
-          if (enterpriseAuth) {
+        // If this is github-copilot plugin, also register for github-copilot-enterprise if auth exists
+        if (providerID === "github-copilot") {
+          const enterpriseProviderID = "github-copilot-enterprise"
+          if (!disabled.has(enterpriseProviderID) && enterpriseAuth) {
             const enterpriseOptions = await plugin.auth.loader(
               () => Auth.get(enterpriseProviderID) as any,
               database[enterpriseProviderID],
@@ -933,70 +925,86 @@ export namespace Provider {
             })
           }
         }
-      }
-    }
+      }),
+    )
 
-    for (const [providerID, fn] of Object.entries(CUSTOM_LOADERS)) {
-      if (disabled.has(providerID)) continue
-      const data = database[providerID]
-      if (!data) {
-        log.error("Provider does not exist in model list " + providerID)
-        continue
-      }
-      const result = await fn(data)
-      if (result && (result.autoload || providers[providerID])) {
-        if (result.getModel) modelLoaders[providerID] = result.getModel
-        mergeProvider(providerID, {
-          source: "custom",
-          options: result.options,
-        })
-      }
-    }
+    await Promise.all(
+      Object.entries(CUSTOM_LOADERS).map(async ([providerID, fn]) => {
+        if (disabled.has(providerID)) return
+        const data = database[providerID]
+        if (!data) {
+          log.error("Provider does not exist in model list " + providerID)
+          return
+        }
+        const result = await fn(data)
+        if (result && (result.autoload || providers[providerID])) {
+          if (result.getModel) modelLoaders[providerID] = result.getModel
+          mergeProvider(providerID, {
+            source: "custom",
+            options: result.options,
+          })
+        }
+      }),
+    )
 
     // load config
-    for (const [providerID, provider] of configProviders) {
-      const partial: Partial<Info> = { source: "config" }
-      if (provider.env) partial.env = provider.env
-      if (provider.name) partial.name = provider.name
-      if (provider.options) partial.options = provider.options
-      mergeProvider(providerID, partial)
-    }
+    configProviders.forEach(([providerID, provider]) => {
+      mergeProvider(providerID, {
+        source: "config",
+        ...(provider.env ? { env: provider.env } : {}),
+        ...(provider.name ? { name: provider.name } : {}),
+        ...(provider.options ? { options: provider.options } : {}),
+      })
+    })
 
-    for (const [providerID, provider] of Object.entries(providers)) {
+    Object.entries(providers).forEach(([providerID, provider]) => {
       if (!isProviderAllowed(providerID)) {
         delete providers[providerID]
-        continue
+        return
       }
 
       const configProvider = config.provider?.[providerID]
 
-      for (const [modelID, model] of Object.entries(provider.models)) {
-        model.api.id = model.api.id ?? model.id ?? modelID
-        if (modelID === "gpt-5-chat-latest" || (providerID === "openrouter" && modelID === "openai/gpt-5-chat"))
-          delete provider.models[modelID]
-        if (model.status === "alpha" && !Flag.OPENCODE_ENABLE_EXPERIMENTAL_MODELS) delete provider.models[modelID]
-        if (model.status === "deprecated") delete provider.models[modelID]
-        if (
-          (configProvider?.blacklist && configProvider.blacklist.includes(modelID)) ||
-          (configProvider?.whitelist && !configProvider.whitelist.includes(modelID))
-        )
-          delete provider.models[modelID]
+      const filteredModels = Object.fromEntries(
+        Object.entries(provider.models).filter(([modelID, model]) => {
+          model.api.id = model.api.id ?? model.id ?? modelID
+          if (modelID === "gpt-5-chat-latest" || (providerID === "openrouter" && modelID === "openai/gpt-5-chat")) {
+            return false
+          }
+          if (model.status === "alpha" && !Flag.OPENCODE_ENABLE_EXPERIMENTAL_MODELS) {
+            return false
+          }
+          if (model.status === "deprecated") {
+            return false
+          }
+          if (
+            (configProvider?.blacklist && configProvider.blacklist.includes(modelID)) ||
+            (configProvider?.whitelist && !configProvider.whitelist.includes(modelID))
+          ) {
+            return false
+          }
 
-        // Filter out disabled variants from config
-        const configVariants = configProvider?.models?.[modelID]?.variants
-        if (configVariants && model.variants) {
-          const merged = mergeDeep(model.variants, configVariants)
-          model.variants = mapValues(
-            pickBy(merged, (v) => !v.disabled),
-            (v) => omit(v, ["disabled"]),
-          )
-        }
-      }
+          // Filter out disabled variants from config
+          const configVariants = configProvider?.models?.[modelID]?.variants
+          if (configVariants && model.variants) {
+            const merged = mergeDeep(model.variants, configVariants)
+            model.variants = mapValues(
+              pickBy(merged, (v) => !v.disabled),
+              (v) => omit(v, ["disabled"]),
+            )
+          }
 
-      if (Object.keys(provider.models).length === 0) {
+          return true
+        }),
+      )
+
+      if (Object.keys(filteredModels).length === 0) {
         delete providers[providerID]
-        continue
+        return
       }
+
+      provider.models = filteredModels
+    })
 
       log.info("found", { providerID })
     }
@@ -1057,36 +1065,35 @@ export namespace Provider {
           opts.signal = combined
         }
 
-        // Strip openai itemId metadata following what codex does
-        // Codex uses #[serde(skip_serializing)] on id fields for all item types:
-        // Message, Reasoning, FunctionCall, LocalShellCall, CustomToolCall, WebSearchCall
-        // IDs are only re-attached for Azure with store=true
-        const stripIds = options["stripIds"] !== false
-        if (
-          stripIds &&
-          model.api.npm === "@ai-sdk/openai" &&
-          opts.body &&
-          opts.method === "POST" &&
-          (opts.body as string).includes('"id"')
-        ) {
-          const body = JSON.parse(opts.body as string)
-          const isAzure = model.providerID.includes("azure") || model.api.npm.includes("azure")
-          const keepIds = isAzure && body.store === true
-          if (!keepIds && Array.isArray(body.input)) {
-            let changed = false
-            const input = body.input.map((item: any) => {
-              if (item && typeof item === "object" && "id" in item) {
-                changed = true
-                const { id, ...rest } = item
-                return rest
-              }
-              return item
-            })
-            if (changed) {
-              opts.body = JSON.stringify({ ...body, input })
+      // Strip openai itemId metadata following what codex does
+      // Codex uses #[serde(skip_serializing)] on id fields for all item types:
+      // Message, Reasoning, FunctionCall, LocalShellCall, CustomToolCall, WebSearchCall
+      // IDs are only re-attached for Azure with store=true
+      const stripIds = options["stripIds"] !== false
+      if (
+        stripIds &&
+        model.api.npm === "@ai-sdk/openai" &&
+        opts.body &&
+        opts.method === "POST" &&
+        (opts.body as string).includes('"id"')
+      ) {
+        const body = JSON.parse(opts.body as string)
+        const isAzure = model.providerID.includes("azure") || model.api.npm.includes("azure")
+        const keepIds = isAzure && body.store === true
+        if (!keepIds && Array.isArray(body.input)) {
+          const input = body.input.map((item: any) => {
+            if (item && typeof item === "object" && "id" in item) {
+              const { id, ...rest } = item
+              return rest
             }
+            return item
+          })
+          const changed = input.some((item: any, index: number) => item !== body.input[index])
+          if (changed) {
+            opts.body = JSON.stringify({ ...body, input })
           }
         }
+      }
 
         return fetchFn(input, {
           ...opts,
@@ -1109,15 +1116,15 @@ export namespace Provider {
         return loaded as SDK
       }
 
-      let installedPath: string
-      if (!model.api.npm.startsWith("file://")) {
-        installedPath = await BunProc.install(model.api.npm, "latest")
-      } else {
+      const installedPath = iife(async () => {
+        if (!model.api.npm.startsWith("file://")) {
+          return await BunProc.install(model.api.npm, "latest")
+        }
         log.info("loading local provider", { pkg: model.api.npm })
-        installedPath = model.api.npm
-      }
+        return model.api.npm
+      })
 
-      const mod = await import(installedPath)
+      const mod = await import(await installedPath)
 
       const fn = mod[Object.keys(mod).find((key) => key.startsWith("create"))!]
       const loaded = fn({
@@ -1185,15 +1192,15 @@ export namespace Provider {
     const s = await state()
     const provider = s.providers[providerID]
     if (!provider) return undefined
-    for (const item of query) {
-      for (const modelID of Object.keys(provider.models)) {
-        if (modelID.includes(item))
-          return {
-            providerID,
-            modelID,
-          }
-      }
-    }
+
+    const match = query
+      .map((item) => {
+        const modelID = Object.keys(provider.models).find((id) => id.includes(item))
+        return modelID ? { providerID, modelID } : undefined
+      })
+      .find(Boolean)
+
+    return match
   }
 
   export async function getSmallModel(providerID: string) {
@@ -1205,8 +1212,21 @@ export namespace Provider {
     }
 
     const provider = await state().then((state) => state.providers[providerID])
-    if (provider) {
-      let priority = [
+    if (!provider) {
+      // Check if opencode provider is available before using it
+      const opencodeProvider = await state().then((state) => state.providers["opencode"])
+      if (opencodeProvider && opencodeProvider.models["gpt-5-nano"]) {
+        return getModel("opencode", "gpt-5-nano")
+      }
+      return undefined
+    }
+
+    const priority = iife(() => {
+      if (providerID.startsWith("opencode")) return ["gpt-5-nano"]
+      if (providerID.startsWith("github-copilot")) {
+        return ["gpt-5-mini", "claude-haiku-4.5", "claude-haiku-4-5", "3-5-haiku", "3.5-haiku", "gemini-3-flash", "gemini-2.5-flash"]
+      }
+      return [
         "claude-haiku-4-5",
         "claude-haiku-4.5",
         "3-5-haiku",
@@ -1215,19 +1235,16 @@ export namespace Provider {
         "gemini-2.5-flash",
         "gpt-5-nano",
       ]
-      if (providerID.startsWith("opencode")) {
-        priority = ["gpt-5-nano"]
-      }
-      if (providerID.startsWith("github-copilot")) {
-        // prioritize free models for github copilot
-        priority = ["gpt-5-mini", "claude-haiku-4.5", ...priority]
-      }
-      for (const item of priority) {
-        for (const model of Object.keys(provider.models)) {
-          if (model.includes(item)) return getModel(providerID, model)
-        }
-      }
-    }
+    })
+
+    const found = priority
+      .map((item) => {
+        const modelID = Object.keys(provider.models).find((model) => model.includes(item))
+        return modelID ? { providerID, modelID } : undefined
+      })
+      .find(Boolean)
+
+    if (found) return getModel(found.providerID, found.modelID)
 
     // Check if opencode provider is available before using it
     const opencodeProvider = await state().then((state) => state.providers["opencode"])
