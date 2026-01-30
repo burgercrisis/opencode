@@ -97,9 +97,9 @@ export const dict = {
   "dialog.provider.tag.recommended": "推荐",
   "dialog.provider.anthropic.note": "使用 Claude Pro/Max 或 API 密钥连接",
   "dialog.provider.openai.note": "使用 ChatGPT Pro/Plus 或 API 密钥连接",
-  "dialog.provider.copilot.note": "使用 Copilot 或 API 密钥连接",
-  "dialog.provider.opencode.note": "使用 OpenCode Zen 或 API 密钥连接",
-  "dialog.provider.google.note": "使用 Google 账号或 API 密钥连接",
+  "dialog.provider.copilot.note": "使用 GitHub Copilot 连接",
+  "dialog.provider.opencode.note": "使用 OpenCode Cloud 连接",
+  "dialog.provider.google.note": "使用 Google API 密钥连接",
   "dialog.provider.openrouter.note": "使用 OpenRouter 账号或 API 密钥连接",
   "dialog.provider.vercel.note": "使用 Vercel 账号或 API 密钥连接",
 
