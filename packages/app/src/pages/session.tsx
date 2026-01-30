@@ -10,6 +10,7 @@ import {
   createEffect,
   on,
   createSignal,
+  type JSX,
 } from "solid-js"
 import { createMediaQuery } from "@solid-primitives/media"
 import { createResizeObserver } from "@solid-primitives/resize-observer"
