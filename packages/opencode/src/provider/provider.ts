@@ -483,7 +483,7 @@ export namespace Provider {
             ...(providerConfig?.options?.featureFlags || {}),
           },
         },
-        async getModel(sdk: ReturnType<typeof createGitLab>, model: Model) {
+        async getModel(sdk: any, model: Model) {
           return sdk.agenticChat(model.api.id, {
             featureFlags: {
               duo_agent_platform_agentic_chat: true,
@@ -978,12 +978,14 @@ export namespace Provider {
 
     // 3. Final filtering and model processing
     const filteredProviders = Object.fromEntries(
-      (Object.entries(finalProviders) as [string, any][])
-        .filter(([providerID]: [string, any]) => isProviderAllowed(providerID))
-        .map(([providerID, provider]: [string, any]) => {
+      (Object.entries(finalProviders) as any)
+        .filter((entry: any) => isProviderAllowed(entry[0]))
+        .map((entry: any) => {
+          const [providerID, provider] = entry
           const configProvider = config.provider?.[providerID]
           const models = Object.fromEntries(
-            Object.entries((provider.models ?? {}) as Record<string, any>).filter(([modelID, model]: [string, any]) => {
+            Object.entries((provider.models ?? {}) as any).filter((mEntry: any) => {
+              const [modelID, model] = mEntry
               model.api.id = model.api.id ?? model.id ?? modelID
               if (modelID === "gpt-5-chat-latest" || (providerID === "openrouter" && modelID === "openai/gpt-5-chat")) {
                 return false
@@ -1016,7 +1018,7 @@ export namespace Provider {
           )
           return [providerID, { ...provider, models }]
         })
-        .filter(([_, provider]: [string, any]) => Object.keys(provider.models ?? {}).length > 0),
+        .filter((entry: any) => Object.keys(entry[1].models ?? {}).length > 0),
     )
 
     return {
