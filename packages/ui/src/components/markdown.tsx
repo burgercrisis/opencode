@@ -216,11 +216,17 @@ export function Markdown(
     { initialValue: "" },
   )
 
-createEffect(() => {
+  let copySetupTimer: ReturnType<typeof setTimeout> | undefined
+  let copyCleanup: (() => void) | undefined
+
+  createEffect(() => {
     const container = root()
     const content = html()
-    if (!container || !content || isServer) {
-      if (container && !content) container.innerHTML = ""
+    if (!container) return
+    if (isServer) return
+
+    if (!content) {
+      container.innerHTML = ""
       return
     }
 
@@ -250,14 +256,20 @@ createEffect(() => {
       },
     })
 
-    const cleanup = setupCodeCopy(container, {
-      copy: i18n.t("ui.message.copy"),
-      copied: i18n.t("ui.message.copied"),
-    })
-
-    onCleanup(cleanup)
+    if (copySetupTimer) clearTimeout(copySetupTimer)
+    copySetupTimer = setTimeout(() => {
+      if (copyCleanup) copyCleanup()
+      copyCleanup = setupCodeCopy(container, {
+        copy: i18n.t("ui.message.copy"),
+        copied: i18n.t("ui.message.copied"),
+      })
+    }, 150)
   })
 
+  onCleanup(() => {
+    if (copySetupTimer) clearTimeout(copySetupTimer)
+    if (copyCleanup) copyCleanup()
+  })
   return (
     <div
       data-component="markdown"

@@ -498,6 +498,9 @@
     align-items: center;
     gap: 8px;
     color: var(--text-weak);
+    [data-slot="session-turn-trigger-icon"] {
+      color: var(--icon-base);
+    }
 
     [data-component="spinner"] {
       width: 12px;

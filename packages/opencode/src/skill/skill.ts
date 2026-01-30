@@ -1,5 +1,6 @@
 import z from "zod"
 import path from "path"
+import os from "os"
 import { Config } from "../config/config"
 import { Instance } from "../project/instance"
 import { NamedError } from "@opencode-ai/util/error"
@@ -40,6 +41,7 @@ export namespace Skill {
 
   const OPENCODE_SKILL_GLOB = new Bun.Glob("{skill,skills}/**/SKILL.md")
   const CLAUDE_SKILL_GLOB = new Bun.Glob("skills/**/SKILL.md")
+  const SKILL_GLOB = new Bun.Glob("**/SKILL.md")
 
   export const state = Instance.state(async () => {
     const parseSkill = async (match: string): Promise<Info | undefined> => {
@@ -110,20 +112,44 @@ export namespace Skill {
       return [...acc, ...matches]
     }, Promise.resolve([] as string[]))
 
+    const skills: Record<string, Info> = {}
+
+    const addSkill = async (match: string) => {
+      const skill = await parseSkill(match)
+      if (!skill) return
+      if (skills[skill.name]) {
+        log.warn("duplicate skill name", {
+          name: skill.name,
+          existing: skills[skill.name].location,
+          duplicate: skill.location,
+        })
+      }
+      skills[skill.name] = skill
+    }
+
     const allMatches = [...claudeMatches, ...opencodeMatches]
-    const skillsList = (await Promise.all(allMatches.map(parseSkill))).filter((s): s is Info => s !== undefined)
+    await Promise.all(allMatches.map(addSkill))
 
-    return skillsList.reduce((acc, skill) => {
-      const _warn = acc[skill.name]
-        ? log.warn("duplicate skill name", {
-            name: skill.name,
-            existing: acc[skill.name].location,
-            duplicate: skill.location,
-          })
-        : null
+    // Scan additional skill paths from config
+    const config = await Config.get()
+    for (const skillPath of config.skills?.paths ?? []) {
+      const expanded = skillPath.startsWith("~/") ? path.join(os.homedir(), skillPath.slice(2)) : skillPath
+      const resolved = path.isAbsolute(expanded) ? expanded : path.join(Instance.directory, expanded)
+      if (!(await Filesystem.isDir(resolved))) {
+        log.warn("skill path not found", { path: resolved })
+        continue
+      }
+      for await (const match of SKILL_GLOB.scan({
+        cwd: resolved,
+        absolute: true,
+        onlyFiles: true,
+        followSymlinks: true,
+      })) {
+        await addSkill(match)
+      }
+    }
 
-      return { ...acc, [skill.name]: skill }
-    }, {} as Record<string, Info>)
+    return skills
   })
 
   export async function get(name: string) {

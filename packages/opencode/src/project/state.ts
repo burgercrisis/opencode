@@ -47,16 +47,20 @@ export namespace State {
     }, 10000)
     timeout.unref()
 
-    const tasks = Array.from(entries.values()).reduce((acc, entry) => {
-      const task = entry.dispose
-        ? Promise.resolve(entry.state)
-            .then((state) => entry.dispose!(state))
-            .catch((error) => {
-              log.error("Error while disposing state:", { error, key })
-            })
-        : undefined
-      return task ? [...acc, task] : acc
-    }, [] as Promise<void>[])
+    const tasks: Promise<void>[] = []
+    for (const [init, entry] of entries) {
+      if (!entry.dispose) continue
+
+      const label = typeof init === "function" ? init.name : String(init)
+
+      const task = Promise.resolve(entry.state)
+        .then((state) => entry.dispose!(state))
+        .catch((error) => {
+          log.error("Error while disposing state:", { error, key, init: label })
+        })
+
+      tasks.push(task)
+    }
 
     entries.clear()
     recordsByKey.delete(key)

@@ -87,7 +87,7 @@ export const TaskTool = Tool.define("task", async (ctx) => {
       })
 
       const msg = await MessageV2.get({ sessionID: ctx.sessionID, messageID: ctx.messageID })
-      msg.info.role !== "assistant" && (() => { throw new Error("Not an assistant message") })()
+      if (msg.info.role !== "assistant") throw new Error("Not an assistant message")
 
       const model = agent.model ?? {
         modelID: msg.info.modelID,
@@ -103,35 +103,33 @@ export const TaskTool = Tool.define("task", async (ctx) => {
       })
 
       const messageID = Identifier.ascending("message")
-      const parts = new Map<string, { id: string; tool: string; state: { status: string; title?: string } }>()
-      using _unsub = defer(
-        Bus.subscribe(MessageV2.Event.PartUpdated, async (evt) => {
-          evt.properties.part.sessionID !== session.id ||
-            evt.properties.part.messageID === messageID ||
-            evt.properties.part.type !== "tool" ||
-            (() => {
-              const part = evt.properties.part
-              parts.set(part.id, {
-                id: part.id,
-                tool: part.tool,
-                state: {
-                  status: part.state.status,
-                  title: part.state.status === "completed" ? part.state.title : undefined,
-                },
-              })
-              ctx.metadata({
-                title: params.description,
-                metadata: {
-                  summary: Array.from(parts.values()).sort((a, b) => a.id.localeCompare(b.id)),
-                  sessionId: session.id,
-                  model,
-                },
-              })
-            })()
-        }),
-      )
+      const parts: Record<string, { id: string; tool: string; state: { status: string; title?: string } }> = {}
+      const unsub = Bus.subscribe(MessageV2.Event.PartUpdated, async (evt) => {
+        if (evt.properties.part.sessionID !== session.id) return
+        if (evt.properties.part.messageID === messageID) return
+        if (evt.properties.part.type !== "tool") return
+        const part = evt.properties.part
+        parts[part.id] = {
+          id: part.id,
+          tool: part.tool,
+          state: {
+            status: part.state.status,
+            title: part.state.status === "completed" ? part.state.title : undefined,
+          },
+        }
+        ctx.metadata({
+          title: params.description,
+          metadata: {
+            summary: Object.values(parts).sort((a, b) => a.id.localeCompare(b.id)),
+            sessionId: session.id,
+            model,
+          },
+        })
+      })
 
-      const cancel = () => SessionPrompt.cancel(session.id)
+      function cancel() {
+        SessionPrompt.cancel(session.id)
+      }
       ctx.abort.addEventListener("abort", cancel)
       using _abort = defer(() => ctx.abort.removeEventListener("abort", cancel))
       const promptParts = await SessionPrompt.resolvePromptParts(params.prompt)
@@ -151,6 +149,8 @@ export const TaskTool = Tool.define("task", async (ctx) => {
           ...Object.fromEntries((config.experimental?.primary_tools ?? []).map((t) => [t, false])),
         },
         parts: promptParts,
+      }).finally(() => {
+        unsub()
       })
 
       const messages = await Session.messages({ sessionID: session.id })

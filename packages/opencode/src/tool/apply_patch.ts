@@ -162,68 +162,82 @@ export const ApplyPatchTool = Tool.define("apply_patch", {
       },
     })
 
-    const applied = await fileChanges.reduce(async (accPromise, c) => {
-      const acc = await accPromise
-      const target = c.type === "delete" ? undefined : c.movePath ?? c.filePath
-      
-      const _ensureDir = c.type === "add" || c.type === "move" 
-        ? await fs.mkdir(path.dirname(c.movePath ?? c.filePath), { recursive: true })
-        : null
+    const updates: Array<{ file: string; event: "add" | "change" | "unlink" }> = []
 
-      const result =
-        c.type === "add"
-          ? await Bun.write(c.filePath, c.newContent).then(() => c.filePath)
-          : c.type === "update"
-          ? await Bun.write(c.filePath, c.newContent).then(() => c.filePath)
-          : c.type === "move" && c.movePath
-          ? await Bun.write(c.movePath, c.newContent)
-              .then(async () => {
-                await fs.unlink(c.filePath)
-                return c.movePath!
-              })
-          : c.type === "delete"
-          ? await fs.unlink(c.filePath).then(() => c.filePath)
-          : c.filePath
+    for (const change of fileChanges) {
+      const edited = change.type === "delete" ? undefined : (change.movePath ?? change.filePath)
+      switch (change.type) {
+        case "add":
+          await fs.mkdir(path.dirname(change.filePath), { recursive: true })
+          await fs.writeFile(change.filePath, change.newContent, "utf-8")
+          updates.push({ file: change.filePath, event: "add" })
+          break
 
-      const _publishEdited = target ? await Bus.publish(File.Event.Edited, { file: target }) : null
-      return [...acc, result]
-    }, Promise.resolve([] as string[]))
+        case "update":
+          await fs.writeFile(change.filePath, change.newContent, "utf-8")
+          updates.push({ file: change.filePath, event: "change" })
+          break
 
-    await applied.reduce(async (acc, f) => {
-      await acc
-      return Bus.publish(FileWatcher.Event.Updated, { file: f, event: "change" })
-    }, Promise.resolve())
+        case "move":
+          if (change.movePath) {
+            await fs.mkdir(path.dirname(change.movePath), { recursive: true })
+            await fs.writeFile(change.movePath, change.newContent, "utf-8")
+            await fs.unlink(change.filePath)
+            updates.push({ file: change.filePath, event: "unlink" })
+            updates.push({ file: change.movePath, event: "add" })
+          }
+          break
 
-    await fileChanges.reduce(async (acc, c) => {
-      await acc
-      return c.type !== "delete" ? LSP.touchFile(c.movePath ?? c.filePath, true) : Promise.resolve()
-    }, Promise.resolve())
+        case "delete":
+          await fs.unlink(change.filePath)
+          updates.push({ file: change.filePath, event: "unlink" })
+          break
+      }
+
+      if (edited) {
+        await Bus.publish(File.Event.Edited, {
+          file: edited,
+        })
+      }
+    }
+
+    for (const update of updates) {
+      await Bus.publish(FileWatcher.Event.Updated, update)
+    }
+
+    for (const change of fileChanges) {
+      if (change.type === "delete") continue
+      const target = change.movePath ?? change.filePath
+      await LSP.touchFile(target, true)
+    }
 
     const diagnostics = await LSP.diagnostics()
-    const summary = `Success. Updated the following files:\n${fileChanges
-      .map((c) => {
-        const icon = c.type === "add" ? "A" : c.type === "delete" ? "D" : "M"
-        const rel = path.relative(Instance.worktree, c.movePath ?? c.filePath)
-        return `${icon} ${rel}`
-      })
-      .join("\n")}`
+    const summaryLines = fileChanges.map((change) => {
+      if (change.type === "add") {
+        return `A ${path.relative(Instance.worktree, change.filePath)}`
+      }
+      if (change.type === "delete") {
+        return `D ${path.relative(Instance.worktree, change.filePath)}`
+      }
+      const target = change.movePath ?? change.filePath
+      return `M ${path.relative(Instance.worktree, target)}`
+    })
+    let output = `Success. Updated the following files:\n${summaryLines.join("\n")}`
 
-    const output = fileChanges.reduce((acc, c) => {
-      const target = c.movePath ?? c.filePath
-      const issues = (c.type !== "delete" && diagnostics[Filesystem.normalizePath(target)]) || []
-      const errors = issues.filter((i) => i.severity === 1)
-      
-      return errors.length === 0 ? acc : (() => {
-        const limited = errors.slice(0, 20)
-        const suffix = errors.length > 20 ? `\n... and ${errors.length - 20} more` : ""
-        return (
-          acc +
-          `\n\nLSP errors detected in ${path.relative(Instance.worktree, target)}, please fix:\n<diagnostics file="${target}">\n${limited
-            .map(LSP.Diagnostic.pretty)
-            .join("\n")}${suffix}\n</diagnostics>`
-        )
-      })()
-    }, summary)
+    const MAX_DIAGNOSTICS_PER_FILE = 20
+    for (const change of fileChanges) {
+      if (change.type === "delete") continue
+      const target = change.movePath ?? change.filePath
+      const normalized = Filesystem.normalizePath(target)
+      const issues = diagnostics[normalized] ?? []
+      const errors = issues.filter((item) => item.severity === 1)
+      if (errors.length > 0) {
+        const limited = errors.slice(0, MAX_DIAGNOSTICS_PER_FILE)
+        const suffix =
+          errors.length > MAX_DIAGNOSTICS_PER_FILE ? `\n... and ${errors.length - MAX_DIAGNOSTICS_PER_FILE} more` : ""
+        output += `\n\nLSP errors detected in ${path.relative(Instance.worktree, target)}, please fix:\n<diagnostics file="${target}">\n${limited.map(LSP.Diagnostic.pretty).join("\n")}${suffix}\n</diagnostics>`
+      }
+    }
 
     return {
       title: output,

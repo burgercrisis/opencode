@@ -302,25 +302,24 @@ export namespace Snapshot {
     const git = gitdir()
     const gitNormalized = Filesystem.normalizeGitPath(git, true)
     const worktreeNormalized = Filesystem.normalizeGitPath(Instance.worktree, true)
-    
+
     try {
       const addResult = await $`git --git-dir ${gitNormalized} --work-tree ${worktreeNormalized} add .`
         .quiet()
         .cwd(Instance.directory)
         .nothrow()
-      
+
       if (addResult.exitCode !== 0) {
         log.warn("git add failed in patch", { exitCode: addResult.exitCode })
       }
     } catch (error) {
       log.warn("git add failed in patch with exception", { error: String(error) })
     }
-    
+
     // For repos without commits, git diff <hash> won't work
     // Instead, we need to check what files are different from the snapshot state
     // Use git ls-tree to check if the file existed in the snapshot
-    const result =
-      await $`git -c core.autocrlf=false -c core.quotepath=false --git-dir ${gitNormalized} --work-tree ${worktreeNormalized} diff --no-ext-diff --name-only ${hash} -- .`
+    const result = await $`git -c core.autocrlf=false -c core.quotepath=false --git-dir ${gitNormalized} --work-tree ${worktreeNormalized} diff --no-ext-diff --name-only ${hash} -- .`
         .quiet()
         .cwd(Instance.directory)
         .nothrow()
@@ -492,22 +491,21 @@ export namespace Snapshot {
     const git = gitdir()
     const gitNormalized = Filesystem.normalizeGitPath(git, true)
     const worktreeNormalized = Filesystem.normalizeGitPath(Instance.worktree, true)
-    
+
     try {
       const addResult = await $`git --git-dir ${gitNormalized} --work-tree ${worktreeNormalized} add .`
         .quiet()
         .cwd(Instance.directory)
         .nothrow()
-      
+
       if (addResult.exitCode !== 0) {
         log.warn("git add failed in diff", { exitCode: addResult.exitCode })
       }
     } catch (error) {
       log.warn("git add failed in diff with exception", { error: String(error) })
     }
-    
-    const result =
-      await $`git -c core.autocrlf=false --git-dir ${gitNormalized} --work-tree ${worktreeNormalized} diff --no-ext-diff ${hash} -- .`
+
+    const result = await $`git -c core.autocrlf=false --git-dir ${gitNormalized} --work-tree ${worktreeNormalized} diff --no-ext-diff ${hash} -- .`
         .quiet()
         .cwd(worktreeNormalized)
         .nothrow()
@@ -539,9 +537,8 @@ export namespace Snapshot {
   export type FileDiff = z.infer<typeof FileDiff>
   export async function diffFull(from: string, to: string): Promise<FileDiff[]> {
     const git = gitdir()
-
     const show = async (hash: string, file: string) => {
-      const response = await $`git -c core.autocrlf=false --git-dir ${git} --work-tree ${Instance.worktree} show ${hash}:${file}`
+      const response = await $`git -c core.autocrlf=false -c core.quotepath=false --git-dir ${git} --work-tree ${Instance.worktree} show ${hash}:${file}`
         .quiet()
         .nothrow()
       if (response.exitCode === 0) return response.text()
@@ -550,7 +547,7 @@ export namespace Snapshot {
       return `[DEBUG ERROR] git show ${hash}:${file} failed: ${stderr}`
     }
 
-    const lines = await $`git -c core.autocrlf=false --git-dir ${git} --work-tree ${Instance.worktree} diff --no-ext-diff --no-renames --numstat ${from} ${to} -- .`
+    const lines = await $`git -c core.autocrlf=false -c core.quotepath=false --git-dir ${git} --work-tree ${Instance.worktree} diff --no-ext-diff --no-renames --numstat ${from} ${to} -- .`
       .quiet()
       .cwd(Instance.directory)
       .nothrow()

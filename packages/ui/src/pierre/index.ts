@@ -35,9 +35,22 @@ const unsafeCSS = `
   --diffs-selection-base: var(--surface-warning-strong);
   --diffs-selection-border: var(--border-warning-base);
   --diffs-selection-number-fg: #1c1917;
-  --diffs-bg-selection: var(--diffs-bg-selection-override, color-mix(in oklch, var(--surface-warning-base) 65%, transparent));
-  --diffs-bg-selection-number: var(--diffs-bg-selection-number-override, color-mix(in oklch, var(--surface-warning-base) 85%, transparent));
-  --diffs-bg-selection-text: color-mix(in oklch, var(--surface-warning-strong) 20%, transparent);
+  /* Use explicit alpha instead of color-mix(..., transparent) to avoid Safari's non-premultiplied interpolation bugs. */
+  --diffs-bg-selection: var(--diffs-bg-selection-override, rgb(from var(--surface-warning-base) r g b / 0.65));
+  --diffs-bg-selection-number: var(
+    --diffs-bg-selection-number-override,
+    rgb(from var(--surface-warning-base) r g b / 0.85)
+  );
+  --diffs-bg-selection-text: rgb(from var(--surface-warning-strong) r g b / 0.2);
+}
+
+:host([data-color-scheme='dark']) [data-diffs] {
+  --diffs-selection-number-fg: #fdfbfb;
+  --diffs-bg-selection: var(--diffs-bg-selection-override, rgb(from var(--solaris-dark-6) r g b / 0.65));
+  --diffs-bg-selection-number: var(
+    --diffs-bg-selection-number-override,
+    rgb(from var(--solaris-dark-6) r g b / 0.85)
+  );
 }
 
 [data-diffs] ::selection {
@@ -78,11 +91,6 @@ const unsafeCSS = `
   );
 }
 
-:host-context([data-color-scheme='dark']) [data-diffs] {
-  --diffs-selection-number-fg: #fdfbfb;
-  --diffs-bg-selection: var(--diffs-bg-selection-override, color-mix(in oklch, var(--solaris-dark-6) 65%, transparent));
-  --diffs-bg-selection-number: var(--diffs-bg-selection-number-override, color-mix(in oklch, var(--solaris-dark-6) 85%, transparent));
-}
 
 [data-diffs-header],
 [data-diffs] {

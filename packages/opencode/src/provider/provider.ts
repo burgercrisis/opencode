@@ -173,6 +173,7 @@ export namespace Provider {
           if (model && model.api.npm !== "@ai-sdk/github-copilot") {
             return sdk.languageModel(model.api.id)
           }
+          if (sdk.responses === undefined && sdk.chat === undefined) return sdk.languageModel(model.api.id)
           return shouldUseCopilotResponsesApi(model.api.id) ? sdk.responses(model.api.id) : sdk.chat(model.api.id)
         },
         options: {},
@@ -185,6 +186,7 @@ export namespace Provider {
           if (model && model.api.npm !== "@ai-sdk/github-copilot") {
             return sdk.languageModel(model.api.id)
           }
+          if (sdk.responses === undefined && sdk.chat === undefined) return sdk.languageModel(model.api.id)
           return shouldUseCopilotResponsesApi(model.api.id) ? sdk.responses(model.api.id) : sdk.chat(model.api.id)
         },
         options: {},
@@ -1052,7 +1054,7 @@ export namespace Provider {
           ...model.headers,
         }
 
-      const key = Bun.hash.xxHash32(JSON.stringify({ npm: model.api.npm, options }))
+      const key = Bun.hash.xxHash32(JSON.stringify({ providerID: model.providerID, npm: model.api.npm, options }))
       const existing = s.sdk.get(key)
       if (existing) return existing
 

@@ -293,6 +293,7 @@ const permissionParts = createMemo(() => {
 
   const shellModePart = createMemo(() => {
     const p = parts()
+    if (p.length === 0) return
     if (!p.every((part) => part?.type === "text" && part?.synthetic)) return
 
     const msgs = assistantMessages()
@@ -399,12 +400,14 @@ const permissionParts = createMemo(() => {
     const interval = Interval.fromDateTimes(from, to)
     const unit: DurationUnit[] = interval.length("seconds") > 60 ? ["minutes", "seconds"] : ["seconds"]
 
-    return interval.toDuration(unit).normalize().reconfigure({ locale: i18n.locale() }).toHuman({
+    const locale = i18n.locale()
+    const human = interval.toDuration(unit).normalize().reconfigure({ locale }).toHuman({
       notation: "compact",
       unitDisplay: "narrow",
       compactDisplay: "short",
       showZeros: false,
     })
+    return locale.startsWith("zh") ? human.replaceAll("、", "") : human
   }
 
   const autoScroll = createAutoScroll({
@@ -574,7 +577,7 @@ const permissionParts = createMemo(() => {
                                   viewBox="0 0 10 10"
                                   fill="none"
                                   xmlns="http://www.w3.org/2000/svg"
-                                  class="text-icon-base"
+                                  data-slot="session-turn-trigger-icon"
                                 >
                                   <path
                                     d="M8.125 1.875H1.875L5 8.125L8.125 1.875Z"

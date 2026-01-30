@@ -428,6 +428,7 @@ const context = createSimpleContext<MarkedContextValue, { nativeParser?: NativeM
       },
       markedKatex({
         throwOnError: false,
+        nonStandard: true,
       }),
       markedShiki({
         async highlight(code, lang) {

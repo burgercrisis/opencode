@@ -52,7 +52,6 @@ export const WebFetchTool = Tool.define("webfetch", {
       Accept: acceptHeader,
       "Accept-Language": "en-US,en;q=0.9",
     }
-
     const initial = await fetch(params.url, { signal, headers })
 
     // Retry with honest UA if blocked by Cloudflare bot detection (TLS fingerprint mismatch)

@@ -21,7 +21,6 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
 
     const current = createMemo(() => globalSync.child(sdk.directory))
     const absolute = (path: string) => (current()[0].path.directory + "/" + path).replace("//", "/")
-    
     const chunk = 400
     const inflight = new Map<string, Promise<void>>()
     const inflightDiff = new Map<string, Promise<void>>()
@@ -152,6 +151,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           const directory = sdk.directory
           const client = sdk.client
           const [store, setStore] = globalSync.child(directory)
+          const key = keyFor(directory, sessionID)
           const hasSession = (() => {
             const match = Binary.search(store.session, sessionID, (s) => s.id)
             return match.found
@@ -160,13 +160,14 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           hydrateMessages(directory, store, sessionID)
 
           const hasMessages = store.message[sessionID] !== undefined
-          if (hasSession && hasMessages) return
+          const hydrated = meta.limit[key] !== undefined
+          if (hasSession && hasMessages && hydrated) return
 
-          const key = keyFor(directory, sessionID)
           const pending = inflight.get(key)
           if (pending) return pending
 
-          const limit = meta.limit[key] ?? chunk
+          const count = store.message[sessionID]?.length ?? 0
+          const limit = hydrated ? (meta.limit[key] ?? chunk) : limitFor(count)
 
           const sessionReq = hasSession
             ? Promise.resolve()
@@ -186,15 +187,16 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
                 )
               })
 
-          const messagesReq = hasMessages
-            ? Promise.resolve()
-            : loadMessages({
-                directory,
-                client,
-                setStore,
-                sessionID,
-                limit,
-              })
+          const messagesReq =
+            hasMessages && hydrated
+              ? Promise.resolve()
+              : loadMessages({
+                  directory,
+                  client,
+                  setStore,
+                  sessionID,
+                  limit,
+                })
 
           const promise = Promise.all([sessionReq, messagesReq])
             .then(() => {})

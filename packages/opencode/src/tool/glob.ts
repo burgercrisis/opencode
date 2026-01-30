@@ -34,31 +34,28 @@ export const GlobTool = Tool.define("glob", {
     await assertExternalDirectory(ctx, search, { kind: "directory" })
 
     const limit = 100
-    interface FileInfo { path: string; mtime: number }
-
-    const collectFiles = async (gen: AsyncGenerator<string>, acc: FileInfo[]): Promise<{ files: FileInfo[]; truncated: boolean }> => {
-      return acc.length >= limit
-        ? { files: acc, truncated: true }
-        : await gen.next().then(async ({ value, done }) =>
-            done
-              ? { files: acc, truncated: false }
-              : await (() => {
-                  const full = path.resolve(search, value)
-                  return Bun.file(full)
-                    .stat()
-                    .then((x) => x.mtime.getTime())
-                    .catch(() => 0)
-                    .then((mtime) => collectFiles(gen, [...acc, { path: full, mtime }]))
-                })(),
-          )
+    const files: { path: string; mtime: number }[] = []
+    let truncated = false
+    for await (const file of Ripgrep.files({
+      cwd: search,
+      glob: [params.pattern],
+      signal: ctx.abort,
+    })) {
+      if (files.length >= limit) {
+        truncated = true
+        break
+      }
+      const full = path.resolve(search, file)
+      const stats = await Bun.file(full)
+        .stat()
+        .then((x) => x.mtime.getTime())
+        .catch(() => 0)
+      files.push({
+        path: full,
+        mtime: stats,
+      })
     }
-
-    const { files: rawFiles, truncated } = await collectFiles(
-      Ripgrep.files({ cwd: search, glob: [params.pattern] }),
-      []
-    )
-
-    const files = [...rawFiles].sort((a, b) => b.mtime - a.mtime)
+    files.sort((a, b) => b.mtime - a.mtime)
 
     const output = files.length === 0
       ? "No files found"

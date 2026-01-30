@@ -55,15 +55,11 @@ export const ListTool = Tool.define("list", {
     })
 
     const ignoreGlobs = IGNORE_PATTERNS.map((p) => `!${p}*`).concat(params.ignore?.map((p) => `!${p}`) || [])
-
-    const collectFiles = async (gen: AsyncGenerator<string>, acc: string[]): Promise<string[]> => {
-      if (acc.length >= LIMIT) return acc
-      const { value, done } = await gen.next()
-      if (done) return acc
-      return collectFiles(gen, [...acc, value])
+    const files: string[] = []
+    for await (const file of Ripgrep.files({ cwd: searchPath, glob: ignoreGlobs, signal: ctx.abort })) {
+      files.push(file)
+      if (files.length >= LIMIT) break
     }
-
-    const files = await collectFiles(Ripgrep.files({ cwd: searchPath, glob: ignoreGlobs }), [])
 
     const normalizedFiles = files.map((f) => f.replace(/\\/g, "/"))
 
