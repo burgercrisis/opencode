@@ -398,10 +398,11 @@ export namespace SessionPrompt {
             messageID: assistantMessage.id,
             sessionID: sessionID,
             abort,
-            callID: part.callID!,
+            callID: part.id,
+            messages: msgs,
             extra: { bypassAgentCheck: true },
             async metadata(input) {
-              const currentState = part.state || {}
+              const currentState = part.state || ({} as any)
               await Session.updatePart({
                 ...part,
                 type: "tool",
@@ -420,15 +421,16 @@ export namespace SessionPrompt {
             },
           }
         
-        const result = await taskToolInit.execute(taskArgs, taskCtx).catch(async (error: unknown) => {
-          executionError = error instanceof Error ? error : new Error(String(error))
-          
-          if (taskToolInit && typeof taskToolInit === 'object' && 'cleanup' in taskToolInit && typeof taskToolInit.cleanup === 'function') {
-            await taskToolInit.cleanup()
-          }
-          
-          return undefined
-        })
+          let executionError: Error | undefined
+          const result = await taskToolInit.execute(taskArgs, taskCtx).catch(async (error: unknown) => {
+            executionError = error instanceof Error ? error : new Error(String(error))
+            
+            if (taskToolInit && typeof taskToolInit === "object" && "cleanup" in taskToolInit && typeof taskToolInit.cleanup === "function") {
+              await taskToolInit.cleanup()
+            }
+            
+            return undefined
+          })
 
         await Plugin.trigger(
           "tool.execute.after",
@@ -468,19 +470,19 @@ export namespace SessionPrompt {
         
         if (!result) {
           if (part && part.state) {
-            const currentState = part.state || {}
+            const currentState = part.state as any
             const currentTime = currentState.time || {}
             
             await Session.updatePart({
               ...part,
               state: {
                 status: "error",
-                error: executionError ? `Tool execution failed: ${executionError.message}` : "Tool execution failed",
+                error: "Tool execution failed",
                 time: {
                   start: currentState.status === "running" && currentTime.start ? currentTime.start : Date.now(),
                   end: Date.now(),
                 },
-                metadata: part.metadata,
+                metadata: (part as any).metadata,
                 input: currentState.input,
               },
             } satisfies MessageV2.ToolPart)
@@ -1498,6 +1500,8 @@ export namespace SessionPrompt {
                     abort: new AbortController().signal,
                     agent: input.agent!,
                     messageID: info.id,
+                    messages: [], // Added missing property
+                    callID: Identifier.ascending("call"), // Added missing property
                     extra: { bypassCwdCheck: true },
                     metadata: async () => {},
                     ask: async () => {},
@@ -1917,7 +1921,7 @@ NOTE: At any point in time through this workflow you should feel free to ask use
     // Switching from plan mode to build mode
     if (input.agent.name !== "plan" && assistantMessage?.info?.agent === "plan") {
       try {
-        const plan = Session.plan(input.session)
+        const plan = Session.plan(input.session as any)
         let exists = false
         try {
           exists = await Bun.file(plan).exists()
@@ -1959,9 +1963,9 @@ NOTE: At any point in time through this workflow you should feel free to ask use
     }
 
     // Entering plan mode
-    if (input.agent.name === "plan" && assistantMessage?.info.agent !== "plan") {
+    if (input.agent.name === "plan" && assistantMessage?.info?.agent !== "plan") {
       try {
-        const plan = Session.plan(input.session)
+        const plan = Session.plan(input.session as any)
         let exists = false
         try {
           exists = await Bun.file(plan).exists()
