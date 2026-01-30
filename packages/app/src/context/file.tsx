@@ -521,6 +521,9 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
         .then((x) => {
           if (scope() !== directory) return
           const content = x.data
+          if (content && content.type === "text") {
+            content.content = content.content.replace(/<think>[\s\S]*?<\/think>/g, "").trim()
+          }
           setStore(
             "file",
             path,
