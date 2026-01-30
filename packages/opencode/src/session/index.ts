@@ -334,36 +334,63 @@ export namespace Session {
 
   export async function* list() {
     const project = Instance.project
-    for (const item of await Storage.list(["session", project.id])) {
+    const items = await Storage.list(["session", project.id])
+    const process = async function* (remaining: string[]): AsyncGenerator<Info> {
+      const item = remaining[0]
+      if (!item) return
       yield Storage.read<Info>(item)
+      yield* process(remaining.slice(1))
     }
+    yield* process(items)
   }
 
   export const children = fn(Identifier.schema("session"), async (parentID) => {
     const project = Instance.project
-    const result = [] as Session.Info[]
-    for (const item of await Storage.list(["session", project.id])) {
+    const items = await Storage.list(["session", project.id])
+    const process = async (remaining: string[], acc: Session.Info[]): Promise<Session.Info[]> => {
+      const item = remaining[0]
+      if (!item) return acc
       const session = await Storage.read<Info>(item)
-      if (session.parentID !== parentID) continue
-      result.push(session)
+      return process(remaining.slice(1), session.parentID === parentID ? [...acc, session] : acc)
     }
-    return result
+    return process(items, [])
   })
 
   export const remove = fn(Identifier.schema("session"), async (sessionID) => {
     const project = Instance.project
     try {
       const session = await get(sessionID)
-      for (const child of await children(sessionID)) {
+      const childs = await children(sessionID)
+
+      const removeChildren = async (remaining: Session.Info[]): Promise<void> => {
+        const child = remaining[0]
+        if (!child) return
         await remove(child.id)
+        return removeChildren(remaining.slice(1))
       }
-      await unshare(sessionID).catch(() => {})
-      for (const msg of await Storage.list(["message", sessionID])) {
-        for (const part of await Storage.list(["part", msg.at(-1)!])) {
-          await Storage.remove(part)
+
+      const removeMessages = async (messages: string[]): Promise<void> => {
+        const msgKey = messages[0]
+        if (!msgKey) return
+        const msgID = msgKey.split("/").at(-1)!
+        const parts = await Storage.list(["part", msgID])
+
+        const removeParts = async (remainingParts: string[]): Promise<void> => {
+          const partKey = remainingParts[0]
+          if (!partKey) return
+          await Storage.remove(partKey)
+          return removeParts(remainingParts.slice(1))
         }
-        await Storage.remove(msg)
+
+        await removeParts(parts)
+        await Storage.remove(msgKey)
+        return removeMessages(messages.slice(1))
       }
+
+      await removeChildren(childs)
+      await unshare(sessionID).catch(() => {})
+      const msgs = await Storage.list(["message", sessionID])
+      await removeMessages(msgs)
       await Storage.remove(["session", project.id, sessionID])
       Bus.publish(Event.Deleted, {
         info: session,
@@ -429,32 +456,36 @@ export namespace Session {
     const part = "delta" in input ? input.part : input
     const delta = "delta" in input ? input.delta : undefined
 
-    if (part.type === "tool") {
-      const key = ["part", part.messageID, part.id]
-      const existing = await Storage.read<MessageV2.Part>(key).catch(() => undefined)
+    const validatedPart =
+      part.type === "tool"
+        ? await iife(async () => {
+            const key = ["part", part.messageID, part.id]
+            const existing = await Storage.read<MessageV2.Part>(key).catch(() => undefined)
 
-      if (existing?.type === "tool") {
-        const isDowngrade =
-          (existing.state.status === "completed" || existing.state.status === "error") &&
-          part.state.status === "running"
-        if (isDowngrade) {
-          log.warn("updatePart: preventing status downgrade", {
-            from: existing.state.status,
-            to: part.state.status,
-            tool: part.tool,
-            callID: part.callID,
+            const isDowngrade =
+              existing?.type === "tool" &&
+              (existing.state.status === "completed" || existing.state.status === "error") &&
+              part.state.status === "running"
+
+            if (isDowngrade) {
+              log.warn("updatePart: preventing status downgrade", {
+                from: (existing as any).state.status,
+                to: part.state.status,
+                tool: part.tool,
+                callID: part.callID,
+              })
+              return existing
+            }
+            return part
           })
-          return existing
-        }
-      }
-    }
+        : part
 
-    await Storage.write(["part", part.messageID, part.id], part)
+    await Storage.write(["part", validatedPart.messageID, validatedPart.id], validatedPart)
     Bus.publish(MessageV2.Event.PartUpdated, {
-      part,
+      part: validatedPart,
       delta,
     })
-    return part
+    return validatedPart
   })
 
   export const getUsage = fn(
