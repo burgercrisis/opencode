@@ -6,8 +6,10 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 
 // TODO: Find correct import for UnauthorizedError from MCP SDK
 class UnauthorizedError extends Error {}
-import type {
-  Tool as MCPToolDef,
+import {
+  type Tool as MCPToolDef,
+  ToolListChangedNotificationSchema,
+  CallToolResultSchema,
 } from "@modelcontextprotocol/sdk/types.js"
 import { Config } from "../config/config"
 import { Log } from "../util/log"
@@ -284,7 +286,7 @@ export namespace MCP {
     }
   }
 
-  async function create(key: string, mcp: Config.Mcp) {
+  async function create(key: string, mcp: any): Promise<{ mcpClient: MCPClient | undefined; status: Status }> {
     if (mcp.enabled === false) {
       log.info("mcp server disabled", { key })
       return {
