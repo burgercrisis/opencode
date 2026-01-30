@@ -76,20 +76,25 @@ export namespace ACP {
     private startEventSubscription() {
       if (this.eventStarted) return
       this.eventStarted = true
-      const run = async () => {
+      const run = async (): Promise<void> => {
         if (this.eventAbort.signal.aborted) return
         const events = await this.sdk.global.event({
           signal: this.eventAbort.signal,
         })
-        for await (const event of events.stream) {
-          if (this.eventAbort.signal.aborted) return
-          const payload = (event as any)?.payload
+
+        const processStream = async (stream: AsyncIterableIterator<any>): Promise<void> => {
+          const next = await stream.next()
+          if (next.done || this.eventAbort.signal.aborted) return
+          const payload = (next.value as any)?.payload
           if (payload) {
             await this.handleEvent(payload as Event).catch((error) => {
               log.error("failed to handle event", { error, type: payload.type })
             })
           }
+          return processStream(stream)
         }
+
+        await processStream(events.stream as any)
         return run()
       }
       run().catch((error) => {
@@ -421,24 +426,34 @@ export namespace ACP {
             })
 
           const last = msgs?.findLast((m) => m.info.role === "user")?.info
-          if (last?.role === "user") {
-            res.models.currentModelId = `${last.model.providerID}/${last.model.modelID}`
-            this.sessionManager.setModel(id, {
-              providerID: last.model.providerID,
-              modelID: last.model.modelID,
-            })
-            if (res.modes.availableModes.some((m) => m.id === last.agent)) {
-              res.modes.currentModeId = last.agent
-              this.sessionManager.setMode(id, last.agent)
+          const updatedRes = iife(() => {
+            if (last?.role === "user") {
+              const r = { ...res }
+              r.models.currentModelId = `${last.model.providerID}/${last.model.modelID}`
+              this.sessionManager.setModel(id, {
+                providerID: last.model.providerID,
+                modelID: last.model.modelID,
+              })
+              if (res.modes.availableModes.some((m) => m.id === last.agent)) {
+                r.modes.currentModeId = last.agent
+                this.sessionManager.setMode(id, last.agent)
+              }
+              return r
             }
-          }
+            return res
+          })
 
-          for (const msg of msgs ?? []) {
+          const processMessages = async (remaining: SessionMessageResponse[]): Promise<void> => {
+            const msg = remaining[0]
+            if (!msg) return
             log.debug("replay message", msg)
             await this.processMessage(msg)
+            return processMessages(remaining.slice(1))
           }
 
-          return res
+          await processMessages(msgs ?? [])
+
+          return updatedRes
         })
         .catch((e) => {
           const error = MessageV2.fromError(e, {
