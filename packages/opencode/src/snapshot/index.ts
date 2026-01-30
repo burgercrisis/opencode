@@ -547,16 +547,18 @@ export namespace Snapshot {
       return `[DEBUG ERROR] git show ${hash}:${file} failed: ${stderr}`
     }
 
-    const lines = await $`git -c core.autocrlf=false -c core.quotepath=false --git-dir ${git} --work-tree ${Instance.worktree} diff --no-ext-diff --no-renames --numstat ${from} ${to} -- .`
-      .quiet()
-      .cwd(Instance.directory)
-      .nothrow()
-      .lines()
+    const lines = (
+      await $`git -c core.autocrlf=false -c core.quotepath=false --git-dir ${git} --work-tree ${Instance.worktree} diff --no-ext-diff --no-renames --numstat ${from} ${to} -- .`
+        .quiet()
+        .cwd(Instance.directory)
+        .nothrow()
+        .text()
+    ).split("\n")
 
     return Promise.all(
       lines
         .filter(Boolean)
-        .map(async (line) => {
+        .map(async (line: string) => {
           const [additions, deletions, rawFile] = line.split("\t")
           const file = unquote(rawFile)
           const isBinaryFile = additions === "-" && deletions === "-"
