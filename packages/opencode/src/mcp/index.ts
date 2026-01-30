@@ -170,7 +170,7 @@ export namespace MCP {
       const status: Record<string, Status> = {}
 
       await Promise.all(
-        Object.entries(config).map(async ([key, mcp]) => {
+        Object.entries(config as Record<string, any>).map(async ([key, mcp]) => {
           if (!isMcpConfigured(mcp)) {
             log.error("Ignoring MCP config entry without type", { key })
             return
