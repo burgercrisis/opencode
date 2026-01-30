@@ -78,7 +78,7 @@ export const TaskTool = Tool.define("task", async (ctx) => {
                   action: "deny" as const,
                 },
               ]),
-          ...(config.experimental?.primary_tools?.map((t) => ({
+          ...(config.experimental?.primary_tools?.map((t: string) => ({
             pattern: "*",
             action: "allow" as const,
             permission: t,
@@ -176,7 +176,7 @@ export const TaskTool = Tool.define("task", async (ctx) => {
           model,
         },
         output:
-          ((result.parts as MessageV2.Part[]).findLast((x) => x.type === "text") as MessageV2.TextPart | undefined)?.text ??
+          (((result as MessageV2.WithParts).parts as MessageV2.Part[]).findLast((x) => x.type === "text") as MessageV2.TextPart | undefined)?.text ??
           "" +
             "\n\n" +
             ["<task_metadata>", `session_id: ${session.id}`, "</task_metadata>"].join("\n"),
