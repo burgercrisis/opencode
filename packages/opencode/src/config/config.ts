@@ -202,7 +202,7 @@ export namespace Config {
         ...acc,
         agent: mergeDeep(acc.agent ?? {}, {
           [name]: {
-            ...mode,
+            ...(mode as any),
             mode: "primary" as const,
           },
         }),
