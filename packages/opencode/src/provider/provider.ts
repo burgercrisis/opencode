@@ -952,7 +952,7 @@ export namespace Provider {
     )
 
     // Re-apply config to ensure it takes precedence
-    const finalProviders = Object.entries(config.provider ?? {}).reduce((acc, [providerID, provider]) => {
+    const finalProviders = Object.entries((config.provider ?? {}) as Record<string, any>).reduce((acc, [providerID, provider]: [string, any]) => {
       return {
         ...acc,
         [providerID]: mergeDeep(acc[providerID] ?? database[providerID], {
