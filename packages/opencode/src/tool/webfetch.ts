@@ -19,9 +19,7 @@ export const WebFetchTool = Tool.define("webfetch", {
   }),
   async execute(params, ctx) {
     // Validate URL
-    if (!params.url.startsWith("http://") && !params.url.startsWith("https://")) {
-      throw new Error("URL must start with http:// or https://")
-    }
+    !params.url.startsWith("http://") && !params.url.startsWith("https://") && (() => { throw new Error("URL must start with http:// or https://") })()
 
     await ctx.ask({
       permission: "webfetch",
@@ -35,26 +33,17 @@ export const WebFetchTool = Tool.define("webfetch", {
     })
 
     const timeout = Math.min((params.timeout ?? DEFAULT_TIMEOUT / 1000) * 1000, MAX_TIMEOUT)
-
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), timeout)
 
     // Build Accept header based on requested format with q parameters for fallbacks
-    let acceptHeader = "*/*"
-    switch (params.format) {
-      case "markdown":
-        acceptHeader = "text/markdown;q=1.0, text/x-markdown;q=0.9, text/plain;q=0.8, text/html;q=0.7, */*;q=0.1"
-        break
-      case "text":
-        acceptHeader = "text/plain;q=1.0, text/markdown;q=0.9, text/html;q=0.8, */*;q=0.1"
-        break
-      case "html":
-        acceptHeader = "text/html;q=1.0, application/xhtml+xml;q=0.9, text/plain;q=0.8, text/markdown;q=0.7, */*;q=0.1"
-        break
-      default:
-        acceptHeader =
-          "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
+    const acceptHeaders: Record<string, string> = {
+      markdown: "text/markdown;q=1.0, text/x-markdown;q=0.9, text/plain;q=0.8, text/html;q=0.7, */*;q=0.1",
+      text: "text/plain;q=1.0, text/markdown;q=0.9, text/html;q=0.8, */*;q=0.1",
+      html: "text/html;q=1.0, application/xhtml+xml;q=0.9, text/plain;q=0.8, text/markdown;q=0.7, */*;q=0.1",
+      default: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
     }
+    const acceptHeader = acceptHeaders[params.format] || acceptHeaders.default
 
     const signal = AbortSignal.any([controller.signal, ctx.abort])
     const headers = {
@@ -74,105 +63,65 @@ export const WebFetchTool = Tool.define("webfetch", {
 
     clearTimeout(timeoutId)
 
-    if (!response.ok) {
-      throw new Error(`Request failed with status code: ${response.status}`)
-    }
+    !response.ok && (() => { throw new Error(`Request failed with status code: ${response.status}`) })()
 
     // Check content length
     const contentLength = response.headers.get("content-length")
-    if (contentLength && parseInt(contentLength) > MAX_RESPONSE_SIZE) {
-      throw new Error("Response too large (exceeds 5MB limit)")
-    }
+    contentLength && parseInt(contentLength) > MAX_RESPONSE_SIZE && (() => { throw new Error("Response too large (exceeds 5MB limit)") })()
 
     const arrayBuffer = await response.arrayBuffer()
-    if (arrayBuffer.byteLength > MAX_RESPONSE_SIZE) {
-      throw new Error("Response too large (exceeds 5MB limit)")
-    }
+    arrayBuffer.byteLength > MAX_RESPONSE_SIZE && (() => { throw new Error("Response too large (exceeds 5MB limit)") })()
 
     const content = new TextDecoder().decode(arrayBuffer)
     const contentType = response.headers.get("content-type") || ""
-
     const title = `${params.url} (${contentType})`
 
     // Handle content based on requested format and actual content type
-    switch (params.format) {
-      case "markdown":
-        if (contentType.includes("text/html")) {
-          const markdown = convertHTMLToMarkdown(content)
-          return {
-            output: markdown,
-            title,
-            metadata: {},
-          }
+    return params.format === "markdown"
+      ? {
+          output: contentType.includes("text/html") ? convertHTMLToMarkdown(content) : content,
+          title,
+          metadata: {},
         }
-        return {
+      : params.format === "text"
+      ? {
+          output: contentType.includes("text/html") ? await extractTextFromHTML(content) : content,
+          title,
+          metadata: {},
+        }
+      : {
           output: content,
           title,
           metadata: {},
         }
-
-      case "text":
-        if (contentType.includes("text/html")) {
-          const text = await extractTextFromHTML(content)
-          return {
-            output: text,
-            title,
-            metadata: {},
-          }
-        }
-        return {
-          output: content,
-          title,
-          metadata: {},
-        }
-
-      case "html":
-        return {
-          output: content,
-          title,
-          metadata: {},
-        }
-
-      default:
-        return {
-          output: content,
-          title,
-          metadata: {},
-        }
-    }
   },
 })
 
 async function extractTextFromHTML(html: string) {
-  let text = ""
-  let skipContent = false
+  const chunks: string[] = []
+  const tags = ["script", "style", "noscript", "iframe", "object", "embed"]
+  const stack: string[] = []
 
   const rewriter = new HTMLRewriter()
-    .on("script, style, noscript, iframe, object, embed", {
-      element() {
-        skipContent = true
-      },
-      text() {
-        // Skip text content inside these elements
+    .on(tags.join(", "), {
+      element(element) {
+        stack.push(element.tagName)
+        element.onEndTag(() => {
+          stack.pop()
+        })
       },
     })
     .on("*", {
-      element(element) {
-        // Reset skip flag when entering other elements
-        if (!["script", "style", "noscript", "iframe", "object", "embed"].includes(element.tagName)) {
-          skipContent = false
-        }
-      },
       text(input) {
-        if (!skipContent) {
-          text += input.text
+        if (stack.length === 0) {
+          chunks.push(input.text)
         }
       },
     })
     .transform(new Response(html))
 
   await rewriter.text()
-  return text.trim()
+  return chunks.join("").trim()
 }
 
 function convertHTMLToMarkdown(html: string): string {
