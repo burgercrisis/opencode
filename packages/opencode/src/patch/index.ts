@@ -78,25 +78,21 @@ export namespace Patch {
     const line = lines[startIdx]
 
     if (line.startsWith("*** Add File:")) {
-      const filePath = line.split(":", 2)[1]?.trim()
+      const filePath = line.slice(line.indexOf(":") + 1).trim()
       return filePath ? { filePath, nextIdx: startIdx + 1 } : null
     }
 
     if (line.startsWith("*** Delete File:")) {
-      const filePath = line.split(":", 2)[1]?.trim()
+      const filePath = line.slice(line.indexOf(":") + 1).trim()
       return filePath ? { filePath, nextIdx: startIdx + 1 } : null
     }
 
     if (line.startsWith("*** Update File:")) {
-      const filePath = line.split(":", 2)[1]?.trim()
-      let movePath: string | undefined
-      let nextIdx = startIdx + 1
-
-      // Check for move directive
-      if (nextIdx < lines.length && lines[nextIdx].startsWith("*** Move to:")) {
-        movePath = lines[nextIdx].split(":", 2)[1]?.trim()
-        nextIdx++
-      }
+      const filePath = line.slice(line.indexOf(":") + 1).trim()
+      const nextIdxAfterHeader = startIdx + 1
+      const hasMove = nextIdxAfterHeader < lines.length && lines[nextIdxAfterHeader].startsWith("*** Move to:")
+      const movePath = hasMove ? lines[nextIdxAfterHeader].slice(lines[nextIdxAfterHeader].indexOf(":") + 1).trim() : undefined
+      const nextIdx = hasMove ? nextIdxAfterHeader + 1 : nextIdxAfterHeader
 
       return filePath ? { filePath, movePath, nextIdx } : null
     }
@@ -179,7 +175,6 @@ export namespace Patch {
 
   export function parsePatch(patchText: string): { hunks: Hunk[] } {
     const lines = patchText.split(/\r?\n/)
-    const hunks: Hunk[] = []
 
     // Look for Begin/End patch markers
     const beginMarker = "*** Begin Patch"
@@ -239,6 +234,14 @@ export namespace Patch {
     }
 
     return { hunks: parseHunks(beginIdx + 1, []) }
+  }
+
+  export function safeParsePatch(patchText: string): { success: true; data: { hunks: Hunk[] } } | { success: false; error: Error } {
+    try {
+      return { success: true, data: parsePatch(patchText) }
+    } catch (e) {
+      return { success: false, error: e as Error }
+    }
   }
 
   // Apply patch functionality
@@ -320,30 +323,33 @@ export namespace Patch {
   export async function deriveNewContentsFromChunks(
     filePath: string,
     chunks: UpdateFileChunk[],
+    existingContent?: string,
   ): Promise<ApplyPatchFileUpdate> {
     // Read original file content
-    const originalContent = await (async () => {
-      try {
-        return await Bun.file(filePath).text()
-      } catch (error) {
-        throw new Error(`Failed to read file ${filePath}: ${error}`)
-      }
-    })()
+    const originalContent =
+      existingContent ??
+      (await (async () => {
+        try {
+          return await Bun.file(filePath).text()
+        } catch (error) {
+          throw new Error(`Failed to read file ${filePath}: ${error}`)
+        }
+      })())
 
-    const originalLines = originalContent.split(/\r?\n/)
+    const initialLines = originalContent.split(/\r?\n/)
 
     // Drop trailing empty element for consistent line counting
-    if (originalLines.length > 0 && originalLines[originalLines.length - 1] === "") {
-      originalLines.pop()
-    }
+    const originalLines = (initialLines.length > 0 && initialLines[initialLines.length - 1] === "")
+      ? initialLines.slice(0, -1)
+      : initialLines
 
     const replacements = computeReplacements(originalLines, filePath, chunks)
-    const newLines = applyReplacements(originalLines, replacements)
+    const appliedLines = applyReplacements(originalLines, replacements)
 
     // Ensure trailing newline
-    if (newLines.length === 0 || newLines[newLines.length - 1] !== "") {
-      newLines.push("")
-    }
+    const newLines = (appliedLines.length === 0 || appliedLines[appliedLines.length - 1] !== "")
+      ? [...appliedLines, ""]
+      : appliedLines
 
     const newContent = newLines.join("\n")
 
@@ -417,11 +423,11 @@ export namespace Patch {
     // Apply replacements in reverse order to avoid index shifting
     return replacements
       .sort((a, b) => b[0] - a[0])
-      .reduce((acc, [startIdx, oldLen, newSegment]) => {
-        const result = [...acc]
-        result.splice(startIdx, oldLen, ...newSegment)
-        return result
-      }, lines)
+      .reduce((acc, [startIdx, oldLen, newSegment]) => [
+        ...acc.slice(0, startIdx),
+        ...newSegment,
+        ...acc.slice(startIdx + oldLen)
+      ], lines)
   }
 
   function seekSequence(lines: string[], pattern: string[], startIndex: number): number {
@@ -435,54 +441,42 @@ export namespace Patch {
       return findIndex(i + 1)
     }
 
-    // Using a simple loop here for performance on large files, but avoiding let/else where possible
-    for (let i = startIndex; i <= lines.length - pattern.length; i++) {
-      if (checkMatch(i)) return i
-    }
-
-    return -1
+    return findIndex(startIndex)
   }
 
   function generateUnifiedDiff(oldContent: string, newContent: string): string {
     const oldLines = oldContent.split("\n")
     const newLines = newContent.split("\n")
 
-    // Simple diff generation - in a real implementation you'd use a proper diff algorithm
-    let diff = "@@ -1 +1 @@\n"
-
-    // Find changes (simplified approach)
     const maxLen = Math.max(oldLines.length, newLines.length)
-    let hasChanges = false
-
-    for (let i = 0; i < maxLen; i++) {
+    
+    const diffLinesList = Array.from({ length: maxLen }).reduce((acc: string[], _, i) => {
       const oldLine = oldLines[i] || ""
       const newLine = newLines[i] || ""
 
       if (oldLine !== newLine) {
-        if (oldLine) diff += `-${oldLine}\n`
-        if (newLine) diff += `+${newLine}\n`
-        hasChanges = true
-      } else if (oldLine) {
-        diff += ` ${oldLine}\n`
+        const removed = oldLine ? [`-${oldLine}`] : []
+        const added = newLine ? [`+${newLine}`] : []
+        return [...acc, ...removed, ...added]
       }
-    }
+      
+      if (oldLine) return [...acc, ` ${oldLine}`]
+      return acc
+    }, [])
 
-    return hasChanges ? diff : ""
+    const hasChanges = diffLinesList.some(line => line.startsWith("+") || line.startsWith("-"))
+    return hasChanges ? "@@ -1 +1 @@\n" + diffLinesList.join("\n") + "\n" : ""
   }
 
   // Apply hunks to filesystem
   export async function applyHunksToFiles(hunks: Hunk[]): Promise<AffectedPaths> {
-    if (hunks.length === 0) {
-      throw new Error("No files were modified.")
-    }
+    if (hunks.length === 0) throw new Error("No files were modified.")
 
     const results = await Promise.all(
       hunks.map(async (hunk) => {
         if (hunk.type === "add") {
-          const addDir = path.dirname(hunk.path)
-          if (addDir !== "." && addDir !== "/") {
-            await fs.mkdir(addDir, { recursive: true })
-          }
+          const dir = path.dirname(hunk.path)
+          if (dir !== "." && dir !== "/") await fs.mkdir(dir, { recursive: true })
           await fs.writeFile(hunk.path, hunk.contents, "utf-8")
           log.info(`Added file: ${hunk.path}`)
           return { type: "added" as const, path: hunk.path }
@@ -494,26 +488,20 @@ export namespace Patch {
           return { type: "deleted" as const, path: hunk.path }
         }
 
-        if (hunk.type === "update") {
-          const fileUpdate = await deriveNewContentsFromChunks(hunk.path, hunk.chunks)
+        const update = await deriveNewContentsFromChunks(hunk.path, hunk.chunks)
 
-          if (hunk.move_path) {
-            const moveDir = path.dirname(hunk.move_path)
-            if (moveDir !== "." && moveDir !== "/") {
-              await fs.mkdir(moveDir, { recursive: true })
-            }
-            await fs.writeFile(hunk.move_path, fileUpdate.content, "utf-8")
-            await fs.unlink(hunk.path)
-            log.info(`Moved file: ${hunk.path} -> ${hunk.move_path}`)
-            return { type: "modified" as const, path: hunk.move_path }
-          }
-
-          await fs.writeFile(hunk.path, fileUpdate.content, "utf-8")
-          log.info(`Updated file: ${hunk.path}`)
-          return { type: "modified" as const, path: hunk.path }
+        if (hunk.move_path) {
+          const dir = path.dirname(hunk.move_path)
+          if (dir !== "." && dir !== "/") await fs.mkdir(dir, { recursive: true })
+          await fs.writeFile(hunk.move_path, update.content, "utf-8")
+          await fs.unlink(hunk.path)
+          log.info(`Moved file: ${hunk.path} -> ${hunk.move_path}`)
+          return { type: "modified" as const, path: hunk.move_path }
         }
 
-        throw new Error(`Unknown hunk type: ${(hunk as any).type}`)
+        await fs.writeFile(hunk.path, update.content, "utf-8")
+        log.info(`Updated file: ${hunk.path}`)
+        return { type: "modified" as const, path: hunk.path }
       }),
     )
 
@@ -521,8 +509,7 @@ export namespace Patch {
       (acc, res) => {
         if (res.type === "added") return { ...acc, added: [...acc.added, res.path] }
         if (res.type === "modified") return { ...acc, modified: [...acc.modified, res.path] }
-        if (res.type === "deleted") return { ...acc, deleted: [...acc.deleted, res.path] }
-        return acc
+        return { ...acc, deleted: [...acc.deleted, res.path] }
       },
       { added: [], modified: [], deleted: [] } as AffectedPaths,
     )
@@ -544,15 +531,19 @@ export namespace Patch {
     | { type: MaybeApplyPatchVerified.NotApplyPatch }
   > {
     // Detect implicit patch invocation (raw patch without apply_patch command)
-    if (argv.length === 1) {
+    const isImplicit = argv.length === 1 && (() => {
       try {
         parsePatch(argv[0])
-        return {
-          type: MaybeApplyPatchVerified.CorrectnessError,
-          error: new Error(ApplyPatchError.ImplicitInvocation),
-        }
+        return true
       } catch {
-        // Not a patch, continue
+        return false
+      }
+    })()
+
+    if (isImplicit) {
+      return {
+        type: MaybeApplyPatchVerified.CorrectnessError,
+        error: new Error(ApplyPatchError.ImplicitInvocation),
       }
     }
 
@@ -615,7 +606,7 @@ export namespace Patch {
             }
           }
 
-          throw new Error(`Unknown hunk type: ${(hunk as any).type}`)
+          return null as never
         }),
       )
 
