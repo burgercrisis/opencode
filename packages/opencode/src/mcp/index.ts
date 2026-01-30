@@ -289,32 +289,28 @@ export namespace MCP {
     }
 
     log.info("found", { key, type: mcp.type })
-    let mcpClient: MCPClient | undefined
-    let status: Status | undefined = undefined
 
     if (mcp.type === "remote") {
       // OAuth is enabled by default for remote servers unless explicitly disabled with oauth: false
       const oauthDisabled = mcp.oauth === false
       const oauthConfig = typeof mcp.oauth === "object" ? mcp.oauth : undefined
-      let authProvider: McpOAuthProvider | undefined
-
-      if (!oauthDisabled) {
-        authProvider = new McpOAuthProvider(
-          key,
-          mcp.url,
-          {
-            clientId: oauthConfig?.clientId,
-            clientSecret: oauthConfig?.clientSecret,
-            scope: oauthConfig?.scope,
-          },
-          {
-            onRedirect: async (url) => {
-              log.info("oauth redirect requested", { key, url: url.toString() })
-              // Store the URL - actual browser opening is handled by startAuth
+      const authProvider = oauthDisabled
+        ? undefined
+        : new McpOAuthProvider(
+            key,
+            mcp.url,
+            {
+              clientId: oauthConfig?.clientId,
+              clientSecret: oauthConfig?.clientSecret,
+              scope: oauthConfig?.scope,
             },
-          },
-        )
-      }
+            {
+              onRedirect: async (url) => {
+                log.info("oauth redirect requested", { key, url: url.toString() })
+                // Store the URL - actual browser opening is handled by startAuth
+              },
+            },
+          )
 
       const transports: Array<{ name: string; transport: TransportWithAuth }> = [
         {
@@ -333,67 +329,84 @@ export namespace MCP {
         },
       ]
 
-      let lastError: Error | undefined
       const connectTimeout = mcp.timeout ?? DEFAULT_TIMEOUT
-      for (const { name, transport } of transports) {
-        try {
-          const client = new Client({
-            name: "opencode",
-            version: Installation.VERSION,
-          })
-          await withTimeout(client.connect(transport), connectTimeout)
-          registerNotificationHandlers(client, key)
-          mcpClient = client
-          log.info("connected", { key, transport: name })
-          status = { status: "connected" }
-          break
-        } catch (error) {
-          lastError = error instanceof Error ? error : new Error(String(error))
 
-          // Handle OAuth-specific errors
-          if (error instanceof UnauthorizedError) {
-            log.info("mcp server requires authentication", { key, transport: name })
+      const result = await (async () => {
+        const connect = async (
+          index: number,
+        ): Promise<{ mcpClient: MCPClient | undefined; status: Status } | undefined> => {
+          if (index >= transports.length) return undefined
+          const { name, transport } = transports[index]
 
-            // Check if this is a "needs registration" error
-            if (lastError.message.includes("registration") || lastError.message.includes("client_id")) {
-              status = {
-                status: "needs_client_registration" as const,
-                error: "Server does not support dynamic client registration. Please provide clientId in config.",
-              }
-              // Show toast for needs_client_registration
-              Bus.publish(TuiEvent.ToastShow, {
-                title: "MCP Authentication Required",
-                message: `Server "${key}" requires a pre-registered client ID. Add clientId to your config.`,
-                variant: "warning",
-                duration: 8000,
-              }).catch((e) => log.debug("failed to show toast", { error: e }))
-            } else {
-              // Store transport for later finishAuth call
-              pendingOAuthTransports.set(key, transport)
-              status = { status: "needs_auth" as const }
-              // Show toast for needs_auth
-              Bus.publish(TuiEvent.ToastShow, {
-                title: "MCP Authentication Required",
-                message: `Server "${key}" requires authentication. Run: opencode mcp auth ${key}`,
-                variant: "warning",
-                duration: 8000,
-              }).catch((e) => log.debug("failed to show toast", { error: e }))
+          try {
+            const client = new Client({
+              name: "opencode",
+              version: Installation.VERSION,
+            })
+            await withTimeout(client.connect(transport), connectTimeout)
+            registerNotificationHandlers(client, key)
+            log.info("connected", { key, transport: name })
+            return {
+              mcpClient: client,
+              status: { status: "connected" },
             }
-            break
-          }
+          } catch (error) {
+            const lastError = error instanceof Error ? error : new Error(String(error))
 
-          log.debug("transport connection failed", {
-            key,
-            transport: name,
-            url: mcp.url,
-            error: lastError.message,
-          })
-          status = {
-            status: "failed" as const,
-            error: lastError.message,
+            // Handle OAuth-specific errors
+            if (error instanceof UnauthorizedError) {
+              log.info("mcp server requires authentication", { key, transport: name })
+
+              // Check if this is a "needs registration" error
+              if (lastError.message.includes("registration") || lastError.message.includes("client_id")) {
+                const status: Status = {
+                  status: "needs_client_registration" as const,
+                  error: "Server does not support dynamic client registration. Please provide clientId in config.",
+                }
+                // Show toast for needs_client_registration
+                Bus.publish(TuiEvent.ToastShow, {
+                  title: "MCP Authentication Required",
+                  message: `Server "${key}" requires a pre-registered client ID. Add clientId to your config.`,
+                  variant: "warning",
+                  duration: 8000,
+                }).catch((e) => log.debug("failed to show toast", { error: e }))
+                return { mcpClient: undefined, status }
+              } else {
+                // Store transport for later finishAuth call
+                pendingOAuthTransports.set(key, transport)
+                const status: Status = { status: "needs_auth" as const }
+                // Show toast for needs_auth
+                Bus.publish(TuiEvent.ToastShow, {
+                  title: "MCP Authentication Required",
+                  message: `Server "${key}" requires authentication. Run: opencode mcp auth ${key}`,
+                  variant: "warning",
+                  duration: 8000,
+                }).catch((e) => log.debug("failed to show toast", { error: e }))
+                return { mcpClient: undefined, status }
+              }
+            }
+
+            log.debug("transport connection failed", {
+              key,
+              transport: name,
+              url: mcp.url,
+              error: lastError.message,
+            })
+
+            const status: Status = {
+              status: "failed" as const,
+              error: lastError.message,
+            }
+
+            // Try next transport
+            return (await connect(index + 1)) ?? { mcpClient: undefined, status }
           }
         }
-      }
+
+        return await connect(0)
+      })()
+
+      if (result) return result
     }
 
     if (mcp.type === "local") {
@@ -422,9 +435,9 @@ export namespace MCP {
         })
         await withTimeout(client.connect(transport), connectTimeout)
         registerNotificationHandlers(client, key)
-        mcpClient = client
-        status = {
-          status: "connected",
+        return {
+          mcpClient: client,
+          status: { status: "connected" },
         }
       } catch (error) {
         log.error("local mcp startup failed", {
@@ -433,54 +446,22 @@ export namespace MCP {
           cwd,
           error: error instanceof Error ? error.message : String(error),
         })
-        status = {
-          status: "failed" as const,
-          error: error instanceof Error ? error.message : String(error),
+        return {
+          mcpClient: undefined,
+          status: {
+            status: "failed" as const,
+            error: error instanceof Error ? error.message : String(error),
+          },
         }
       }
     }
 
-    if (!status) {
-      status = {
+    return {
+      mcpClient: undefined,
+      status: {
         status: "failed" as const,
         error: "Unknown error",
-      }
-    }
-
-    if (!mcpClient) {
-      return {
-        mcpClient: undefined,
-        status,
-      }
-    }
-
-    const result = await withTimeout(mcpClient.listTools(), mcp.timeout ?? DEFAULT_TIMEOUT).catch((err) => {
-      log.error("failed to get tools from client", { key, error: err })
-      return undefined
-    })
-    if (!result) {
-      await mcpClient.close().catch((error) => {
-        log.error("Failed to close MCP client", {
-          error,
-        })
-      })
-      status = {
-        status: "failed",
-        error: "Failed to get tools",
-      }
-      return {
-        mcpClient: undefined,
-        status: {
-          status: "failed" as const,
-          error: "Failed to get tools",
-        },
-      }
-    }
-
-    log.info("create() successfully created client", { key, toolCount: result.tools.length })
-    return {
-      mcpClient,
-      status,
+      },
     }
   }
 
