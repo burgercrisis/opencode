@@ -22,8 +22,9 @@ export const MultiEditTool = Tool.define("multiedit", {
   }),
   async execute(params, ctx) {
     const tool = await EditTool.init()
-    const results = []
-    for (const [, edit] of params.edits.entries()) {
+
+    const results = await params.edits.reduce(async (accPromise, edit) => {
+      const acc = await accPromise
       const result = await tool.execute(
         {
           filePath: params.filePath,
@@ -33,8 +34,9 @@ export const MultiEditTool = Tool.define("multiedit", {
         },
         ctx,
       )
-      results.push(result)
-    }
+      return [...acc, result]
+    }, Promise.resolve([] as Awaited<ReturnType<typeof tool.execute>>[]))
+
     return {
       title: path.relative(Instance.worktree, params.filePath),
       metadata: {
