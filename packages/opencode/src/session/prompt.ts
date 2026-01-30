@@ -334,7 +334,7 @@ export namespace SessionPrompt {
             : model
         
           const assistantMessage = (await Session.updateMessage({
-            id: Identifier.ascending("message"),
+            id: Identifier.ascending("message" as any),
             role: "assistant",
             parentID: lastUser.id,
             sessionID,
@@ -358,7 +358,7 @@ export namespace SessionPrompt {
             },
           })) as MessageV2.Assistant
           const part = (await Session.updatePart({
-            id: Identifier.ascending("part"),
+            id: Identifier.ascending("part" as any),
             messageID: assistantMessage.id,
             sessionID: assistantMessage.sessionID,
             type: "tool",
@@ -503,8 +503,8 @@ export namespace SessionPrompt {
             }
             await Session.updateMessage(summaryUserMsg)
             await Session.updatePart({
-              id: Identifier.ascending("part"),
-              messageID: summaryUserMsg.id,
+              id: Identifier.ascending("part" as any),
+            messageID: summaryUserMsg.id,
               sessionID,
               type: "text",
               text: "Summarize the task tool output above and continue with your task.",
