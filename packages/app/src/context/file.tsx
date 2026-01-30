@@ -471,7 +471,6 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
 
     function get(input: string) {
       const path = normalize(input)
-      ensure(path)
       const file = store.file[path]
       const content = file?.content
       if (!content) return file
