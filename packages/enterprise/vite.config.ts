@@ -16,9 +16,13 @@ const fixWindowsMangledPaths = (): PluginOption => ({
   name: "fix-windows-mangled-paths",
   enforce: "pre",
   resolveId(id) {
-    if (id.includes("solidjs") && (id.includes("server-runtime") || id.includes("dist/client/mount"))) {
+    if (id.includes("solidjs") && (id.includes("server-runtime") || id.includes("dist/client/mount") || id.includes("server-fns-runtime"))) {
       const pkgPath = "node_modules/.bun/@solidjs+start@https+++pkg.pr.new+@solidjs+start@dfb2020+813a6f58bb062b5c/node_modules/@solidjs/start"
-      const subPath = id.includes("server-runtime") ? "dist/server/server-runtime.js" : "dist/client/mount.js"
+      let subPath = ""
+      if (id.includes("server-runtime")) subPath = "dist/server/server-runtime.js"
+      else if (id.includes("dist/client/mount")) subPath = "dist/client/mount.js"
+      else if (id.includes("server-fns-runtime")) subPath = "dist/server/server-fns-runtime.js"
+      
       const runtimePath = resolve(__dirname, "../../", pkgPath, subPath).replace(/\\/g, "/")
       return { id: runtimePath }
     }
@@ -43,6 +47,40 @@ const nitroConfig: any = (() => {
 export default defineConfig({
   plugins: [
     fixWindowsMangledPaths(),
+    {
+      name: "fix-invalid-define",
+      enforce: "post",
+      config(config) {
+        config.define = config.define || {};
+        const appPath = resolve(__dirname, "src/app.tsx").replace(/\\/g, "/");
+        config.define["import.meta.env.START_APP_ENTRY"] = JSON.stringify(appPath);
+      },
+      configResolved(config) {
+        if (config.define) {
+          for (const key in config.define) {
+            const val = config.define[key];
+            if (typeof val === "string" && val.includes("\\")) {
+              console.log(`[DEBUG] Fixing define key: ${key}, value: ${val}`);
+              const sanitized = val.replace(/\\/g, "/");
+              // If it's already stringified (starts and ends with "), just fix the slashes
+              if (val.startsWith('"') && val.endsWith('"')) {
+                config.define[key] = sanitized;
+              } else {
+                // Otherwise, it's a raw path that needs stringifying
+                config.define[key] = JSON.stringify(sanitized);
+              }
+            }
+          }
+        }
+      },
+      transform(code, id) {
+        if (id.includes("solidjs") && (id.includes("server-runtime") || id.includes("dist/client/mount"))) {
+          const appPath = resolve(__dirname, "src/app.tsx").replace(/\\/g, "/")
+          const mangledPath = resolve(__dirname, "src/app.tsx")
+          return code.split(mangledPath).join(appPath).split(mangledPath.replace(/\\/g, "\\\\")).join(appPath)
+        }
+      }
+    },
     tailwindcss(),
     solidStart({
       ssr: true,
@@ -74,7 +112,6 @@ export default defineConfig({
         "node:stream",
         "node:util",
         "node:buffer",
-        "solid-js/web",
       ],
       onwarn(warning, warn) {
         if (warning.code === "CIRCULAR_DEPENDENCY") return
