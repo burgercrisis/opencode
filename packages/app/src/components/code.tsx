@@ -175,7 +175,7 @@ export function Code(props: Props) {
     const originalPre = pres[0]
 
     const split = container.querySelector<HTMLElement>(".diff-split")
-    if (view === "diff-split") {
+    if (view === "split") {
       applySplitDiff(container)
       const next = container.querySelector<HTMLElement>(".diff-split")
       if (next) next.style.display = ""
@@ -186,7 +186,7 @@ export function Code(props: Props) {
     }
 
     const expanded = file.folded(local.path)
-    if (view === "diff-split") {
+    if (view === "split") {
       const left = container.querySelector<HTMLElement>(".diff-split pre:nth-child(1) code")
       const right = container.querySelector<HTMLElement>(".diff-split pre:nth-child(2) code")
       if (left)
@@ -212,12 +212,11 @@ export function Code(props: Props) {
   const applyHighlight = (idx: number, scroll?: boolean) => {
     if (!container) return
     const view = layout.review.diffStyle()
-    if (view === "raw") return
 
     clearHighlights()
 
     const nodes: HTMLElement[] = []
-    if (view === "diff-split") {
+    if (view === "split") {
       const left = container.querySelector<HTMLElement>(".diff-split pre:nth-child(1) code")
       const right = container.querySelector<HTMLElement>(".diff-split pre:nth-child(2) code")
       if (left)
