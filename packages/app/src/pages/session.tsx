@@ -379,10 +379,21 @@ export default function Page() {
 
   const info = createMemo(() => (params.id ? sync.session.get(params.id) : undefined))
   const diffs = createMemo(() => (params.id ? (sync.data.session_diff[params.id] ?? []) : []))
+
+  const DiffChanges = (props: { changes: FileDiff[]; variant: "bars" | "text" }) => {
+    return (
+      <div class="flex items-center gap-1 text-12-medium">
+        <span class="text-success">{props.changes.reduce((a, b) => a + b.additions, 0)}</span>
+        <span class="text-error">{props.changes.reduce((a, b) => a + b.deletions, 0)}</span>
+      </div>
+    )
+  }
+
   const reviewCount = createMemo(() => Math.max(info()?.summary?.files ?? 0, diffs().length))
   const hasReview = createMemo(() => reviewCount() > 0)
   const revertMessageID = createMemo(() => info()?.revert?.messageID)
   const messages = createMemo(() => (params.id ? (sync.data.message[params.id] ?? []) : []))
+  const showTabs = createMemo(() => tabs().all().length > 0)
   const messagesReady = createMemo(() => {
     const id = params.id
     if (!id) return true
@@ -470,6 +481,13 @@ export default function Page() {
 
     autoScroll.pause()
     scrollToMessage(msgs[targetIndex], "auto")
+  }
+
+  const findLast = <T,>(arr: T[], predicate: (item: T) => boolean): T | undefined => {
+    for (let i = arr.length - 1; i >= 0; i--) {
+      if (predicate(arr[i])) return arr[i]
+    }
+    return undefined
   }
 
   const kinds = createMemo(() => {
