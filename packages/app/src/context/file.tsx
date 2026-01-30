@@ -354,9 +354,28 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
       return `file://${path}`
     }
 
-    function pathFromTab(tabValue: string) {
-      if (!tabValue.startsWith("file://")) return
+    function pathFromTab(tabValue: string | undefined | null) {
+      if (!tabValue?.startsWith("file://")) return
       return normalize(tabValue)
+    }
+
+    function ensure(path: string) {
+      if (!path) return
+      if (store.file[path]) return
+      setStore("file", path, { path, name: getFilename(path) })
+    }
+
+    function get(input: string) {
+      const path = normalize(input)
+      const file = store.file[path]
+      const content = file?.content
+      if (!content) return file
+      if (contentLru.has(path)) {
+        touchContent(path)
+        return file
+      }
+      touchContent(path, approxBytes(content))
+      return file
     }
 
     const inflight = new Map<string, Promise<void>>()
@@ -463,25 +482,6 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
 
     const sessionKey = createMemo(() => `${params.dir}${params.id ? "/" + params.id : ""}`)
 
-    function ensure(path: string) {
-      if (!path) return
-      if (store.file[path]) return
-      setStore("file", path, { path, name: getFilename(path) })
-    }
-
-    function get(input: string) {
-      const path = normalize(input)
-      const file = store.file[path]
-      const content = file?.content
-      if (!content) return file
-      if (contentLru.has(path)) {
-        touchContent(path)
-        return file
-      }
-      touchContent(path, approxBytes(content))
-      return file
-    }
-
     const active = createMemo(() => {
       const tabValue = layout.tabs(sessionKey).active()
       if (!tabValue) return
@@ -520,9 +520,6 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
         .then((x) => {
           if (scope() !== directory) return
           const content = x.data
-          if (content && content.type === "text") {
-            content.content = content.content.replace(/<think>[\s\S]*?<\/think>/g, "").trim()
-          }
           setStore(
             "file",
             path,
