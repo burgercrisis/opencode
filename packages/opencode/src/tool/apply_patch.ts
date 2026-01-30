@@ -125,7 +125,7 @@ export const ApplyPatchTool = Tool.define("apply_patch", {
                 filePath,
                 oldContent: old,
                 newContent: content,
-                type: (move ? "move" : "update") as const,
+                type: move ? "move" : "update",
                 movePath: move,
                 diff,
                 additions: counts.additions,
