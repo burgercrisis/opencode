@@ -49,55 +49,69 @@ export namespace Config {
 
     // Load remote/well-known config first as the base layer (lowest precedence)
     // This allows organizations to provide default configs that users can override
-    let result: Info = {}
-    for (const [key, value] of Object.entries(auth)) {
-      if (value.type === "wellknown") {
-        process.env[value.key] = value.token
-        log.debug("fetching remote config", { url: `${key}/.well-known/opencode` })
-        const response = await fetch(`${key}/.well-known/opencode`)
-        if (!response.ok) {
-          throw new Error(`failed to fetch remote config from ${key}: ${response.status}`)
-        }
-        const wellknown = (await response.json()) as any
-        const remoteConfig = wellknown.config ?? {}
-        // Add $schema to prevent load() from trying to write back to a non-existent file
-        if (!remoteConfig.$schema) remoteConfig.$schema = "https://opencode.ai/config.json"
-        result = mergeConfigConcatArrays(
-          result,
-          await load(JSON.stringify(remoteConfig), `${key}/.well-known/opencode`),
-        )
-        log.debug("loaded remote config from well-known", { url: key })
-      }
-    }
+    const remote = await Object.entries(auth).reduce(async (accPromise, [key, value]) => {
+      const acc = await accPromise
+      return value.type === "wellknown"
+        ? await (async () => {
+            process.env[value.key] = value.token
+            log.debug("fetching remote config", { url: `${key}/.well-known/opencode` })
+            const response = await fetch(`${key}/.well-known/opencode`)
+            if (!response.ok) {
+              throw new Error(`failed to fetch remote config from ${key}: ${response.status}`)
+            }
+            const wellknown = (await response.json()) as any
+            const remoteConfig = wellknown.config ?? {}
+            // Add $schema to prevent load() from trying to write back to a non-existent file
+            const finalRemoteConfig = remoteConfig.$schema
+              ? remoteConfig
+              : { ...remoteConfig, $schema: "https://opencode.ai/config.json" }
+
+            const loaded = await load(JSON.stringify(finalRemoteConfig), `${key}/.well-known/opencode`)
+            log.debug("loaded remote config from well-known", { url: key })
+            return mergeConfigConcatArrays(acc, loaded)
+          })()
+        : acc
+    }, Promise.resolve({} as Info))
 
     // Global user config overrides remote config
-    result = mergeConfigConcatArrays(result, await global())
+    const globalConfig = await global()
+    const withGlobal = mergeConfigConcatArrays(remote, globalConfig)
 
     // Custom config path overrides global
-    if (Flag.OPENCODE_CONFIG) {
-      result = mergeConfigConcatArrays(result, await loadFile(Flag.OPENCODE_CONFIG))
-      log.debug("loaded custom config", { path: Flag.OPENCODE_CONFIG })
-    }
+    const withCustom = Flag.OPENCODE_CONFIG
+      ? await (async () => {
+          const custom = await loadFile(Flag.OPENCODE_CONFIG!)
+          log.debug("loaded custom config", { path: Flag.OPENCODE_CONFIG })
+          return mergeConfigConcatArrays(withGlobal, custom)
+        })()
+      : withGlobal
 
     // Project config has highest precedence (overrides global and remote)
-    if (!Flag.OPENCODE_DISABLE_PROJECT_CONFIG) {
-      for (const file of ["opencode.jsonc", "opencode.json"]) {
-        const found = await Filesystem.findUp(file, Instance.directory, Instance.worktree)
-        for (const resolved of found.toReversed()) {
-          result = mergeConfigConcatArrays(result, await loadFile(resolved))
-        }
-      }
-    }
+    const withProject = Flag.OPENCODE_DISABLE_PROJECT_CONFIG
+      ? withCustom
+      : await ["opencode.jsonc", "opencode.json"].reduce(async (accPromise, file) => {
+          const acc = await accPromise
+          const found = await Filesystem.findUp(file, Instance.directory, Instance.worktree)
+          return found.toReversed().reduce(async (innerAccPromise, resolved) => {
+            const innerAcc = await innerAccPromise
+            return mergeConfigConcatArrays(innerAcc, await loadFile(resolved))
+          }, Promise.resolve(acc))
+        }, Promise.resolve(withCustom))
 
     // Inline config content has highest precedence
-    if (Flag.OPENCODE_CONFIG_CONTENT) {
-      result = mergeConfigConcatArrays(result, JSON.parse(Flag.OPENCODE_CONFIG_CONTENT))
-      log.debug("loaded custom config from OPENCODE_CONFIG_CONTENT")
-    }
+    const withContent = Flag.OPENCODE_CONFIG_CONTENT
+      ? (() => {
+          log.debug("loaded custom config from OPENCODE_CONFIG_CONTENT")
+          return mergeConfigConcatArrays(withProject, JSON.parse(Flag.OPENCODE_CONFIG_CONTENT))
+        })()
+      : withProject
 
-    result.agent = result.agent || {}
-    result.mode = result.mode || {}
-    result.plugin = result.plugin || []
+    const base = {
+      ...withContent,
+      agent: withContent.agent || {},
+      mode: withContent.mode || {},
+      plugin: withContent.plugin || [],
+    }
 
     const directories = [
       Global.Path.config,
@@ -119,84 +133,100 @@ export namespace Config {
           stop: Global.Path.home,
         }),
       )),
+      ...(Flag.OPENCODE_CONFIG_DIR ? [Flag.OPENCODE_CONFIG_DIR] : []),
     ]
 
-    if (Flag.OPENCODE_CONFIG_DIR) {
-      directories.push(Flag.OPENCODE_CONFIG_DIR)
-      log.debug("loading config from OPENCODE_CONFIG_DIR", { path: Flag.OPENCODE_CONFIG_DIR })
-    }
+    const result = await unique(directories).reduce(async (accPromise, dir) => {
+      const acc = await accPromise
 
-    for (const dir of unique(directories)) {
-      if (dir.endsWith(".opencode") || dir === Flag.OPENCODE_CONFIG_DIR) {
-        for (const file of ["opencode.jsonc", "opencode.json"]) {
-          log.debug(`loading config from ${path.join(dir, file)}`)
-          result = mergeConfigConcatArrays(result, await loadFile(path.join(dir, file)))
-          // to satisfy the type checker
-          result.agent ??= {}
-          result.mode ??= {}
-          result.plugin ??= []
-        }
-      }
+      const withDirConfig =
+        dir.endsWith(".opencode") || dir === Flag.OPENCODE_CONFIG_DIR
+          ? await ["opencode.jsonc", "opencode.json"].reduce(async (innerAccPromise, file) => {
+              const innerAcc = await innerAccPromise
+              const filePath = path.join(dir, file)
+              log.debug(`loading config from ${filePath}`)
+              const loaded = await loadFile(filePath)
+              return mergeConfigConcatArrays(innerAcc, {
+                ...loaded,
+                agent: loaded.agent ?? {},
+                mode: loaded.mode ?? {},
+                plugin: loaded.plugin ?? [],
+              })
+            }, Promise.resolve(acc))
+          : acc
 
       const exists = existsSync(path.join(dir, "node_modules"))
       const installing = installDependencies(dir)
       if (!exists) await installing
 
-      result.command = mergeDeep(result.command ?? {}, await loadCommand(dir))
-      result.agent = mergeDeep(result.agent, await loadAgent(dir))
-      result.agent = mergeDeep(result.agent, await loadMode(dir))
-      result.plugin.push(...(await loadPlugin(dir)))
-    }
+      return {
+        ...withDirConfig,
+        command: mergeDeep(withDirConfig.command ?? {}, await loadCommand(dir)),
+        agent: mergeDeep(withDirConfig.agent ?? {}, await loadAgent(dir)),
+        // Merge modes into agent for backwards compatibility
+        agent: mergeDeep(withDirConfig.agent ?? {}, await loadMode(dir)),
+        plugin: [...(withDirConfig.plugin ?? []), ...(await loadPlugin(dir))],
+      }
+    }, Promise.resolve(base))
 
     // Migrate deprecated mode field to agent field
-    for (const [name, mode] of Object.entries(result.mode)) {
-      result.agent = mergeDeep(result.agent ?? {}, {
-        [name]: {
-          ...mode,
-          mode: "primary" as const,
-        },
-      })
-    }
+    const withMigratedModes = Object.entries(result.mode ?? {}).reduce(
+      (acc, [name, mode]) => ({
+        ...acc,
+        agent: mergeDeep(acc.agent ?? {}, {
+          [name]: {
+            ...mode,
+            mode: "primary" as const,
+          },
+        }),
+      }),
+      result,
+    )
 
-    if (Flag.OPENCODE_PERMISSION) {
-      result.permission = mergeDeep(result.permission ?? {}, JSON.parse(Flag.OPENCODE_PERMISSION))
-    }
+    const withPermissions = Flag.OPENCODE_PERMISSION
+      ? {
+          ...withMigratedModes,
+          permission: mergeDeep(
+            withMigratedModes.permission ?? {},
+            JSON.parse(Flag.OPENCODE_PERMISSION),
+          ),
+        }
+      : withMigratedModes
 
     // Backwards compatibility: legacy top-level `tools` config
-    if (result.tools) {
-      const perms: Record<string, Config.PermissionAction> = {}
-      for (const [tool, enabled] of Object.entries(result.tools)) {
-        const action: Config.PermissionAction = enabled ? "allow" : "deny"
-        if (tool === "write" || tool === "edit" || tool === "patch" || tool === "multiedit") {
-          perms.edit = action
-          continue
+    const withLegacyTools = withPermissions.tools
+      ? {
+          ...withPermissions,
+          permission: mergeDeep(
+            Object.entries(withPermissions.tools).reduce((acc, [tool, enabled]) => {
+              const action: Config.PermissionAction = enabled ? "allow" : "deny"
+              return tool === "write" || tool === "edit" || tool === "patch" || tool === "multiedit"
+                ? { ...acc, edit: action }
+                : { ...acc, [tool]: action }
+            }, {} as Record<string, Config.PermissionAction>),
+            withPermissions.permission ?? {},
+          ),
         }
-        perms[tool] = action
-      }
-      result.permission = mergeDeep(perms, result.permission ?? {})
+      : withPermissions
+
+    const finalConfig = {
+      ...withLegacyTools,
+      username: withLegacyTools.username || os.userInfo().username,
+      share:
+        withLegacyTools.autoshare === true && !withLegacyTools.share
+          ? ("auto" as const)
+          : withLegacyTools.share,
+      keybinds: withLegacyTools.keybinds || Info.shape.keybinds.parse({}),
+      compaction: {
+        ...withLegacyTools.compaction,
+        ...(Flag.OPENCODE_DISABLE_AUTOCOMPACT ? { auto: false } : {}),
+        ...(Flag.OPENCODE_DISABLE_PRUNE ? { prune: false } : {}),
+      },
+      plugin: deduplicatePlugins(withLegacyTools.plugin ?? []),
     }
-
-    if (!result.username) result.username = os.userInfo().username
-
-    // Handle migration from autoshare to share field
-    if (result.autoshare === true && !result.share) {
-      result.share = "auto"
-    }
-
-    if (!result.keybinds) result.keybinds = Info.shape.keybinds.parse({})
-
-    // Apply flag overrides for compaction settings
-    if (Flag.OPENCODE_DISABLE_AUTOCOMPACT) {
-      result.compaction = { ...result.compaction, auto: false }
-    }
-    if (Flag.OPENCODE_DISABLE_PRUNE) {
-      result.compaction = { ...result.compaction, prune: false }
-    }
-
-    result.plugin = deduplicatePlugins(result.plugin ?? [])
 
     return {
-      config: result,
+      config: finalConfig,
       directories,
     }
   })
@@ -225,11 +255,8 @@ export namespace Config {
   }
 
   function rel(item: string, patterns: string[]) {
-    for (const pattern of patterns) {
-      const index = item.indexOf(pattern)
-      if (index === -1) continue
-      return item.slice(index + pattern.length)
-    }
+    const pattern = patterns.find((p) => item.includes(p))
+    return pattern ? item.slice(item.indexOf(pattern) + pattern.length) : undefined
   }
 
   function trim(file: string) {
@@ -239,133 +266,177 @@ export namespace Config {
 
   const COMMAND_GLOB = new Bun.Glob("{command,commands}/**/*.md")
   async function loadCommand(dir: string) {
-    const result: Record<string, Command> = {}
-    for await (const item of COMMAND_GLOB.scan({
-      absolute: true,
-      followSymlinks: true,
-      dot: true,
-      cwd: dir,
-    })) {
-      const md = await ConfigMarkdown.parse(item).catch(async (err) => {
-        const message = ConfigMarkdown.FrontmatterError.isInstance(err)
-          ? err.data.message
-          : `Failed to parse command ${item}`
-        const { Session } = await import("@/session")
-        Bus.publish(Session.Event.Error, { error: new NamedError.Unknown({ message }).toObject() })
-        log.error("failed to load command", { command: item, err })
-        return undefined
-      })
-      if (!md) continue
+    const items = await Array.fromAsync(
+      COMMAND_GLOB.scan({
+        absolute: true,
+        followSymlinks: true,
+        dot: true,
+        cwd: dir,
+      }),
+    )
 
-      const patterns = ["/.opencode/command/", "/.opencode/commands/", "/command/", "/commands/"]
-      const file = rel(item, patterns) ?? path.basename(item)
-      const name = trim(file)
+    return (
+      await Promise.all(
+        items.map(async (item) => {
+          const md = await ConfigMarkdown.parse(item).catch(async (err) => {
+            const message = ConfigMarkdown.FrontmatterError.isInstance(err)
+              ? err.data.message
+              : `Failed to parse command ${item}`
+            const { Session } = await import("@/session")
+            Bus.publish(Session.Event.Error, { error: new NamedError.Unknown({ message }).toObject() })
+            log.error("failed to load command", { command: item, err })
+            return undefined
+          })
 
-      const config = {
-        name,
-        ...md.data,
-        template: md.content.trim(),
-      }
-      const parsed = Command.safeParse(config)
-      if (parsed.success) {
-        result[config.name] = parsed.data
-        continue
-      }
-      throw new InvalidError({ path: item, issues: parsed.error.issues }, { cause: parsed.error })
-    }
-    return result
+          return md
+            ? (() => {
+                const patterns = [
+                  "/.opencode/command/",
+                  "/.opencode/commands/",
+                  "/command/",
+                  "/commands/",
+                ]
+                const file = rel(item, patterns) ?? path.basename(item)
+                const name = trim(file)
+                const config = {
+                  name,
+                  ...md.data,
+                  template: md.content.trim(),
+                }
+                const parsed = Command.safeParse(config)
+                return parsed.success
+                  ? { name: config.name, data: parsed.data }
+                  : (() => {
+                      throw new InvalidError(
+                        { path: item, issues: parsed.error.issues },
+                        { cause: parsed.error },
+                      )
+                    })()
+              })()
+            : undefined
+        }),
+      )
+    ).reduce(
+      (acc, item) => (item ? { ...acc, [item.name]: item.data } : acc),
+      {} as Record<string, Command>,
+    )
   }
 
   const AGENT_GLOB = new Bun.Glob("{agent,agents}/**/*.md")
   async function loadAgent(dir: string) {
-    const result: Record<string, Agent> = {}
+    const items = await Array.fromAsync(
+      AGENT_GLOB.scan({
+        absolute: true,
+        followSymlinks: true,
+        dot: true,
+        cwd: dir,
+      }),
+    )
 
-    for await (const item of AGENT_GLOB.scan({
-      absolute: true,
-      followSymlinks: true,
-      dot: true,
-      cwd: dir,
-    })) {
-      const md = await ConfigMarkdown.parse(item).catch(async (err) => {
-        const message = ConfigMarkdown.FrontmatterError.isInstance(err)
-          ? err.data.message
-          : `Failed to parse agent ${item}`
-        const { Session } = await import("@/session")
-        Bus.publish(Session.Event.Error, { error: new NamedError.Unknown({ message }).toObject() })
-        log.error("failed to load agent", { agent: item, err })
-        return undefined
-      })
-      if (!md) continue
+    return (
+      await Promise.all(
+        items.map(async (item) => {
+          const md = await ConfigMarkdown.parse(item).catch(async (err) => {
+            const message = ConfigMarkdown.FrontmatterError.isInstance(err)
+              ? err.data.message
+              : `Failed to parse agent ${item}`
+            const { Session } = await import("@/session")
+            Bus.publish(Session.Event.Error, { error: new NamedError.Unknown({ message }).toObject() })
+            log.error("failed to load agent", { agent: item, err })
+            return undefined
+          })
 
-      const patterns = ["/.opencode/agent/", "/.opencode/agents/", "/agent/", "/agents/"]
-      const file = rel(item, patterns) ?? path.basename(item)
-      const agentName = trim(file)
-
-      const config = {
-        name: agentName,
-        ...md.data,
-        prompt: md.content.trim(),
-      }
-      const parsed = Agent.safeParse(config)
-      if (parsed.success) {
-        result[config.name] = parsed.data
-        continue
-      }
-      throw new InvalidError({ path: item, issues: parsed.error.issues }, { cause: parsed.error })
-    }
-    return result
+          return md
+            ? (() => {
+                const patterns = ["/.opencode/agent/", "/.opencode/agents/", "/agent/", "/agents/"]
+                const file = rel(item, patterns) ?? path.basename(item)
+                const agentName = trim(file)
+                const config = {
+                  name: agentName,
+                  ...md.data,
+                  prompt: md.content.trim(),
+                }
+                const parsed = Agent.safeParse(config)
+                return parsed.success
+                  ? { name: config.name, data: parsed.data }
+                  : (() => {
+                      throw new InvalidError(
+                        { path: item, issues: parsed.error.issues },
+                        { cause: parsed.error },
+                      )
+                    })()
+              })()
+            : undefined
+        }),
+      )
+    ).reduce(
+      (acc, item) => (item ? { ...acc, [item.name]: item.data } : acc),
+      {} as Record<string, Agent>,
+    )
   }
 
   const MODE_GLOB = new Bun.Glob("{mode,modes}/*.md")
   async function loadMode(dir: string) {
-    const result: Record<string, Agent> = {}
-    for await (const item of MODE_GLOB.scan({
-      absolute: true,
-      followSymlinks: true,
-      dot: true,
-      cwd: dir,
-    })) {
-      const md = await ConfigMarkdown.parse(item).catch(async (err) => {
-        const message = ConfigMarkdown.FrontmatterError.isInstance(err)
-          ? err.data.message
-          : `Failed to parse mode ${item}`
-        const { Session } = await import("@/session")
-        Bus.publish(Session.Event.Error, { error: new NamedError.Unknown({ message }).toObject() })
-        log.error("failed to load mode", { mode: item, err })
-        return undefined
-      })
-      if (!md) continue
+    const items = await Array.fromAsync(
+      MODE_GLOB.scan({
+        absolute: true,
+        followSymlinks: true,
+        dot: true,
+        cwd: dir,
+      }),
+    )
 
-      const config = {
-        name: path.basename(item, ".md"),
-        ...md.data,
-        prompt: md.content.trim(),
-      }
-      const parsed = Agent.safeParse(config)
-      if (parsed.success) {
-        result[config.name] = {
-          ...parsed.data,
-          mode: "primary" as const,
-        }
-        continue
-      }
-    }
-    return result
+    return (
+      await Promise.all(
+        items.map(async (item) => {
+          const md = await ConfigMarkdown.parse(item).catch(async (err) => {
+            const message = ConfigMarkdown.FrontmatterError.isInstance(err)
+              ? err.data.message
+              : `Failed to parse mode ${item}`
+            const { Session } = await import("@/session")
+            Bus.publish(Session.Event.Error, { error: new NamedError.Unknown({ message }).toObject() })
+            log.error("failed to load mode", { mode: item, err })
+            return undefined
+          })
+
+          return md
+            ? (() => {
+                const config = {
+                  name: path.basename(item, ".md"),
+                  ...md.data,
+                  prompt: md.content.trim(),
+                }
+                const parsed = Agent.safeParse(config)
+                return parsed.success
+                  ? {
+                      name: config.name,
+                      data: {
+                        ...parsed.data,
+                        mode: "primary" as const,
+                      },
+                    }
+                  : undefined
+              })()
+            : undefined
+        }),
+      )
+    ).reduce(
+      (acc, item) => (item ? { ...acc, [item.name]: item.data } : acc),
+      {} as Record<string, Agent>,
+    )
   }
 
   const PLUGIN_GLOB = new Bun.Glob("{plugin,plugins}/*.{ts,js}")
   async function loadPlugin(dir: string) {
-    const plugins: string[] = []
-
-    for await (const item of PLUGIN_GLOB.scan({
-      absolute: true,
-      followSymlinks: true,
-      dot: true,
-      cwd: dir,
-    })) {
-      plugins.push(pathToFileURL(item).href)
-    }
-    return plugins
+    const items = await Array.fromAsync(
+      PLUGIN_GLOB.scan({
+        absolute: true,
+        followSymlinks: true,
+        dot: true,
+        cwd: dir,
+      }),
+    )
+    return items.map((item) => pathToFileURL(item).href)
   }
 
   /**
@@ -401,23 +472,15 @@ export namespace Config {
    * we reverse, deduplicate (keeping first occurrence), then restore order.
    */
   export function deduplicatePlugins(plugins: string[]): string[] {
-    // seenNames: canonical plugin names for duplicate detection
-    // e.g., "oh-my-opencode", "@scope/pkg"
-    const seenNames = new Set<string>()
-
-    // uniqueSpecifiers: full plugin specifiers to return
-    // e.g., "oh-my-opencode@2.4.3", "file:///path/to/plugin.js"
-    const uniqueSpecifiers: string[] = []
-
-    for (const specifier of plugins.toReversed()) {
-      const name = getPluginName(specifier)
-      if (!seenNames.has(name)) {
-        seenNames.add(name)
-        uniqueSpecifiers.push(specifier)
-      }
-    }
-
-    return uniqueSpecifiers.toReversed()
+    return plugins.toReversed().reduce(
+      (acc, specifier) => {
+        const name = getPluginName(specifier)
+        return acc.seen.has(name)
+          ? acc
+          : { seen: new Set([...acc.seen, name]), result: [specifier, ...acc.result] }
+      },
+      { seen: new Set<string>(), result: [] as string[] },
+    ).result
   }
 
   export const McpLocal = z
@@ -510,12 +573,11 @@ export namespace Config {
     if (typeof x === "string") return { "*": x as PermissionAction }
     const obj = x as { __originalKeys?: string[] } & Record<string, unknown>
     const { __originalKeys, ...rest } = obj
-    if (!__originalKeys) return rest as Record<string, PermissionRule>
-    const result: Record<string, PermissionRule> = {}
-    for (const key of __originalKeys) {
-      if (key in rest) result[key] = rest[key] as PermissionRule
-    }
-    return result
+    return __originalKeys
+      ? Object.fromEntries(
+          __originalKeys.filter((key) => key in rest).map((key) => [key, rest[key] as PermissionRule]),
+        )
+      : (rest as Record<string, PermissionRule>)
   }
 
   export const Permission = z
