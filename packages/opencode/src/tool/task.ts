@@ -23,7 +23,6 @@ const parameters = z.object({
 export const TaskTool = Tool.define("task", async (ctx) => {
   const agents = await Agent.list().then((x) => x.filter((a) => a.mode !== "primary"))
 
-  // Filter agents by permissions if agent provided
   const caller = ctx?.agent
   const accessibleAgents = caller
     ? agents.filter((a) => PermissionNext.evaluate("task", a.name, caller.permission).action !== "deny")
@@ -42,62 +41,53 @@ export const TaskTool = Tool.define("task", async (ctx) => {
       const config = await Config.get()
 
       // Skip permission check when user explicitly invoked via @ or command subtask
-      if (!ctx.extra?.bypassAgentCheck) {
-        await ctx.ask({
-          permission: "task",
-          patterns: [params.subagent_type],
-          always: ["*"],
-          metadata: {
-            description: params.description,
-            subagent_type: params.subagent_type,
-          },
-        })
-      }
+      !ctx.extra?.bypassAgentCheck && (await ctx.ask({
+        permission: "task",
+        patterns: [params.subagent_type],
+        always: ["*"],
+        metadata: {
+          description: params.description,
+          subagent_type: params.subagent_type,
+        },
+      }))
 
-      const agent = await Agent.get(params.subagent_type)
-      if (!agent) throw new Error(`Unknown agent type: ${params.subagent_type} is not a valid agent type`)
+      const agent = await Agent.get(params.subagent_type) || (() => { throw new Error(`Unknown agent type: ${params.subagent_type} is not a valid agent type`) })()
 
       const hasTaskPermission = agent.permission.some((rule) => rule.permission === "task")
 
-      const session = await iife(async () => {
-        if (params.session_id) {
-          const found = await Session.get(params.session_id).catch(() => {})
-          if (found) return found
-        }
-
-        return await Session.create({
-          parentID: ctx.sessionID,
-          title: params.description + ` (@${agent.name} subagent)`,
-          permission: [
-            {
-              permission: "todowrite",
-              pattern: "*",
-              action: "deny",
-            },
-            {
-              permission: "todoread",
-              pattern: "*",
-              action: "deny",
-            },
-            ...(hasTaskPermission
-              ? []
-              : [
-                  {
-                    permission: "task" as const,
-                    pattern: "*" as const,
-                    action: "deny" as const,
-                  },
-                ]),
-            ...(config.experimental?.primary_tools?.map((t) => ({
-              pattern: "*",
-              action: "allow" as const,
-              permission: t,
-            })) ?? []),
-          ],
-        })
+      const session = (params.session_id && await Session.get(params.session_id).catch(() => null)) || await Session.create({
+        parentID: ctx.sessionID,
+        title: params.description + ` (@${agent.name} subagent)`,
+        permission: [
+          {
+            permission: "todowrite",
+            pattern: "*",
+            action: "deny",
+          },
+          {
+            permission: "todoread",
+            pattern: "*",
+            action: "deny",
+          },
+          ...(hasTaskPermission
+            ? []
+            : [
+                {
+                  permission: "task" as const,
+                  pattern: "*" as const,
+                  action: "deny" as const,
+                },
+              ]),
+          ...(config.experimental?.primary_tools?.map((t) => ({
+            pattern: "*",
+            action: "allow" as const,
+            permission: t,
+          })) ?? []),
+        ],
       })
+
       const msg = await MessageV2.get({ sessionID: ctx.sessionID, messageID: ctx.messageID })
-      if (msg.info.role !== "assistant") throw new Error("Not an assistant message")
+      msg.info.role !== "assistant" && (() => { throw new Error("Not an assistant message") })()
 
       const model = agent.model ?? {
         modelID: msg.info.modelID,
@@ -113,35 +103,37 @@ export const TaskTool = Tool.define("task", async (ctx) => {
       })
 
       const messageID = Identifier.ascending("message")
-      const parts: Record<string, { id: string; tool: string; state: { status: string; title?: string } }> = {}
-      const unsub = Bus.subscribe(MessageV2.Event.PartUpdated, async (evt) => {
-        if (evt.properties.part.sessionID !== session.id) return
-        if (evt.properties.part.messageID === messageID) return
-        if (evt.properties.part.type !== "tool") return
-        const part = evt.properties.part
-        parts[part.id] = {
-          id: part.id,
-          tool: part.tool,
-          state: {
-            status: part.state.status,
-            title: part.state.status === "completed" ? part.state.title : undefined,
-          },
-        }
-        ctx.metadata({
-          title: params.description,
-          metadata: {
-            summary: Object.values(parts).sort((a, b) => a.id.localeCompare(b.id)),
-            sessionId: session.id,
-            model,
-          },
-        })
-      })
+      const parts = new Map<string, { id: string; tool: string; state: { status: string; title?: string } }>()
+      using _unsub = defer(
+        Bus.subscribe(MessageV2.Event.PartUpdated, async (evt) => {
+          evt.properties.part.sessionID !== session.id ||
+            evt.properties.part.messageID === messageID ||
+            evt.properties.part.type !== "tool" ||
+            (() => {
+              const part = evt.properties.part
+              parts.set(part.id, {
+                id: part.id,
+                tool: part.tool,
+                state: {
+                  status: part.state.status,
+                  title: part.state.status === "completed" ? part.state.title : undefined,
+                },
+              })
+              ctx.metadata({
+                title: params.description,
+                metadata: {
+                  summary: Array.from(parts.values()).sort((a, b) => a.id.localeCompare(b.id)),
+                  sessionId: session.id,
+                  model,
+                },
+              })
+            })()
+        }),
+      )
 
-      function cancel() {
-        SessionPrompt.cancel(session.id)
-      }
+      const cancel = () => SessionPrompt.cancel(session.id)
       ctx.abort.addEventListener("abort", cancel)
-      using _ = defer(() => ctx.abort.removeEventListener("abort", cancel))
+      using _abort = defer(() => ctx.abort.removeEventListener("abort", cancel))
       const promptParts = await SessionPrompt.resolvePromptParts(params.prompt)
 
       const result = await SessionPrompt.prompt({
@@ -160,7 +152,7 @@ export const TaskTool = Tool.define("task", async (ctx) => {
         },
         parts: promptParts,
       })
-      unsub()
+
       const messages = await Session.messages({ sessionID: session.id })
       const summary = messages
         .filter((x) => x.info.role === "assistant")
@@ -173,9 +165,6 @@ export const TaskTool = Tool.define("task", async (ctx) => {
             title: part.state.status === "completed" ? part.state.title : undefined,
           },
         }))
-      const text = result.parts.findLast((x) => x.type === "text")?.text ?? ""
-
-      const output = text + "\n\n" + ["<task_metadata>", `session_id: ${session.id}`, "</task_metadata>"].join("\n")
 
       return {
         title: params.description,
@@ -184,7 +173,10 @@ export const TaskTool = Tool.define("task", async (ctx) => {
           sessionId: session.id,
           model,
         },
-        output,
+        output:
+          (result.parts.findLast((x) => x.type === "text")?.text ?? "") +
+          "\n\n" +
+          ["<task_metadata>", `session_id: ${session.id}`, "</task_metadata>"].join("\n"),
       }
     },
   }
