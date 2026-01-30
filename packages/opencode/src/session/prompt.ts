@@ -1472,8 +1472,8 @@ export namespace SessionPrompt {
                   }
                 } catch (error) {
                   log.error("failed to read file", { error, filepath })
-                  const message = error instanceof Error ? error.message : error.toString()
-                  Bus.publish(Session.Event.Error, {
+                  const message = error instanceof Error ? error.message : String(error)
+                  Bus.publish(Session.Event.Error as any, {
                     sessionID: input.sessionID,
                     error: new NamedError.Unknown({
                       message,
@@ -1501,7 +1501,7 @@ export namespace SessionPrompt {
                     agent: input.agent!,
                     messageID: info.id,
                     messages: [], // Added missing property
-                    callID: Identifier.ascending("call"), // Added missing property
+                    callID: Identifier.ascending("tool" as any), // Added missing property
                     extra: { bypassCwdCheck: true },
                     metadata: async () => {},
                     ask: async () => {},
@@ -1509,7 +1509,7 @@ export namespace SessionPrompt {
                   const result = await ListTool.init().then((t) => t.execute(args, listCtx))
                   return [
                     {
-                      id: Identifier.ascending("part"),
+                      id: Identifier.ascending("part" as any),
                       messageID: info.id,
                       sessionID: input.sessionID,
                       type: "text",
@@ -1517,7 +1517,7 @@ export namespace SessionPrompt {
                       text: `Called the list tool with the following input: ${JSON.stringify(args)}`,
                     },
                     {
-                      id: Identifier.ascending("part"),
+                      id: Identifier.ascending("part" as any),
                       messageID: info.id,
                       sessionID: input.sessionID,
                       type: "text",
@@ -1526,7 +1526,7 @@ export namespace SessionPrompt {
                     },
                     {
                       ...part,
-                      id: part.id ?? Identifier.ascending("part"),
+                      id: part.id ?? Identifier.ascending("part" as any),
                       messageID: info.id,
                       sessionID: input.sessionID,
                     },
@@ -1797,7 +1797,7 @@ export namespace SessionPrompt {
     // Entering plan mode
     if (input.agent.name === "plan" && assistantMessage?.info?.agent !== "plan") {
       try {
-        const plan = Session.plan(input.session)
+        const plan = Session.plan(input.session as any)
         let exists = false
         try {
           exists = await Bun.file(plan).exists()
