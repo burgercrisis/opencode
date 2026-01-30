@@ -29,6 +29,9 @@ export type FileViewState = {
   scrollTop?: number
   scrollLeft?: number
   selectedLines?: SelectedLineRange | null
+  selection?: FileSelection | null
+  folded?: string[]
+  changeIndex?: number
 }
 
 export type FileState = {
@@ -221,6 +224,9 @@ function createViewSession(dir: string, id: string | undefined) {
   const scrollTop = (path: string) => view.file[path]?.scrollTop
   const scrollLeft = (path: string) => view.file[path]?.scrollLeft
   const selectedLines = (path: string) => view.file[path]?.selectedLines
+  const selection = (path: string) => view.file[path]?.selection
+  const folded = (path: string) => view.file[path]?.folded ?? []
+  const changeIndex = (path: string) => view.file[path]?.changeIndex ?? 0
 
   const setScrollTop = (path: string, top: number) => {
     setView("file", path, (current) => {
@@ -256,14 +262,47 @@ function createViewSession(dir: string, id: string | undefined) {
     pruneView(path)
   }
 
+  const setSelection = (path: string, selection: FileSelection | null) => {
+    setView("file", path, (current) => ({
+      ...(current ?? {}),
+      selection,
+    }))
+    pruneView(path)
+  }
+
+  const unfold = (path: string, key: string) => {
+    setView("file", path, (current) => {
+      const next = [...(current?.folded ?? []), key]
+      return {
+        ...(current ?? {}),
+        folded: next,
+      }
+    })
+    pruneView(path)
+  }
+
+  const setChangeIndex = (path: string, index: number) => {
+    setView("file", path, (current) => ({
+      ...(current ?? {}),
+      changeIndex: index,
+    }))
+    pruneView(path)
+  }
+
   return {
     ready,
     scrollTop,
     scrollLeft,
     selectedLines,
+    selection,
+    folded,
+    changeIndex,
     setScrollTop,
     setScrollLeft,
     setSelectedLines,
+    setSelection,
+    unfold,
+    setChangeIndex,
   }
 }
 
@@ -682,6 +721,9 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
     const scrollTop = (input: string) => view().scrollTop(normalize(input))
     const scrollLeft = (input: string) => view().scrollLeft(normalize(input))
     const selectedLines = (input: string) => view().selectedLines(normalize(input))
+    const selection = (input: string) => view().selection(normalize(input))
+    const folded = (input: string) => view().folded(normalize(input))
+    const changeIndex = (input: string) => view().changeIndex(normalize(input))
 
     const setScrollTop = (input: string, top: number) => {
       const path = normalize(input)
@@ -696,6 +738,21 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
     const setSelectedLines = (input: string, range: SelectedLineRange | null) => {
       const path = normalize(input)
       view().setSelectedLines(path, range)
+    }
+
+    const setSelection = (input: string, selection: FileSelection | null) => {
+      const path = normalize(input)
+      view().setSelection(path, selection)
+    }
+
+    const unfold = (input: string, key: string) => {
+      const path = normalize(input)
+      view().unfold(path, key)
+    }
+
+    const setChangeIndex = (input: string, index: number) => {
+      const path = normalize(input)
+      view().setChangeIndex(path, index)
     }
 
     onCleanup(() => {
@@ -732,6 +789,12 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
       setScrollLeft,
       selectedLines,
       setSelectedLines,
+      selection,
+      setSelection,
+      folded,
+      unfold,
+      changeIndex,
+      setChangeIndex,
       searchFiles: (query: string) => search(query, "false"),
       searchFilesAndDirectories: (query: string) => search(query, "true"),
     }
