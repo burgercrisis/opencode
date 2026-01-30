@@ -65,46 +65,49 @@ export const GrepTool = Tool.define("grep", {
       modTime?: number
     }
 
-    const read = async (acc: Match[], buffer: string): Promise<{ matches: Match[]; truncated: boolean }> =>
-      await reader.read().then(({ done, value }) => {
-        const processDone = () => {
-          const remaining = buffer.split("|")
-          const match = remaining.length >= 3 ? {
-            path: remaining[0],
-            lineNum: parseInt(remaining[1], 10),
-            lineText: remaining.slice(2).join("|"),
-          } : null
-          return {
-            matches: match ? [...acc, match].slice(0, MATCH_LIMIT) : acc,
-            truncated: acc.length >= MATCH_LIMIT || (match !== null && acc.length + 1 > MATCH_LIMIT),
-          }
+    const read = async (acc: Match[], buffer: string): Promise<{ matches: Match[]; truncated: boolean }> => {
+      const { done, value } = await reader.read()
+      
+      const processDone = () => {
+        const remaining = buffer.split("|")
+        const match = remaining.length >= 3 ? {
+          path: remaining[0],
+          lineNum: parseInt(remaining[1], 10),
+          lineText: remaining.slice(2).join("|"),
+        } : null
+        return {
+          matches: match ? [...acc, match].slice(0, MATCH_LIMIT) : acc,
+          truncated: acc.length >= MATCH_LIMIT || (match !== null && acc.length + 1 > MATCH_LIMIT),
         }
+      }
 
-        return done ? processDone() : (() => {
-          const content = buffer + decoder.decode(value, { stream: true })
-          const lines = content.split(/\r?\n/)
-          const last = lines.pop() || ""
+      if (done) return processDone()
 
-          const newMatches = lines
-            .filter(Boolean)
-            .map((line) => {
-              const [filePath, lineNumStr, ...lineTextParts] = line.split("|")
-              return filePath && lineNumStr && lineTextParts.length > 0
-                ? {
-                    path: filePath,
-                    lineNum: parseInt(lineNumStr, 10),
-                    lineText: lineTextParts.join("|"),
-                  }
-                : null
-            })
-            .filter((m): m is Match => m !== null)
+      const content = buffer + decoder.decode(value, { stream: true })
+      const lines = content.split(/\r?\n/)
+      const last = lines.pop() || ""
 
-          const total = [...acc, ...newMatches]
-          return total.length >= MATCH_LIMIT
-            ? (proc.kill(), { matches: total.slice(0, MATCH_LIMIT), truncated: true })
-            : read(total, last)
-        })()
-      })
+      const newMatches = lines
+        .filter(Boolean)
+        .map((line) => {
+          const [filePath, lineNumStr, ...lineTextParts] = line.split("|")
+          return filePath && lineNumStr && lineTextParts.length > 0
+            ? {
+                path: filePath,
+                lineNum: parseInt(lineNumStr, 10),
+                lineText: lineTextParts.join("|"),
+              }
+            : null
+        })
+        .filter((m): m is Match => m !== null)
+
+      const total = [...acc, ...newMatches]
+      if (total.length >= MATCH_LIMIT) {
+        proc.kill()
+        return { matches: total.slice(0, MATCH_LIMIT), truncated: true }
+      }
+      return read(total, last)
+    }
 
     const { matches: rawMatches, truncated } = await read([], "").finally(() => reader.releaseLock())
     const errorOutput = await new Response(proc.stderr).text()
