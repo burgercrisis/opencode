@@ -440,8 +440,8 @@ export namespace ACP {
               providerID: last.model.providerID,
               modelID: last.model.modelID,
             })
-            if (res.modes.availableModes.some((m) => m.id === last.agent)) {
-              r.modes.currentModeId = last.agent
+            if (res.modes?.availableModes.some((m) => m.id === last.agent)) {
+              r.modes!.currentModeId = last.agent
               this.sessionManager.setMode(id, last.agent)
             }
             return r
