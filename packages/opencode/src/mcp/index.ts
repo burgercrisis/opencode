@@ -476,7 +476,7 @@ export namespace MCP {
     const config = cfg.mcp ?? {}
 
     return Object.fromEntries(
-      Object.entries(config).reduce((acc: Array<[string, Status]>, [key, mcp]) => {
+      Object.entries(config).reduce((acc: Array<[string, Status]>, [key, mcp]: [string, any]) => {
         if (!isMcpConfigured(mcp)) return acc
         const status = s.status[key] ?? ({ status: "disabled" } as Status)
         acc.push([key, status])
