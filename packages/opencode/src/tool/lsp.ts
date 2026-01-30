@@ -48,60 +48,31 @@ export const LspTool = Tool.define("lsp", {
     const relPath = path.relative(Instance.worktree, file)
     const title = `${args.operation} ${relPath}:${args.line}:${args.character}`
 
-    const exists = await Bun.file(file).exists()
-    if (!exists) {
-      throw new Error(`File not found: ${file}`)
-    }
-
-    const available = await LSP.hasClients(file)
-    if (!available) {
-      throw new Error("No LSP server available for this file type.")
-    }
+    !(await Bun.file(file).exists()) && (() => { throw new Error(`File not found: ${file}`) })()
+    !(await LSP.hasClients(file)) && (() => { throw new Error("No LSP server available for this file type.") })()
 
     await LSP.touchFile(file, true)
 
-    const result: unknown[] = await (async () => {
-      switch (args.operation) {
-        case "goToDefinition":
-          return LSP.definition(position)
-        case "findReferences":
-          return LSP.references(position)
-        case "hover":
-          return LSP.hover(position)
-        case "documentSymbol":
-          return LSP.documentSymbol(uri)
-        case "workspaceSymbol":
-          return LSP.workspaceSymbol("")
-        case "goToImplementation":
-          return LSP.implementation(position)
-        case "prepareCallHierarchy":
-          return LSP.prepareCallHierarchy(position)
-        case "incomingCalls":
-          return LSP.incomingCalls(position)
-        case "outgoingCalls":
-          return LSP.outgoingCalls(position)
-        case "diagnostics": {
-          const all = await LSP.diagnostics()
-          const fileDiagnostics = all[file] || []
-          return fileDiagnostics
-        }
-      }
-    })()
-
-    const output = (() => {
-      if (args.operation === "diagnostics") {
-        const arr = result as any[]
-        if (arr.length === 0) return "No diagnostics found for this file."
-        return arr.map((d: any) => LSP.Diagnostic.pretty(d)).join("\n")
-      }
-      if (result.length === 0) return `No results found for ${args.operation}`
-      return JSON.stringify(result, null, 2)
-    })()
+    const result = await (args.operation === "diagnostics"
+      ? LSP.diagnostics().then((all) => all[file] || [])
+      : args.operation === "workspaceSymbol"
+        ? LSP.workspaceSymbol("")
+        : args.operation === "documentSymbol"
+          ? LSP.documentSymbol(uri)
+          : LSP[args.operation === "goToDefinition" ? "definition" :
+                args.operation === "findReferences" ? "references" :
+                args.operation === "hover" ? "hover" :
+                args.operation === "goToImplementation" ? "implementation" :
+                args.operation === "prepareCallHierarchy" ? "prepareCallHierarchy" :
+                args.operation === "incomingCalls" ? "incomingCalls" :
+                "outgoingCalls"](position))
 
     return {
       title,
       metadata: { result },
-      output,
+      output: args.operation === "diagnostics"
+        ? (result.length === 0 ? "No diagnostics found for this file." : result.map(LSP.Diagnostic.pretty).join("\n"))
+        : (result.length === 0 ? `No results found for ${args.operation}` : JSON.stringify(result, null, 2)),
     }
   },
 })
