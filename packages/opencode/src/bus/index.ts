@@ -25,16 +25,13 @@ export namespace Bus {
     },
     async (entry) => {
       const wildcard = entry.subscriptions.get("*")
-      if (!wildcard) return
       const event = {
         type: InstanceDisposed.type,
         properties: {
           directory: Instance.directory,
         },
       }
-      for (const sub of [...wildcard]) {
-        sub(event)
-      }
+      return wildcard?.forEach((sub) => sub(event))
     },
   )
 
@@ -49,13 +46,12 @@ export namespace Bus {
     log.info("publishing", {
       type: def.type,
     })
-    const pending = []
-    for (const key of [def.type, "*"]) {
+
+    const pending = [def.type, "*"].reduce((acc, key) => {
       const match = state().subscriptions.get(key)
-      for (const sub of match ?? []) {
-        pending.push(sub(payload))
-      }
-    }
+      return acc.concat(match?.map((sub) => sub(payload)) ?? [])
+    }, [] as any[])
+
     GlobalBus.emit("event", {
       directory: Instance.directory,
       payload,
@@ -78,7 +74,8 @@ export namespace Bus {
     }) => "done" | undefined,
   ) {
     const unsub = subscribe(def, (event) => {
-      if (callback(event)) unsub()
+      const result = callback(event)
+      return result === "done" ? unsub() : undefined
     })
   }
 
@@ -89,17 +86,14 @@ export namespace Bus {
   function raw(type: string, callback: (event: any) => void) {
     log.info("subscribing", { type })
     const subscriptions = state().subscriptions
-    let match = subscriptions.get(type) ?? []
-    match.push(callback)
-    subscriptions.set(type, match)
+    const match = subscriptions.get(type) ?? []
+    subscriptions.set(type, [...match, callback])
 
     return () => {
       log.info("unsubscribing", { type })
-      const match = subscriptions.get(type)
-      if (!match) return
-      const index = match.indexOf(callback)
-      if (index === -1) return
-      match.splice(index, 1)
+      const current = subscriptions.get(type)
+      const filtered = current?.filter((cb) => cb !== callback)
+      return filtered && subscriptions.set(type, filtered)
     }
   }
 }
