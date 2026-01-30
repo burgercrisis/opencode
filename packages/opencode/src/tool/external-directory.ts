@@ -10,24 +10,23 @@ type Options = {
 }
 
 export async function assertExternalDirectory(ctx: Tool.Context, target?: string, options?: Options) {
-  if (!target) return
+  const nativeTarget = target ? Filesystem.nativePath(target) : undefined
 
-  if (options?.bypass) return
+  return !nativeTarget || options?.bypass || Instance.containsPath(nativeTarget)
+    ? undefined
+    : (async () => {
+        const kind = options?.kind ?? "file"
+        const parentDir = kind === "directory" ? nativeTarget : Filesystem.dirname(nativeTarget)
+        const glob = Filesystem.join(parentDir, "*")
 
-  target = Filesystem.nativePath(target)
-  if (Instance.containsPath(target)) return
-
-  const kind = options?.kind ?? "file"
-  const parentDir = kind === "directory" ? target : Filesystem.dirname(target)
-  const glob = Filesystem.join(parentDir, "*")
-
-  await ctx.ask({
-    permission: "external_directory",
-    patterns: [glob],
-    always: [glob],
-    metadata: {
-      filepath: target,
-      parentDir,
-    },
-  })
+        await ctx.ask({
+          permission: "external_directory",
+          patterns: [glob],
+          always: [glob],
+          metadata: {
+            filepath: nativeTarget,
+            parentDir,
+          },
+        })
+      })()
 }
