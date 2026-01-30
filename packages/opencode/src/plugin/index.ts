@@ -27,7 +27,6 @@ export namespace Plugin {
       fetch: async (...args) => Server.App().fetch(...args),
     })
     const config = await Config.get()
-    const hooks: Hooks[] = []
     const input: PluginInput = {
       client,
       project: Instance.project,
@@ -37,27 +36,38 @@ export namespace Plugin {
       $: Bun.$,
     }
 
-    for (const plugin of INTERNAL_PLUGINS) {
-      log.info("loading internal plugin", { name: plugin.name })
-      const init = await plugin(input)
-      hooks.push(init)
-    }
+    const internalHooks = await Promise.all(
+      INTERNAL_PLUGINS.map(async (plugin) => {
+        log.info("loading internal plugin", { name: plugin.name })
+        return await plugin(input)
+      }),
+    )
 
-    const plugins = [...(config.plugin ?? [])]
-    if (!Flag.OPENCODE_DISABLE_DEFAULT_PLUGINS) {
-      plugins.push(...BUILTIN)
-    }
+    const initialPlugins = [...(config.plugin ?? [])]
+    const pluginList = Flag.OPENCODE_DISABLE_DEFAULT_PLUGINS
+      ? initialPlugins
+      : [...initialPlugins, ...BUILTIN]
 
-    for (let plugin of plugins) {
+    const externalHooks = await pluginList.reduce(async (accPromise, rawPlugin) => {
+      const acc = await accPromise
+
       // ignore old codex plugin since it is supported first party now
-      if (plugin.includes("opencode-openai-codex-auth") || plugin.includes("opencode-copilot-auth")) continue
-      log.info("loading plugin", { path: plugin })
-      if (!plugin.startsWith("file://")) {
-        const lastAtIndex = plugin.lastIndexOf("@")
-        const pkg = lastAtIndex > 0 ? plugin.substring(0, lastAtIndex) : plugin
-        const version = lastAtIndex > 0 ? plugin.substring(lastAtIndex + 1) : "latest"
+      const isDeprecated =
+        rawPlugin.includes("opencode-openai-codex-auth") ||
+        rawPlugin.includes("opencode-copilot-auth")
+      if (isDeprecated) return acc
+
+      log.info("loading plugin", { path: rawPlugin })
+
+      const plugin = await (async () => {
+        if (rawPlugin.startsWith("file://")) return rawPlugin
+
+        const lastAtIndex = rawPlugin.lastIndexOf("@")
+        const pkg = lastAtIndex > 0 ? rawPlugin.substring(0, lastAtIndex) : rawPlugin
+        const version = lastAtIndex > 0 ? rawPlugin.substring(lastAtIndex + 1) : "latest"
         const builtin = BUILTIN.some((x) => x.startsWith(pkg + "@"))
-        plugin = await BunProc.install(pkg, version).catch((err) => {
+
+        return await BunProc.install(pkg, version).catch((err) => {
           if (!builtin) throw err
 
           const message = err instanceof Error ? err.message : String(err)
@@ -74,23 +84,32 @@ export namespace Plugin {
 
           return ""
         })
-        if (!plugin) continue
-      }
-      const mod = await import(plugin)
-      // Prevent duplicate initialization when plugins export the same function
-      // as both a named export and default export (e.g., `export const X` and `export default X`).
-      // Object.entries(mod) would return both entries pointing to the same function reference.
-      const seen = new Set<PluginInstance>()
-      for (const [_name, fn] of Object.entries<PluginInstance>(mod)) {
-        if (seen.has(fn)) continue
-        seen.add(fn)
-        const init = await fn(input)
-        hooks.push(init)
-      }
-    }
+      })()
+
+      return !plugin
+        ? acc
+        : await (async () => {
+            const mod = await import(plugin)
+            // Prevent duplicate initialization when plugins export the same function
+            // as both a named export and default export (e.g., `export const X` and `export default X`).
+            const pluginInits = await Object.entries<PluginInstance>(mod).reduce(
+              async (innerAccPromise, [_name, fn]) => {
+                const innerAcc = await innerAccPromise
+                return innerAcc.seen.has(fn)
+                  ? innerAcc
+                  : {
+                      seen: new Set([...innerAcc.seen, fn]),
+                      hooks: [...innerAcc.hooks, await fn(input)],
+                    }
+              },
+              Promise.resolve({ seen: new Set<PluginInstance>(), hooks: [] as Hooks[] }),
+            )
+            return [...acc, ...pluginInits.hooks]
+          })()
+    }, Promise.resolve([] as Hooks[]))
 
     return {
-      hooks,
+      hooks: [...internalHooks, ...externalHooks],
       input,
     }
   })
