@@ -108,7 +108,7 @@ export const TaskTool = Tool.define("task", async (ctx) => {
         if (evt.properties.part.sessionID !== session.id) return
         if (evt.properties.part.messageID === messageID) return
         if (evt.properties.part.type !== "tool") return
-        const part = evt.properties.part
+        const part = evt.properties.part as MessageV2.ToolPart
         parts[part.id] = {
           id: part.id,
           tool: part.tool,
