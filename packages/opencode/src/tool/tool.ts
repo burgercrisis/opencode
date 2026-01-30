@@ -53,35 +53,36 @@ export namespace Tool {
       init: async (initCtx) => {
         const toolInfo = init instanceof Function ? await init(initCtx) : init
         const execute = toolInfo.execute
-        toolInfo.execute = async (args, ctx) => {
-          try {
-            toolInfo.parameters.parse(args)
-          } catch (error) {
-            if (error instanceof z.ZodError && toolInfo.formatValidationError) {
-              throw new Error(toolInfo.formatValidationError(error), { cause: error })
-            }
-            throw new Error(
-              `The ${id} tool was called with invalid arguments: ${error}.\nPlease rewrite the input so it satisfies the expected schema.`,
-              { cause: error },
-            )
-          }
-          const result = await execute(args, ctx)
-          // skip truncation for tools that handle it themselves
-          if (result.metadata.truncated !== undefined) {
-            return result
-          }
-          const truncated = await Truncate.output(result.output, {}, initCtx?.agent)
-          return {
-            ...result,
-            output: truncated.content,
-            metadata: {
-              ...result.metadata,
-              truncated: truncated.truncated,
-              ...(truncated.truncated && { outputPath: truncated.outputPath }),
-            },
-          }
+        return {
+          ...toolInfo,
+          execute: async (args, ctx) => {
+            const parsed = toolInfo.parameters.safeParse(args)
+            const validArgs = parsed.success
+              ? parsed.data
+              : (() => {
+                  const error = parsed.error
+                  throw new Error(
+                    toolInfo.formatValidationError && error instanceof z.ZodError
+                      ? toolInfo.formatValidationError(error)
+                      : `The ${id} tool was called with invalid arguments: ${error}.\nPlease rewrite the input so it satisfies the expected schema.`,
+                    { cause: error },
+                  )
+                })()
+
+            const result = await execute(validArgs, ctx)
+            return result.metadata.truncated !== undefined
+              ? result
+              : await Truncate.output(result.output, {}, initCtx?.agent).then((truncated) => ({
+                  ...result,
+                  output: truncated.content,
+                  metadata: {
+                    ...result.metadata,
+                    truncated: truncated.truncated,
+                    ...(truncated.truncated && { outputPath: truncated.outputPath }),
+                  },
+                }))
+          },
         }
-        return toolInfo
       },
     }
   }
