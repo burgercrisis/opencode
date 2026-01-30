@@ -916,14 +916,14 @@ export const GithubRunCommand = cmd({
         })
 
         // result should always be assistant just satisfying type checker
-        if (result.info.role === "assistant" && result.info.error) {
-          console.error("Agent error:", result.info.error)
+        if ((result as any).info.role === "assistant" && (result as any).info.error) {
+          console.error("Agent error:", (result as any).info.error)
           throw new Error(
-            `${result.info.error.name}: ${"message" in result.info.error ? result.info.error.message : ""}`,
+            `${(result as any).info.error.name}: ${"message" in (result as any).info.error ? (result as any).info.error.message : ""}`,
           )
         }
 
-        const text = extractResponseText(result.parts)
+        const text = extractResponseText((result as any).parts)
         if (text) return text
 
         // No text part (tool-only or reasoning-only) - ask agent to summarize
