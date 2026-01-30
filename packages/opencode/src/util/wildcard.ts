@@ -16,12 +16,12 @@ export namespace Wildcard {
 
   export function all(input: string, patterns: Record<string, any>) {
     const sorted = pipe(patterns, Object.entries, sortBy([([key]) => key.length, "asc"], [([key]) => key, "asc"]))
-    return sorted.reduce((acc, [pattern, value]) => match(input, pattern) ? value : acc, undefined)
+    return sorted.reduce<any>((acc, [pattern, value]) => (match(input, pattern) ? value : acc), undefined)
   }
 
   export function allStructured(input: { head: string; tail: string[] }, patterns: Record<string, any>) {
     const sorted = pipe(patterns, Object.entries, sortBy([([key]) => key.length, "asc"], [([key]) => key, "asc"]))
-    return sorted.reduce((acc, [pattern, value]) => {
+    return sorted.reduce<any>((acc, [pattern, value]) => {
       const parts = pattern.split(/\s+/)
       if (!match(input.head, parts[0])) return acc
       if (parts.length === 1 || matchSequence(input.tail, parts.slice(1))) return value
