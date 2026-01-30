@@ -22,9 +22,7 @@ export const WriteTool = Tool.define("write", {
     filePath: z.string().describe("The absolute path to the file to write (must be absolute, not relative)"),
   }),
   async execute(params, ctx) {
-    // Use normalized paths for cross-platform consistency
-    const rawPath = path.isAbsolute(params.filePath) ? params.filePath : path.join(Instance.directory, params.filePath)
-    const filepath = Filesystem.normalizeNativePath(rawPath)
+    const filepath = Filesystem.normalizeNativePath(path.isAbsolute(params.filePath) ? params.filePath : path.join(Instance.directory, params.filePath))
     await assertExternalDirectory(ctx, filepath)
 
     const file = Bun.file(filepath)
@@ -49,36 +47,34 @@ export const WriteTool = Tool.define("write", {
     })
     FileTime.read(ctx.sessionID, filepath)
 
-    const output = await LSP.touchFile(filepath, true).then(() => LSP.diagnostics()).then((diagnostics) => {
-      const normalizedFilepath = Filesystem.normalizePath(filepath)
-      const diagnosticOutput = Object.entries(diagnostics).reduce(
-        (acc, [file, issues]) => {
-          const errors = issues.filter((item) => item.severity === 1)
-          const limited = errors.slice(0, MAX_DIAGNOSTICS_PER_FILE)
-          const suffix = errors.length > MAX_DIAGNOSTICS_PER_FILE ? `\n... and ${errors.length - MAX_DIAGNOSTICS_PER_FILE} more` : ""
-          const formatted = `<diagnostics file="${file}">\n${limited.map(LSP.Diagnostic.pretty).join("\n")}${suffix}\n</diagnostics>`
+    const diagnostics = await LSP.touchFile(filepath, true).then(() => LSP.diagnostics())
+    const normalizedFilepath = Filesystem.normalizePath(filepath)
+    const diagnosticOutput = Object.entries(diagnostics).reduce(
+      (acc, [file, issues]) => {
+        const errors = issues.filter((item) => item.severity === 1)
+        const limited = errors.slice(0, MAX_DIAGNOSTICS_PER_FILE)
+        const suffix = errors.length > MAX_DIAGNOSTICS_PER_FILE ? `\n... and ${errors.length - MAX_DIAGNOSTICS_PER_FILE} more` : ""
+        const formatted = `<diagnostics file="${file}">\n${limited.map(LSP.Diagnostic.pretty).join("\n")}${suffix}\n</diagnostics>`
 
-          return errors.length === 0 ? acc : (
-            file === normalizedFilepath ? { ...acc, current: formatted } : (
-              acc.count >= MAX_PROJECT_DIAGNOSTICS_FILES ? acc : {
-                ...acc,
-                others: [...acc.others, formatted],
-                count: acc.count + 1,
-              }
-            )
+        return errors.length === 0 ? acc : (
+          file === normalizedFilepath ? { ...acc, current: formatted } : (
+            acc.count >= MAX_PROJECT_DIAGNOSTICS_FILES ? acc : {
+              ...acc,
+              others: [...acc.others, formatted],
+              count: acc.count + 1,
+            }
           )
-        },
-        { current: "", others: [] as string[], count: 0 }
-      )
+        )
+      },
+      { current: "", others: [] as string[], count: 0 }
+    )
 
-      return [
-        "Wrote file successfully.",
-        diagnosticOutput.current ? `\n\nLSP errors detected in this file, please fix:\n${diagnosticOutput.current}` : "",
-        diagnosticOutput.others.length > 0 ? `\n\nLSP errors detected in other files:\n${diagnosticOutput.others.join("\n\n")}` : "",
-      ].filter(Boolean).join("")
-    })
+    const output = [
+      "Wrote file successfully.",
+      diagnosticOutput.current ? `\n\nLSP errors detected in this file, please fix:\n${diagnosticOutput.current}` : "",
+      diagnosticOutput.others.length > 0 ? `\n\nLSP errors detected in other files:\n${diagnosticOutput.others.join("\n\n")}` : "",
+    ].filter(Boolean).join("")
 
-    const diagnostics = await LSP.diagnostics()
     return {
       title: path.relative(Instance.worktree, filepath),
       metadata: {
