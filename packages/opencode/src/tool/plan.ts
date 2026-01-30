@@ -11,7 +11,7 @@ import EXIT_DESCRIPTION from "./plan-exit.txt"
 import ENTER_DESCRIPTION from "./plan-enter.txt"
 
 async function getLastModel(sessionID: string) {
-  const findFirstModel = async (iterator: AsyncIterator<MessageV2.Message>): Promise<string> => {
+  const findFirstModel = async (iterator: AsyncIterator<MessageV2.WithParts>): Promise<any> => {
     const { done, value } = await iterator.next()
     return done
       ? Provider.defaultModel()
