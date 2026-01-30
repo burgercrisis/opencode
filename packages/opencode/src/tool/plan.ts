@@ -27,7 +27,7 @@ export const PlanExitTool = Tool.define("plan_exit", {
   parameters: z.object({}),
   async execute(_params, ctx) {
     const session = await Session.get(ctx.sessionID)
-    const plan = path.relative(Instance.worktree, Session.plan(session))
+    const plan = path.relative(Instance.worktree, Session.plan(session as any))
     const answers = await Question.ask({
       sessionID: ctx.sessionID,
       questions: [
@@ -54,7 +54,7 @@ export const PlanExitTool = Tool.define("plan_exit", {
             role: "user",
             time: { created: Date.now() },
             agent: "build",
-            model,
+            model: model as any,
           }
           await Session.updateMessage(userMsg)
           await Session.updatePart({
@@ -80,7 +80,7 @@ export const PlanEnterTool = Tool.define("plan_enter", {
   parameters: z.object({}),
   async execute(_params, ctx) {
     const session = await Session.get(ctx.sessionID)
-    const plan = path.relative(Instance.worktree, Session.plan(session))
+    const plan = path.relative(Instance.worktree, Session.plan(session as any))
 
     const answers = await Question.ask({
       sessionID: ctx.sessionID,
@@ -108,7 +108,7 @@ export const PlanEnterTool = Tool.define("plan_enter", {
             role: "user",
             time: { created: Date.now() },
             agent: "plan",
-            model,
+            model: model as any,
           }
           await Session.updateMessage(userMsg)
           await Session.updatePart({
