@@ -92,6 +92,7 @@ export const dict = {
   "dialog.provider.group.other": "Other",
   "dialog.provider.tag.recommended": "Recommended",
   "dialog.provider.anthropic.note": "Connect with Claude Pro/Max or API key",
+  "dialog.provider.openai.note": "Connect with OpenAI API key",
 
   "dialog.model.select.title": "Select model",
   "dialog.model.search.placeholder": "Search models",
