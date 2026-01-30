@@ -4,7 +4,7 @@ import { marked } from "marked"
 import markedKatex from "marked-katex-extension"
 import markedShiki from "marked-shiki"
 import { bundledLanguages, type BundledLanguage } from "shiki"
-import { MarkedContext, type NativeMarkdownParser } from "@opencode-ai/ui/context/marked"
+import { MarkedContext, type NativeMarkdownParser, type MarkedContextValue } from "@opencode-ai/ui/context/marked"
 
 function init(highlighter: ReturnType<typeof useShiki>) {
   return marked.use(
@@ -41,10 +41,14 @@ export function MarkedProvider(props: ParentProps<{ nativeParser?: NativeMarkdow
   const highlighter = useShiki()
   const value = init(highlighter)
 
+  const contextValue: MarkedContextValue = {
+    parse: (markdown: string) => value.parse(markdown) as Promise<string>,
+  }
+
   if (props.nativeParser) {
     const nativeParser = props.nativeParser
-    const decoratedValue = {
-      ...value,
+    const decoratedValue: MarkedContextValue = {
+      ...contextValue,
       async parse(markdown: string): Promise<string> {
         const html = await nativeParser(markdown)
         // Highlighting and math rendering are handled by the native parser or post-processing
@@ -54,7 +58,7 @@ export function MarkedProvider(props: ParentProps<{ nativeParser?: NativeMarkdow
     return <MarkedContext.Provider value={decoratedValue}>{props.children}</MarkedContext.Provider>
   }
 
-  return <MarkedContext.Provider value={value}>{props.children}</MarkedContext.Provider>
+  return <MarkedContext.Provider value={contextValue}>{props.children}</MarkedContext.Provider>
 }
 
 

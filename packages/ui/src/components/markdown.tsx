@@ -9,6 +9,7 @@ import { isServer } from "solid-js/web"
 type Entry = {
   hash: string
   html: string
+  enhanced: boolean
 }
 
 const max = 200
