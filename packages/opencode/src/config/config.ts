@@ -177,9 +177,11 @@ export namespace Config {
       return {
         ...withDirConfig,
         command: mergeDeep(withDirConfig.command ?? {}, await loadCommand(dir)),
-        agent: mergeDeep(withDirConfig.agent ?? {}, await loadAgent(dir)),
-        // Merge modes into agent for backwards compatibility
-        agent: mergeDeep(withDirConfig.agent ?? {}, await loadMode(dir)),
+        // Merge agents and modes into agent for backwards compatibility
+        agent: mergeDeep(
+          withDirConfig.agent ?? {},
+          mergeDeep(await loadAgent(dir), await loadMode(dir)),
+        ),
         plugin: [...(withDirConfig.plugin ?? []), ...(await loadPlugin(dir))],
       } as any
     }, Promise.resolve(base as any))
