@@ -336,7 +336,7 @@ export namespace Session {
   export async function* list() {
     const project = Instance.project
     const items = await Storage.list(["session", project.id])
-    const process = async function* (remaining: string[]): AsyncGenerator<Info> {
+    const process = async function* (remaining: string[][]): AsyncGenerator<Info> {
       const item = remaining[0]
       if (!item) return
       yield Storage.read<Info>(item)
@@ -348,7 +348,7 @@ export namespace Session {
   export const children = fn(Identifier.schema("session"), async (parentID) => {
     const project = Instance.project
     const items = await Storage.list(["session", project.id])
-    const process = async (remaining: string[], acc: Session.Info[]): Promise<Session.Info[]> => {
+    const process = async (remaining: string[][], acc: Session.Info[]): Promise<Session.Info[]> => {
       const item = remaining[0]
       if (!item) return acc
       const session = await Storage.read<Info>(item)
@@ -370,13 +370,13 @@ export namespace Session {
         return removeChildren(remaining.slice(1))
       }
 
-      const removeMessages = async (messages: string[]): Promise<void> => {
+      const removeMessages = async (messages: string[][]): Promise<void> => {
         const msgKey = messages[0]
         if (!msgKey) return
-        const msgID = msgKey.split("/").at(-1)!
+        const msgID = msgKey[msgKey.length - 1]
         const parts = await Storage.list(["part", msgID])
 
-        const removeParts = async (remainingParts: string[]): Promise<void> => {
+        const removeParts = async (remainingParts: string[][]): Promise<void> => {
           const partKey = remainingParts[0]
           if (!partKey) return
           await Storage.remove(partKey)
