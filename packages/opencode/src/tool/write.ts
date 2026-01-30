@@ -30,7 +30,7 @@ export const WriteTool = Tool.define("write", {
     const file = Bun.file(filepath)
     const exists = await file.exists()
     const contentOld = exists ? await file.text() : ""
-    if (exists) await FileTime.assert(ctx.sessionID, filepath)
+    exists && await FileTime.assert(ctx.sessionID, filepath)
 
     const diff = trimDiff(createTwoFilesPatch(filepath, filepath, contentOld, params.content))
     await ctx.ask({
@@ -49,26 +49,36 @@ export const WriteTool = Tool.define("write", {
     })
     FileTime.read(ctx.sessionID, filepath)
 
-    let output = "Wrote file successfully."
-    await LSP.touchFile(filepath, true)
-    const diagnostics = await LSP.diagnostics()
-    const normalizedFilepath = Filesystem.normalizePath(filepath)
-    let projectDiagnosticsCount = 0
-    for (const [file, issues] of Object.entries(diagnostics)) {
-      const errors = issues.filter((item) => item.severity === 1)
-      if (errors.length === 0) continue
-      const limited = errors.slice(0, MAX_DIAGNOSTICS_PER_FILE)
-      const suffix =
-        errors.length > MAX_DIAGNOSTICS_PER_FILE ? `\n... and ${errors.length - MAX_DIAGNOSTICS_PER_FILE} more` : ""
-      if (file === normalizedFilepath) {
-        output += `\n\nLSP errors detected in this file, please fix:\n<diagnostics file="${filepath}">\n${limited.map(LSP.Diagnostic.pretty).join("\n")}${suffix}\n</diagnostics>`
-        continue
-      }
-      if (projectDiagnosticsCount >= MAX_PROJECT_DIAGNOSTICS_FILES) continue
-      projectDiagnosticsCount++
-      output += `\n\nLSP errors detected in other files:\n<diagnostics file="${file}">\n${limited.map(LSP.Diagnostic.pretty).join("\n")}${suffix}\n</diagnostics>`
-    }
+    const output = await LSP.touchFile(filepath, true).then(() => LSP.diagnostics()).then((diagnostics) => {
+      const normalizedFilepath = Filesystem.normalizePath(filepath)
+      const diagnosticOutput = Object.entries(diagnostics).reduce(
+        (acc, [file, issues]) => {
+          const errors = issues.filter((item) => item.severity === 1)
+          const limited = errors.slice(0, MAX_DIAGNOSTICS_PER_FILE)
+          const suffix = errors.length > MAX_DIAGNOSTICS_PER_FILE ? `\n... and ${errors.length - MAX_DIAGNOSTICS_PER_FILE} more` : ""
+          const formatted = `<diagnostics file="${file}">\n${limited.map(LSP.Diagnostic.pretty).join("\n")}${suffix}\n</diagnostics>`
 
+          return errors.length === 0 ? acc : (
+            file === normalizedFilepath ? { ...acc, current: formatted } : (
+              acc.count >= MAX_PROJECT_DIAGNOSTICS_FILES ? acc : {
+                ...acc,
+                others: [...acc.others, formatted],
+                count: acc.count + 1,
+              }
+            )
+          )
+        },
+        { current: "", others: [] as string[], count: 0 }
+      )
+
+      return [
+        "Wrote file successfully.",
+        diagnosticOutput.current ? `\n\nLSP errors detected in this file, please fix:\n${diagnosticOutput.current}` : "",
+        diagnosticOutput.others.length > 0 ? `\n\nLSP errors detected in other files:\n${diagnosticOutput.others.join("\n\n")}` : "",
+      ].filter(Boolean).join("")
+    })
+
+    const diagnostics = await LSP.diagnostics()
     return {
       title: path.relative(Instance.worktree, filepath),
       metadata: {
