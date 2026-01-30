@@ -154,7 +154,7 @@ export namespace Config {
     let result = await unique(directories).reduce(async (accPromise, dir) => {
       const acc = await accPromise
 
-      const withDirConfig =
+      const withDirConfig: any =
         dir.endsWith(".opencode") || dir === Flag.OPENCODE_CONFIG_DIR
           ? await ["opencode.jsonc", "opencode.json"].reduce(async (innerAccPromise, file) => {
               const innerAcc = await innerAccPromise
@@ -181,8 +181,8 @@ export namespace Config {
         // Merge modes into agent for backwards compatibility
         agent: mergeDeep(withDirConfig.agent ?? {}, await loadMode(dir)),
         plugin: [...(withDirConfig.plugin ?? []), ...(await loadPlugin(dir))],
-      }
-    }, Promise.resolve(base))
+      } as any
+    }, Promise.resolve(base as any))
 
     // Load managed config files last (highest priority) - enterprise admin-controlled
     // Kept separate from directories array to avoid write operations when installing plugins
