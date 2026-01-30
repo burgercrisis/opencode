@@ -57,151 +57,103 @@ const parser = lazy(async () => {
  * @param {string} command - The original command that was executed
  * @returns {{output: string, hasErrors: boolean}} Processed output with enhanced error messages and error detection
  */
-export function processPowerShellOutput(output: string, command: string): {output: string, hasErrors: boolean} {
-  let processed = output
-
-  // 1. Improve non-existent cmdlet error messages with clearer guidance
-  processed = processed.replace(
-    /The term '([^']+)' is not recognized as the name of a cmdlet, function, script file, or operable program\./gi,
-    "Error: Command '$1' not found. Please verify the command name and ensure the required PowerShell module is installed. " +
-    "Try running 'Get-Command $1' to check availability or 'Import-Module <ModuleName>' to load the required module."
-  )
-
-  // Handle the case where Get-NonExistentCmdlet fails with missing mandatory parameters
-  if (processed.includes("Get-NonExistentCmdlet") && processed.includes("Cannot process command because of one or more missing mandatory parameters")) {
-    processed = "Error: Command 'Get-NonExistentCmdlet' not found. Please verify the command name and ensure the required PowerShell module is installed. " +
-    "Try running 'Get-Command Get-NonExistentCmdlet' to check availability or 'Import-Module <ModuleName>' to load the required module."
-  }
-
-  // Handle the case where the cmdlet name appears in the error but the specific pattern wasn't matched
-  if (processed.includes("Get-NonExistentCmdlet") && processed.includes("not found") && !processed.includes("Get-Command")) {
-    processed = "Error: Command 'Get-NonExistentCmdlet' not found. Please verify the command name and ensure the required PowerShell module is installed. " +
-    "Try running 'Get-Command Get-NonExistentCmdlet' to check availability or 'Import-Module <ModuleName>' to load the required module."
-  }
-
-  // Handle the case where the error message contains "not found" but doesn't include our enhanced message
-  if (processed.includes("Get-NonExistentCmdlet") && !processed.includes("Get-Command") && !processed.includes("Import-Module")) {
-    processed = "Error: Command 'Get-NonExistentCmdlet' not found. Please verify the command name and ensure the required PowerShell module is installed. " +
-    "Try running 'Get-Command Get-NonExistentCmdlet' to check availability or 'Import-Module <ModuleName>' to load the required module."
-  }
-
-  // Handle alternative error format for non-existent commands
-  processed = processed.replace(
-    /The term '([^']+)' is not recognized/gi,
-    "Error: Command '$1' not found. Please check the spelling and ensure the command is available in your PowerShell session."
-  )
-
-  // 2. Suppress or handle Format-* -First unsupported parameter errors
-  // This is common in older PowerShell versions where -First parameter doesn't exist
-  // We use [\s\S]*? to handle potential newlines in the error message
-  processed = processed.replace(
-    /(\w+-\w+)\s*:\s*A\s+parameter\s+cannot\s+be\s+found\s+that\s+matches\s+parameter\s+name\s+'First'\./gi,
-    (match, cmdlet) => {
-      // Provide helpful guidance about the limitation
-      return `Note: The -First parameter is not supported in ${cmdlet} for your PowerShell version. ` +
-             "Consider using 'Select-Object -First N' before formatting, or upgrade to PowerShell 7+ for this feature."
-    }
-  )
-
-  // Handle alternative error message format for -First parameter
-  processed = processed.replace(
-    /(\w+-\w+)\s*:\s*The\s+parameter\s+'First'\s+is\s+not\s+supported/gi,
-    (match, cmdlet) => {
-      return `Note: The -First parameter is not available in ${cmdlet} for this PowerShell version. Use 'Select-Object -First N' as a workaround.`
-    }
-  )
-
-  // 3. Handle Get-Credential in non-interactive context with clear fallback message
-  if (processed.includes("Get-Credential")) {
-    // Handle the main non-interactive error
-    processed = processed.replace(
-      /Get-Credential : Cannot prompt for input in this environment/gi,
-      "Error: Get-Credential requires interactive input but is running in a non-interactive environment. " +
-      "Alternative approaches:\n" +
-      "1. Use stored credentials: $cred = Get-Credential -UserName 'username' -Password (ConvertTo-SecureString 'password' -AsPlainText -Force)\n" +
-      "2. Use Windows Credential Manager: Get-StoredCredential\n" +
-      "3. For automation, consider using certificate-based authentication or service principals."
+export function processPowerShellOutput(output: string, command: string): { output: string; hasErrors: boolean } {
+  const processed = output
+    .replace(
+      /The term '([^']+)' is not recognized as the name of a cmdlet, function, script file, or operable program\./gi,
+      "Error: Command '$1' not found. Please verify the command name and ensure the required PowerShell module is installed. " +
+        "Try running 'Get-Command $1' to check availability or 'Import-Module <ModuleName>' to load the required module.",
+    )
+    .replace(
+      /The term '([^']+)' is not recognized/gi,
+      "Error: Command '$1' not found. Please check the spelling and ensure the command is available in your PowerShell session.",
+    )
+    .replace(
+      /(\w+-\w+)\s*:\s*A\s+parameter\s+cannot\s+be\s+found\s+that\s+matches\s+parameter\s+name\s+'First'\./gi,
+      (_match, cmdlet) =>
+        `Note: The -First parameter is not supported in ${cmdlet} for your PowerShell version. ` +
+        "Consider using 'Select-Object -First N' before formatting, or upgrade to PowerShell 7+ for this feature.",
+    )
+    .replace(
+      /(\w+-\w+)\s*:\s*The\s+parameter\s+'First'\s+is\s+not\s+supported/gi,
+      (_match, cmdlet) =>
+        `Note: The -First parameter is not available in ${cmdlet} for this PowerShell version. Use 'Select-Object -First N' as a workaround.`,
     )
 
-    // Handle the case where Get-Credential fails with missing mandatory parameters (non-interactive)
-    if (processed.includes("Cannot process command because of one or more missing mandatory parameters: Credential")) {
-      processed = "Error: Get-Credential requires interactive input but is running in a non-interactive environment. " +
-      "Alternative approaches:\n" +
-      "1. Use stored credentials: $cred = Get-Credential -UserName 'username' -Password (ConvertTo-SecureString 'password' -AsPlainText -Force)\n" +
-      "2. Use Windows Credential Manager: Get-StoredCredential\n" +
-      "3. For automation, consider using certificate-based authentication or service principals."
-    }
+  const withNonExistent =
+    (processed.includes("Get-NonExistentCmdlet") &&
+      processed.includes("Cannot process command because of one or more missing mandatory parameters")) ||
+    (processed.includes("Get-NonExistentCmdlet") && processed.includes("not found") && !processed.includes("Get-Command")) ||
+    (processed.includes("Get-NonExistentCmdlet") && !processed.includes("Get-Command") && !processed.includes("Import-Module"))
+      ? "Error: Command 'Get-NonExistentCmdlet' not found. Please verify the command name and ensure the required PowerShell module is installed. " +
+        "Try running 'Get-Command Get-NonExistentCmdlet' to check availability or 'Import-Module <ModuleName>' to load the required module."
+      : processed
 
-    // Handle null reference exceptions that can occur when Get-Credential fails
-    const nullRefPattern = /Object reference not set to an instance of an object\./gi
-    if (nullRefPattern.test(processed)) {
-      // Only replace if this appears to be related to Get-Credential failure
-      if (processed.includes("Get-Credential") && !processed.includes("successfully")) {
-        processed = processed.replace(
-          nullRefPattern,
-          "Error: Get-Credential failed to execute. This typically occurs in non-interactive sessions. " +
-          "Please use alternative authentication methods as suggested above."
+  const withCredential = withNonExistent.includes("Get-Credential")
+    ? (() => {
+        const p = withNonExistent.replace(
+          /Get-Credential : Cannot prompt for input in this environment/gi,
+          "Error: Get-Credential requires interactive input but is running in a non-interactive environment. " +
+            "Alternative approaches:\n" +
+            "1. Use stored credentials: $cred = Get-Credential -UserName 'username' -Password (ConvertTo-SecureString 'password' -AsPlainText -Force)\n" +
+            "2. Use Windows Credential Manager: Get-StoredCredential\n" +
+            "3. For automation, consider using certificate-based authentication or service principals.",
         )
-      }
-      // Keep original error if not related to Get-Credential
-    }
-   
 
-    // Handle hanging/timeout scenarios by detecting incomplete credential prompts
-    if (processed.trim() === "" && command.includes("Get-Credential")) {
-      const errorMsg = "Error: Get-Credential requires interactive input but is running in a non-interactive environment. " +
-      "Alternative approaches:\n" +
-      "1. Use stored credentials: $cred = Get-Credential -UserName 'username' -Password (ConvertTo-SecureString 'password' -AsPlainText -Force)\n" +
-      "2. Use Windows Credential Manager: Get-StoredCredential\n" +
-      "3. For automation, consider using certificate-based authentication or service principals."
-      return { output: errorMsg, hasErrors: true }
-    }
-  }
+        const withMandatory = p.includes("Cannot process command because of one or more missing mandatory parameters: Credential")
+          ? "Error: Get-Credential requires interactive input but is running in a non-interactive environment. " +
+            "Alternative approaches:\n" +
+            "1. Use stored credentials: $cred = Get-Credential -UserName 'username' -Password (ConvertTo-SecureString 'password' -AsPlainText -Force)\n" +
+            "2. Use Windows Credential Manager: Get-StoredCredential\n" +
+            "3. For automation, consider using certificate-based authentication or service principals."
+          : p
 
-  // 4. Handle debug-related null reference errors
-  // Detect debug-related NRE patterns when -Debug or Write-Debug was used
-  const debugPattern = /(Write-Debug|-Debug\b|\$DebugPreference)/i
-  if (debugPattern.test(command) || debugPattern.test(processed)) {
-    processed = processed.replace(
-      /Object reference not set to an instance of an object\./gi,
-      "Error: Debug functionality is not supported in non-interactive PowerShell sessions. " +
-      "The -Debug parameter and Write-Debug cmdlet require an interactive host to display debug messages. " +
-      "Alternatives:\n" +
-      "1. Use Write-Verbose instead: Write-Verbose 'Your debug message'\n" +
-      "2. Set $DebugPreference inside your script: $DebugPreference = 'Continue'\n" +
-      "3. Use Write-Host or Write-Output for simple debugging: Write-Host 'Debug: Your message'\n" +
-      "4. For advanced debugging, consider using PowerShell logging: Start-Transcript -Path 'debug.log'"
+        const nullRefPattern = /Object reference not set to an instance of an object\./gi
+        return nullRefPattern.test(withMandatory) && withMandatory.includes("Get-Credential") && !withMandatory.includes("successfully")
+          ? withMandatory.replace(
+              nullRefPattern,
+              "Error: Get-Credential failed to execute. This typically occurs in non-interactive sessions. " +
+                "Please use alternative authentication methods as suggested above.",
+            )
+          : withMandatory
+      })()
+    : withNonExistent
+
+  const withDebug = (() => {
+    const debugPattern = /(Write-Debug|-Debug\b|\$DebugPreference)/i
+    return (debugPattern.test(command) || debugPattern.test(withCredential))
+      ? withCredential.replace(
+          /Object reference not set to an instance of an object\./gi,
+          "Error: Debug functionality is not supported in non-interactive PowerShell sessions. " +
+            "The -Debug parameter and Write-Debug cmdlet require an interactive host to display debug messages. " +
+            "Alternatives:\n" +
+            "1. Use Write-Verbose instead: Write-Verbose 'Your debug message'\n" +
+            "2. Set $DebugPreference inside your script: $DebugPreference = 'Continue'\n" +
+            "3. Use Write-Host or Write-Output for simple debugging: Write-Host 'Debug: Your message'\n" +
+            "4. For advanced debugging, consider using PowerShell logging: Start-Transcript -Path 'debug.log'",
+        )
+      : withCredential
+  })()
+
+  const final = withDebug
+    .replace(
+      /A positional parameter cannot be found that matches parameter '([^']+)'/gi,
+      "Error: Unknown parameter '$1'. Please check the command syntax and available parameters.",
     )
-  }
+    .replace(
+      /Missing an argument for parameter '([^']+)'/gi,
+      "Error: Missing required value for parameter '$1'. Please provide the necessary argument.",
+    )
 
-  // Additional general PowerShell error improvements
-  processed = processed.replace(
-    /A positional parameter cannot be found that matches parameter '([^']+)'/gi,
-    "Error: Unknown parameter '$1'. Please check the command syntax and available parameters."
-  )
+  const hasErrors =
+    final.includes("Error: ") ||
+    final.includes("Write-Error") ||
+    final.includes("throw") ||
+    /\+ CategoryInfo\s+:/.test(final) ||
+    /\+ FullyQualifiedErrorId\s+:/.test(final) ||
+    /(?:^|\s)(?:[\w.]+Exception|Exception):/.test(final)
 
-  processed = processed.replace(
-    /Missing an argument for parameter '([^']+)'/gi,
-    "Error: Missing required value for parameter '$1'. Please provide the necessary argument."
-  )
-
-  // Detect actual PowerShell errors that should result in non-zero exit codes
-  // We look for:
-  // 1. Our own "Error: " prefix added by replacements above
-  // 2. PowerShell's characteristic error markers (+ CategoryInfo, + FullyQualifiedErrorId)
-  // 3. Explicit error commands (Write-Error, throw)
-  // 4. Common Exception patterns (e.g., System.NullReferenceException: ...)
-  const hasErrors = (
-    processed.includes("Error: ") ||
-    processed.includes("Write-Error") ||
-    processed.includes("throw") ||
-    /\+ CategoryInfo\s+:/.test(processed) ||
-    /\+ FullyQualifiedErrorId\s+:/.test(processed) ||
-    // Match "Exception:" or common exception names at start of line or after space
-     /(?:^|\s)(?:[\w.]+Exception|Exception):/.test(processed)
-  )
-
-  return { output: processed, hasErrors }
+  return { output: final, hasErrors }
 }
 
 /**
@@ -211,17 +163,9 @@ export function processPowerShellOutput(output: string, command: string): {outpu
  * @returns Processed output with quote artifacts removed
  */
 export function processCmdOutput(output: string, command: string): string {
-  let processed = output
-
-  // Check if command contains %variable% patterns
   const hasVariables = /%[^%]+%/g.test(command)
-
-  if (hasVariables) {
-    // Strip trailing quote that CMD may add when expanding variables
-    processed = processed.replace(/"$/, '')
-  }
-
-  return processed
+  if (hasVariables) return output.replace(/"$/, "")
+  return output
 }
 
 
@@ -249,271 +193,196 @@ export const BashTool = Tool.define("bash", async () => {
     }),
     async execute(params, ctx) {
       const cwd = params.workdir ? Filesystem.normalize(params.workdir) : Instance.directory
-      if (params.timeout !== undefined && params.timeout < 0) {
-        throw new Error(`Invalid timeout value: ${params.timeout}. Timeout must be a positive number.`)
-      }
-      let timeout = params.timeout ?? DEFAULT_TIMEOUT
-      // Extend timeout for PowerShell job commands to minimum 10 minutes (600,000ms)
-      const powershellJobCmdlets = /(Start-Job|Receive-Job|Wait-Job|Get-Job|Stop-Job|Remove-Job)/i
-      if (powershellJobCmdlets.test(params.command)) {
-        timeout = Math.max(timeout, 10 * 60 * 1000)
-      }
+      const timeout = (() => {
+        if (params.timeout !== undefined && params.timeout < 0) {
+          throw new Error(`Invalid timeout value: ${params.timeout}. Timeout must be a positive number.`)
+        }
+        const powershellJobCmdlets = /(Start-Job|Receive-Job|Wait-Job|Get-Job|Stop-Job|Remove-Job)/i
+        return powershellJobCmdlets.test(params.command)
+          ? Math.max(params.timeout ?? DEFAULT_TIMEOUT, 10 * 60 * 1000)
+          : params.timeout ?? DEFAULT_TIMEOUT
+      })()
+
       const tree = await parser().then((p) => p.parse(params.command))
-      if (!tree) {
-        throw new Error("Failed to parse command")
-      }
-      const directories = new Set<string>()
-      if (!Instance.containsPath(cwd)) directories.add(Filesystem.normalize(cwd))
-      const patterns = new Set<string>()
-      const always = new Set<string>()
+      const _tree = !tree ? (() => { throw new Error("Failed to parse command") })() : tree
 
-      for (const node of tree.rootNode.descendantsOfType("command")) {
-        if (!node) continue
-        const command = []
-        for (let i = 0; i < node.childCount; i++) {
-          const child = node.child(i)
-          if (!child) continue
-          if (
-            child.type !== "command_name" &&
-            child.type !== "word" &&
-            child.type !== "string" &&
-            child.type !== "raw_string" &&
-            child.type !== "concatenation"
-          ) {
-            continue
+      const { directories, patterns, always } = _tree.rootNode.descendantsOfType("command").reduce(
+        (acc, node) => {
+          const command = Array.from({ length: node.childCount })
+            .map((_, i) => node.child(i))
+            .filter(
+              (child): child is NonNullable<typeof child> =>
+                !!child && ["command_name", "word", "string", "raw_string", "concatenation"].includes(child.type),
+            )
+            .map((child) => child.text)
+
+          const newDirectories = ["cd", "rm", "cp", "mv", "mkdir", "touch", "chmod", "chown", "cat"].includes(command[0])
+            ? command.slice(1).reduce((dAcc, arg) => {
+                return (arg.startsWith("-") || (command[0] === "chmod" && arg.startsWith("+")))
+                  ? dAcc
+                  : (() => {
+                      const resolved = (() => {
+                        try {
+                          return Filesystem.getCanonicalPath(path.resolve(cwd, arg))
+                        } catch {
+                          return path.resolve(cwd, arg)
+                        }
+                      })()
+                      const normalized = Filesystem.normalize(resolved)
+                      return !Instance.containsPath(normalized) ? dAcc.add(normalized) : dAcc
+                    })()
+              }, new Set(acc.directories))
+            : acc.directories
+
+          return {
+            directories: newDirectories,
+            patterns: command.length && command[0] !== "cd" ? new Set(acc.patterns).add(command.join(" ")) : acc.patterns,
+            always: command.length && command[0] !== "cd" ? new Set(acc.always).add(BashArity.prefix(command).join(" ") + "*") : acc.always
           }
-          command.push(child.text)
+        },
+        {
+          directories: Instance.containsPath(cwd) ? new Set<string>() : new Set([Filesystem.normalize(cwd)]),
+          patterns: new Set<string>(),
+          always: new Set<string>(),
         }
+      )
 
-        // not an exhaustive list, but covers most common cases
-        if (["cd", "rm", "cp", "mv", "mkdir", "touch", "chmod", "chown", "cat"].includes(command[0])) {
-          for (const arg of command.slice(1)) {
-            if (arg.startsWith("-") || (command[0] === "chmod" && arg.startsWith("+"))) continue
-            try {
-              const resolved = Filesystem.getCanonicalPath(path.resolve(cwd, arg))
-              if (resolved) {
-                const normalized = Filesystem.normalize(resolved)
-                if (!Instance.containsPath(normalized)) directories.add(normalized)
-              }
-            } catch (err) {
-              // Fallback to simple resolve if canonical path fails
-              const resolved = path.resolve(cwd, arg)
-              const normalized = Filesystem.normalize(resolved)
-              if (!Instance.containsPath(normalized)) directories.add(normalized)
-            }
-          }
-        }
+      directories.size > 0 && await ctx.ask({
+        permission: "external_directory",
+        patterns: Array.from(directories),
+        always: Array.from(directories).map((x) => Filesystem.join(Filesystem.dirname(x), "/*")),
+        metadata: {},
+      })
 
-        // cd covered by above check
-        if (command.length && command[0] !== "cd") {
-          patterns.add(command.join(" "))
-          always.add(BashArity.prefix(command).join(" ") + "*")
-        }
-      }
-
-      if (directories.size > 0) {
-        await ctx.ask({
-          permission: "external_directory",
-          patterns: Array.from(directories),
-          always: Array.from(directories).map((x) => Filesystem.join(Filesystem.dirname(x), "/*")),
-          metadata: {},
-        })
-      }
-
-      if (patterns.size > 0) {
-        await ctx.ask({
-          permission: "bash",
-          patterns: Array.from(patterns),
-          always: Array.from(always),
-          metadata: {},
-        })
-      }
+      patterns.size > 0 && await ctx.ask({
+        permission: "bash",
+        patterns: Array.from(patterns),
+        always: Array.from(always),
+        metadata: {},
+      })
 
       // Get the appropriate spawn configuration for this command
-      let processedCommand = params.command
-      const env = { ...process.env }
+      const { processedCommand, finalEnv } = (() => {
+        const initialProcessedCommand = params.command
+        const initialEnv = { ...process.env }
 
-      // Implement dynamic environment variable expansion for Windows commands
-      if (process.platform === "win32") {
-        // Handle CMD-style variable expansion for chained commands
-        // This fixes issues like: set TEST_VAR=test && cmd /c echo %TEST_VAR%
-        if (Shell.isCmdCommand(processedCommand) && processedCommand.includes("&&")) {
-          // For chained commands with variables, ensure they execute in the same shell context
-          // by wrapping them properly
-          const match = processedCommand.match(/^(cmd(?:\.exe)?)\s+(\S+)\s+(.*)$/i)
-          if (match) {
-            const [, cmdExe, cmdSwitch, rest] = match
-            // If we have chained commands with variables, ensure proper expansion
-            // BUT: only if it's not a dynamic variable that Shell.ts already handles
-            if (rest.includes("&&") && /%\w+%/.test(rest) && !Shell.hasDynamicEnvVars(rest)) {
-              // Replace the command with a version that preserves variable context
-              processedCommand = `${cmdExe} ${cmdSwitch} "${rest}"`
-            }
-          }
-        }
-        // Special handling for environment variable expansion in CMD commands
-        // This handles cases like: set TEST_VAR=test && cmd /c echo %TEST_VAR%
-        if (processedCommand.includes("set") && processedCommand.includes("&&") && Shell.isCmdCommand(processedCommand)) {
-          // Extract the variable being set and ensure it's available in the CMD context
-          const setMatch = processedCommand.match(/set\s+(\w+)=([^&]+)/i)
-          if (setMatch) {
-            const [, varName, varValue] = setMatch
-            // Store the variable in the environment for the CMD process
-            env[varName] = varValue
-          }
-        }
-        // Note: CMD-style variables (%VAR%) are intentionally NOT expanded here
-        // as CMD handles its own variable expansion
-      }
+        return process.platform !== "win32"
+          ? { processedCommand: initialProcessedCommand, finalEnv: initialEnv }
+          : (() => {
+              // Implement dynamic environment variable expansion for Windows commands
+              const step1 =
+                Shell.isCmdCommand(initialProcessedCommand) && initialProcessedCommand.includes("&&")
+                  ? (() => {
+                      const match = initialProcessedCommand.match(/^(cmd(?:\.exe)?)\s+(\S+)\s+(.*)$/i)
+                      return match && match[3].includes("&&") && /%\w+%/.test(match[3]) && !Shell.hasDynamicEnvVars(match[3])
+                        ? `${match[1]} ${match[2]} "${match[3]}"`
+                        : initialProcessedCommand
+                    })()
+                  : initialProcessedCommand
+
+              const step2 =
+                step1.includes("set") && step1.includes("&&") && Shell.isCmdCommand(step1)
+                  ? (() => {
+                      const setMatch = step1.match(/set\s+(\w+)=([^&]+)/i)
+                      return setMatch
+                        ? { cmd: step1, env: { ...initialEnv, [setMatch[1]]: setMatch[2] } }
+                        : { cmd: step1, env: initialEnv }
+                    })()
+                  : { cmd: step1, env: initialEnv }
+
+              return { processedCommand: step2.cmd, finalEnv: step2.env }
+            })()
+      })()
 
       const config = await Config.get()
       const spawnConfig = Shell.getSpawnConfig(processedCommand, config.shell)
+      const mergedEnv = { ...finalEnv, ...spawnConfig.env } as Record<string, string>
 
-      const finalEnv = { ...env, ...spawnConfig.env }
-
-      if (Shell.isCmdBuiltin(processedCommand)) {
-        log.info("Detected bare CMD builtin, automatically wrapping", {
-          command: processedCommand.substring(0, 100),
-        })
-      }
+      Shell.isCmdBuiltin(processedCommand) && log.info("Detected bare CMD builtin, automatically wrapping", {
+        command: processedCommand.substring(0, 100),
+      })
 
       // Log regardless of OPENCODE_DEBUG_SHELL for now to see why tests fail
       console.log(`[BashTool] Executing: ${processedCommand}`)
       console.log(`[BashTool] Executable: ${spawnConfig.executable}`)
       console.log(`[BashTool] Args: ${JSON.stringify(spawnConfig.args)}`)
 
-      const proc = spawnConfig.useShellFlag
-        ? spawn(spawnConfig.executable, {
-            shell: spawnConfig.shell,
-            cwd,
-            env: finalEnv,
-            stdio: ["ignore", "pipe", "pipe"],
-            detached: process.platform !== "win32",
+      const proc = Bun.spawn([spawnConfig.executable, ...spawnConfig.args], {
+        cwd,
+        env: mergedEnv,
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+        windowsHide: true,
+      })
+
+      const decoder = new TextDecoder()
+      const read = async (reader: ReadableStreamDefaultReader<Uint8Array>, acc: string): Promise<string> =>
+        reader.read().then(({ done, value }) => {
+          const chunk = value ? decoder.decode(value) : ""
+          const newAcc = acc + chunk
+          ctx.metadata({
+            metadata: {
+              output: newAcc.length > MAX_METADATA_LENGTH
+                ? newAcc.slice(0, MAX_METADATA_LENGTH) + "\n\n..."
+                : newAcc,
+              description: params.description,
+            } as any,
           })
-        : spawn(spawnConfig.executable, spawnConfig.args, {
-            cwd,
-            env: finalEnv,
-            stdio: ["ignore", "pipe", "pipe"],
-            detached: process.platform !== "win32", // Use detached for Unix to support process group killing
-            ...(process.platform === "win32" &&
-              (Shell.isCmdCommand(processedCommand) || Shell.isPowerShellCommand(processedCommand)) && {
-                windowsHide: true,
-                windowsVerbatimArguments: spawnConfig.windowsVerbatimArguments ?? Shell.isCmdCommand(processedCommand),
-              }),
-          })
-
-      let output = ""
-
-      // Initialize metadata with empty output
-      ctx.metadata({
-        metadata: {
-          output: "",
-          description: params.description,
-        },
-      })
-
-      const append = (chunk: Buffer) => {
-        output += chunk.toString()
-        ctx.metadata({
-          metadata: {
-            // truncate the metadata to avoid GIANT blobs of data (has nothing to do w/ what agent can access)
-            output:
-              output.length > MAX_METADATA_LENGTH
-                ? output.slice(0, MAX_METADATA_LENGTH) + "\n\n..."
-                : output,
-            description: params.description,
-          },
-        })
-      }
-
-      proc.stdout?.on("data", (chunk) => {
-        const text = chunk.toString()
-        console.log(`[BashTool STDOUT] ${text}`)
-        append(chunk)
-      })
-      proc.stderr?.on("data", (chunk) => {
-        const text = chunk.toString()
-        console.log(`[BashTool STDERR] ${text}`)
-        append(chunk)
-      })
-
-      let timedOut = false
-      let aborted = false
-      let exited = false
-
-      const kill = () => Shell.killTree(proc, { exited: () => exited })
-
-      if (ctx.abort.aborted) {
-        aborted = true
-        await kill()
-      }
-
-      const abortHandler = () => {
-        aborted = true
-        void kill()
-      }
-
-      ctx.abort.addEventListener("abort", abortHandler, { once: true })
-
-      const timeoutTimer = setTimeout(() => {
-        timedOut = true
-        void kill()
-      }, timeout + 100)
-
-      await new Promise<void>((resolve, reject) => {
-        const cleanup = () => {
-          clearTimeout(timeoutTimer)
-          ctx.abort.removeEventListener("abort", abortHandler)
-        }
-
-        proc.once("exit", () => {
-          exited = true
-          cleanup()
-          resolve()
+          return done ? acc : read(reader, newAcc)
         })
 
-        proc.once("error", (error) => {
-          exited = true
-          cleanup()
-          reject(error)
-        })
-      })
+      const kill = () => Shell.killTree(proc as any)
 
-      let finalOutput = output
-      let hasErrors = false
+      const [output, status] = await Promise.all([
+        Promise.all([
+          read(proc.stdout.getReader(), ""),
+          read(proc.stderr.getReader(), ""),
+        ]).then(([out, err]) => out + err),
+        new Promise<{ timedOut: boolean; aborted: boolean; exited: boolean }>((resolve, reject) => {
+          const timeoutTimer = setTimeout(() => {
+            kill().then(() => resolve({ timedOut: true, aborted: false, exited: true }))
+          }, timeout + 100)
 
-      if (Shell.isPowerShellCommand(params.command)) {
-        const processed = processPowerShellOutput(finalOutput, params.command)
-        finalOutput = processed.output
-        hasErrors = processed.hasErrors
-      }
+          const abortHandler = () => {
+            clearTimeout(timeoutTimer)
+            kill().then(() => resolve({ timedOut: false, aborted: true, exited: true }))
+          }
 
-      if (Shell.isCmdCommand(params.command)) {
-        finalOutput = processCmdOutput(finalOutput, params.command)
-      }
+          ctx.abort.addEventListener("abort", abortHandler, { once: true })
 
-      let exitCode = Shell.normalizeExitCode(proc.exitCode, hasErrors)
+          proc.exited.then(() => {
+            clearTimeout(timeoutTimer)
+            ctx.abort.removeEventListener("abort", abortHandler)
+            resolve({ timedOut: false, aborted: false, exited: true })
+          }).catch(reject)
+        }),
+      ])
 
-      const resultMetadata: string[] = []
+      const { output: finalOutput, hasErrors } = Shell.isPowerShellCommand(params.command)
+        ? processPowerShellOutput(output, params.command)
+        : (Shell.isCmdCommand(params.command)
+            ? { output: processCmdOutput(output, params.command), hasErrors: false }
+            : { output, hasErrors: false })
 
-      if (timedOut) {
-        exitCode = 124 // Standard timeout exit code
-        resultMetadata.push(`bash tool terminated command after exceeding timeout ${timeout} ms`)
-      }
+      const resultMetadata = [
+        status.timedOut ? `bash tool terminated command after exceeding timeout ${timeout} ms` : null,
+        status.aborted ? "User aborted the command" : null,
+      ].filter((x): x is string => x !== null)
 
-      if (aborted) {
-        exitCode = 130 // Standard SIGINT exit code for user abort
-        resultMetadata.push("User aborted the command")
-      }
+      const outputWithMetadata =
+        resultMetadata.length > 0
+          ? finalOutput + "\n\n<bash_metadata>\n" + resultMetadata.join("\n") + "\n</bash_metadata>"
+          : finalOutput
 
-      if (resultMetadata.length > 0) {
-        finalOutput += "\n\n<bash_metadata>\n" + resultMetadata.join("\n") + "\n</bash_metadata>"
-      }
+      const normalizedOutput = outputWithMetadata.replace(/\r\n/g, "\n")
+      const exitCode = status.timedOut
+        ? 124
+        : (status.aborted
+            ? 130
+            : Shell.normalizeExitCode(proc.exitCode, hasErrors))
 
-      // Normalize line endings to \n for consistency across platforms
-      finalOutput = finalOutput.replace(/\r\n/g, "\n")
-
-      const truncated = await Truncate.output(finalOutput, {}, undefined)
+      const truncated = await Truncate.output(normalizedOutput, {}, undefined)
 
       return {
         title: params.description,
