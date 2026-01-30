@@ -3,10 +3,12 @@ import { ErrorBoundary, Show, lazy, type ParentProps, Suspense } from "solid-js"
 import { Router, Route, Navigate } from "@solidjs/router"
 import { MetaProvider } from "@solidjs/meta"
 import { Font } from "@opencode-ai/ui/font"
+import { MarkedProvider } from "@opencode-ai/ui/context/marked"
 import { DiffComponentProvider } from "@opencode-ai/ui/context/diff"
 import { CodeComponentProvider } from "@opencode-ai/ui/context/code"
 import { I18nProvider } from "@opencode-ai/ui/context"
 import { Diff } from "@opencode-ai/ui/diff"
+import { Code } from "@opencode-ai/ui/code"
 import { ThemeProvider } from "@opencode-ai/ui/theme"
 import { GlobalSyncProvider } from "@/context/global-sync"
 import { PermissionProvider } from "@/context/permission"
@@ -23,12 +25,9 @@ import { ModelsProvider } from "@/context/models"
 import { HighlightsProvider } from "@/context/highlights"
 import { CommandProvider } from "@/context/command"
 import { LanguageProvider, useLanguage } from "@/context/language"
-import { ShikiProvider } from "@/context/shiki"
-import { MarkedProvider } from "@/context/marked"
 import { usePlatform } from "@/context/platform"
 import { Logo } from "@opencode-ai/ui/logo"
 import { DialogProvider } from "@opencode-ai/ui/context/dialog"
-import { Code } from "@/components/code"
 import Layout from "@/pages/layout"
 import DirectoryLayout from "@/pages/directory-layout"
 import { ErrorPage } from "./pages/error"
@@ -66,23 +65,21 @@ export function AppBaseProviders(props: ParentProps) {
   return (
     <MetaProvider>
       <Font />
-      <ShikiProvider>
-        <ThemeProvider>
-          <LanguageProvider>
-            <UiI18nBridge>
-              <ErrorBoundary fallback={(error) => <ErrorPage error={error} />}>
-                <DialogProvider>
-                  <MarkedProviderWithNativeParser>
-                    <DiffComponentProvider component={Diff}>
-                      <CodeComponentProvider component={Code}>{props.children}</CodeComponentProvider>
-                    </DiffComponentProvider>
-                  </MarkedProviderWithNativeParser>
-                </DialogProvider>
-              </ErrorBoundary>
-            </UiI18nBridge>
-          </LanguageProvider>
-        </ThemeProvider>
-      </ShikiProvider>
+      <ThemeProvider>
+        <LanguageProvider>
+          <UiI18nBridge>
+            <ErrorBoundary fallback={(error) => <ErrorPage error={error} />}>
+              <DialogProvider>
+                <MarkedProviderWithNativeParser>
+                  <DiffComponentProvider component={Diff}>
+                    <CodeComponentProvider component={Code}>{props.children}</CodeComponentProvider>
+                  </DiffComponentProvider>
+                </MarkedProviderWithNativeParser>
+              </DialogProvider>
+            </ErrorBoundary>
+          </UiI18nBridge>
+        </LanguageProvider>
+      </ThemeProvider>
     </MetaProvider>
   )
 }
