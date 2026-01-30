@@ -75,7 +75,7 @@ export const McpListCommand = cmd({
         const mcpServers = config.mcp ?? {}
         const statuses = await MCP.status()
 
-        const servers = Object.entries(mcpServers).filter((entry): entry is [string, McpConfigured] =>
+        const servers = Object.entries(mcpServers).filter((entry): entry is [string, any] =>
           isMcpConfigured(entry[1]),
         )
 
@@ -153,7 +153,7 @@ export const McpAuthCommand = cmd({
 
         // Get OAuth-capable servers (remote servers with oauth not explicitly disabled)
         const oauthServers = Object.entries(mcpServers).filter(
-          (entry): entry is [string, McpRemote] => isMcpRemote(entry[1]) && entry[1].oauth !== false,
+          (entry): entry is [string, any] => isMcpRemote(entry[1]) && entry[1].oauth !== false,
         )
 
         if (oauthServers.length === 0) {
@@ -290,7 +290,7 @@ export const McpAuthListCommand = cmd({
 
         // Get OAuth-capable servers
         const oauthServers = Object.entries(mcpServers).filter(
-          (entry): entry is [string, McpRemote] => isMcpRemote(entry[1]) && entry[1].oauth !== false,
+          (entry): entry is [string, any] => isMcpRemote(entry[1]) && entry[1].oauth !== false,
         )
 
         if (oauthServers.length === 0) {
