@@ -61,7 +61,7 @@ export const PatchTool = Tool.define("patch", {
 
                       return {
                         ...diffBase(update.content),
-                        type: (hunk.move_path ? "move" : "update") as const,
+                        type: hunk.move_path ? "move" : "update",
                         movePath
                       }
                     })()
@@ -107,18 +107,18 @@ export const PatchTool = Tool.define("patch", {
               }, Promise.resolve())
           }, Promise.resolve())
 
-          await changedFiles.reduce(async (acc, p) => {
+          await changedFiles.reduce(async (acc: Promise<void>, p: string) => {
             await acc
             p && await Bus.publish(FileWatcher.Event.Updated, { file: p, event: "change" })
           }, Promise.resolve())
 
-          const relativePaths = changedFiles.filter(Boolean).map((p) => Filesystem.relativePath(Instance.worktree, p))
+          const relativePaths = changedFiles.filter(Boolean).map((p: string) => Filesystem.relativePath(Instance.worktree, p))
           const summary = `${fileChanges.length} files changed`
 
           return {
             title: summary,
             metadata: { diff: totalDiff },
-            output: `Patch applied successfully. ${summary}:\n${relativePaths.map((p) => `  ${p}`).join("\n")}`,
+            output: `Patch applied successfully. ${summary}:\n${relativePaths.map((p: string) => `  ${p}`).join("\n")}`,
           }
         })()
   },
