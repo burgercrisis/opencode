@@ -180,7 +180,9 @@ export namespace MCP {
             return
           }
 
-          const result = await create(key, mcp).catch(() => undefined)
+          const result = (await create(key, mcp).catch(() => undefined)) as
+            | { mcpClient: MCPClient | undefined; status: Status }
+            | undefined
           if (!result) return
 
           status[key] = result.status
@@ -250,10 +252,10 @@ export namespace MCP {
 
   export async function add(name: string, mcp: Config.Mcp) {
     const s = await state()
-    const result = await create(name, mcp)
+    const result = (await create(name, mcp)) as { mcpClient: MCPClient | undefined; status: Status } | undefined
     if (!result) {
-      const status = {
-        status: "failed" as const,
+      const status: Status = {
+        status: "failed",
         error: "unknown error",
       }
       s.status[name] = status
@@ -287,7 +289,7 @@ export namespace MCP {
       log.info("mcp server disabled", { key })
       return {
         mcpClient: undefined,
-        status: { status: "disabled" as const },
+        status: { status: "disabled" } as Status,
       }
     }
 
@@ -363,7 +365,7 @@ export namespace MCP {
               // Check if this is a "needs registration" error
               if (lastError.message.includes("registration") || lastError.message.includes("client_id")) {
                 const status: Status = {
-                  status: "needs_client_registration" as const,
+                  status: "needs_client_registration",
                   error: "Server does not support dynamic client registration. Please provide clientId in config.",
                 }
                 // Show toast for needs_client_registration
@@ -377,7 +379,7 @@ export namespace MCP {
               } else {
                 // Store transport for later finishAuth call
                 pendingOAuthTransports.set(key, transport)
-                const status: Status = { status: "needs_auth" as const }
+                const status: Status = { status: "needs_auth" }
                 // Show toast for needs_auth
                 Bus.publish(TuiEvent.ToastShow, {
                   title: "MCP Authentication Required",
@@ -397,7 +399,7 @@ export namespace MCP {
             })
 
             const status: Status = {
-              status: "failed" as const,
+              status: "failed",
               error: lastError.message,
             }
 
@@ -452,9 +454,9 @@ export namespace MCP {
         return {
           mcpClient: undefined,
           status: {
-            status: "failed" as const,
+            status: "failed",
             error: error instanceof Error ? error.message : String(error),
-          },
+          } as Status,
         }
       }
     }
@@ -462,9 +464,9 @@ export namespace MCP {
     return {
       mcpClient: undefined,
       status: {
-        status: "failed" as const,
+        status: "failed",
         error: "Unknown error",
-      },
+      } as Status,
     }
   }
 
@@ -474,9 +476,12 @@ export namespace MCP {
     const config = cfg.mcp ?? {}
 
     return Object.fromEntries(
-      Object.entries(config).reduce((acc, [key, mcp]) => {
-        return isMcpConfigured(mcp) ? [...acc, [key, s.status[key] ?? { status: "disabled" }]] : acc
-      }, [] as [string, Status][]),
+      Object.entries(config).reduce((acc: Array<[string, Status]>, [key, mcp]) => {
+        if (!isMcpConfigured(mcp)) return acc
+        const status = s.status[key] ?? ({ status: "disabled" } as Status)
+        acc.push([key, status])
+        return acc
+      }, []),
     )
   }
 
@@ -498,7 +503,9 @@ export namespace MCP {
       return
     }
 
-    const result = await create(name, { ...mcp, enabled: true })
+    const result = (await create(name, { ...mcp, enabled: true })) as
+      | { mcpClient: MCPClient | undefined; status: Status }
+      | undefined
 
     if (!result) {
       const s = await state()
@@ -551,8 +558,8 @@ export namespace MCP {
 
         const toolsResult = await client.listTools().catch((e) => {
           log.error("failed to get tools", { clientName, error: e.message })
-          const failedStatus = {
-            status: "failed" as const,
+          const failedStatus: Status = {
+            status: "failed",
             error: e instanceof Error ? e.message : String(e),
           }
           s.status[clientName] = failedStatus
