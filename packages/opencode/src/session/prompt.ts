@@ -787,8 +787,8 @@ export namespace SessionPrompt {
       try {
         // Try to get any available model as a last resort
         const providers = await Provider.list()
-        for (const provider of Object.values(providers)) {
-          const models = Object.values(provider.models || {})
+        for (const provider of Object.values(providers) as any[]) {
+          const models = Object.values(provider.models || {}) as any[]
           if (models.length > 0) {
             const fallbackModel = {
               providerID: provider.id,
@@ -908,44 +908,44 @@ export namespace SessionPrompt {
 
     try {
       const mcpTools = await MCP.tools()
-      for (const [key, item] of Object.entries(mcpTools)) {
+      for (const [key, item] of Object.entries(mcpTools) as [string, any][]) {
         try {
           if (!item?.execute) continue
 
-      const execute = item.execute
-      item.execute = async (args, opts) => {
-        try {
-          const ctx = context(args, opts)
+          const execute = item.execute
+          item.execute = async (args: any, opts: any) => {
+            try {
+              const ctx = context(args, opts)
 
-        await Plugin.trigger("tool.execute.before", {
-          tool: key,
-          sessionID: ctx.sessionID,
-          callID: opts.toolCallId,
-        }, { args })
+              await Plugin.trigger("tool.execute.before", {
+                tool: key,
+                sessionID: ctx.sessionID,
+                callID: opts.toolCallId,
+              }, { args })
 
-        await ctx.ask({
-          permission: key,
-          metadata: {},
-          patterns: ["*"],
-          always: ["*"],
-        })
+              await ctx.ask({
+                permission: key,
+                metadata: {},
+                patterns: ["*"],
+                always: ["*"],
+              })
 
-        const result = await execute(args, opts)
+              const result = await execute(args, opts)
 
-        await Plugin.trigger("tool.execute.after", {
-          tool: key,
-          sessionID: ctx.sessionID,
-          callID: opts.toolCallId,
-        }, result)
+              await Plugin.trigger("tool.execute.after", {
+                tool: key,
+                sessionID: ctx.sessionID,
+                callID: opts.toolCallId,
+              }, result)
 
-        const textParts: string[] = []
-        const attachments: MessageV2.FilePart[] = []
+              const textParts: string[] = []
+              const attachments: MessageV2.FilePart[] = []
 
-        if (result?.content) {
-          for (const contentItem of result.content) {
-            if (!contentItem?.type) continue
+              if (result?.content) {
+                for (const contentItem of result.content) {
+                  if (!contentItem?.type) continue
 
-                  if (contentItem.type === "text" && typeof contentItem.text === 'string') {
+                  if (contentItem.type === "text" && typeof contentItem.text === "string") {
                     textParts.push(contentItem.text)
                   } else if (contentItem.type === "image" && contentItem.mimeType && contentItem.data) {
                     attachments.push({
@@ -958,7 +958,7 @@ export namespace SessionPrompt {
                     })
                   } else if (contentItem.type === "resource" && contentItem.resource) {
                     const { resource } = contentItem
-                    if (resource.text && typeof resource.text === 'string') {
+                    if (resource.text && typeof resource.text === "string") {
                       textParts.push(resource.text)
                     }
                     if (resource.blob && resource.uri) {
@@ -980,103 +980,105 @@ export namespace SessionPrompt {
               let truncated: Truncate.Result
               let truncationError: Error | undefined
               const originalOutput = textParts.join("\n\n")
-              
+
               try {
                 // Use proper truncation options with reasonable limits
                 const truncateOptions: Truncate.Options = {
-                  maxLines: Math.min(2000, Math.max(100, originalOutput.split('\n').length / 4)),
-                  maxBytes: Math.min(50 * 1024, Math.max(10 * 1024, Buffer.byteLength(originalOutput, 'utf8') / 4)),
-                  direction: "head"
+                  maxLines: Math.min(2000, Math.max(100, originalOutput.split("\n").length / 4)),
+                  maxBytes: Math.min(50 * 1024, Math.max(10 * 1024, Buffer.byteLength(originalOutput, "utf8") / 4)),
+                  direction: "head",
                 }
-                
+
                 truncated = await Truncate.output(originalOutput, truncateOptions, input.agent)
-                
-                log.debug("Tool output truncated successfully", { 
+
+                log.debug("Tool output truncated successfully", {
                   tool: key,
                   sessionID: ctx.sessionID,
                   originalLength: originalOutput.length,
                   truncatedLength: truncated.content.length,
-                  wasTruncated: truncated.truncated
+                  wasTruncated: truncated.truncated,
                 })
               } catch (error) {
                 truncationError = error instanceof Error ? error : new Error(String(error))
-                log.error("Tool output truncation failed, using fallback", { 
-                  tool: key, 
-                  sessionID: ctx.sessionID, 
+                log.error("Tool output truncation failed, using fallback", {
+                  tool: key,
+                  sessionID: ctx.sessionID,
                   callID: opts.toolCallId,
                   error: truncationError.message,
-                  originalLength: originalOutput.length
+                  originalLength: originalOutput.length,
                 })
-                
+
                 // Fallback: create a safe truncated version manually
                 try {
-                  const fallbackLines = originalOutput.split('\n')
+                  const fallbackLines = originalOutput.split("\n")
                   const maxFallbackLines = 500
                   const maxFallbackBytes = 25 * 1024
-                  
+
                   let fallbackContent = ""
                   let byteCount = 0
-                  
+
                   for (let i = 0; i < Math.min(fallbackLines.length, maxFallbackLines); i++) {
-                    const line = fallbackLines[i] + '\n'
-                    const lineBytes = Buffer.byteLength(line, 'utf8')
-                    
+                    const line = fallbackLines[i] + "\n"
+                    const lineBytes = Buffer.byteLength(line, "utf8")
+
                     if (byteCount + lineBytes > maxFallbackBytes) {
                       break
                     }
-                    
+
                     fallbackContent += line
                     byteCount += lineBytes
                   }
-                  
+
                   const wasTruncated = fallbackLines.length > maxFallbackLines || byteCount >= maxFallbackBytes
-                  const removedLines = fallbackLines.length - fallbackContent.split('\n').length
-                  
+                  const removedLines = fallbackLines.length - fallbackContent.split("\n").length
+
                   if (wasTruncated) {
-                    const truncationNotice = `\n\n...${removedLines} lines truncated due to truncation system error...\n\n` +
+                    const truncationNotice =
+                      `\n\n...${removedLines} lines truncated due to truncation system error...\n\n` +
                       `Note: Output was truncated due to a system error in the truncation process. ` +
                       `The original output was ${originalOutput.length} characters. ` +
                       `Contact support if you need the complete output.`
-                    
+
                     fallbackContent += truncationNotice
                   }
-                  
+
                   truncated = {
                     content: fallbackContent,
                     truncated: wasTruncated,
-                    outputPath: "" // No file path available in fallback mode
+                    outputPath: "", // No file path available in fallback mode
                   }
                 } catch (fallbackError) {
                   // Ultimate fallback: use first 1000 characters
-                  log.error("Fallback truncation also failed, using minimal fallback", { 
-                    tool: key, 
+                  log.error("Fallback truncation also failed, using minimal fallback", {
+                    tool: key,
                     sessionID: ctx.sessionID,
-                    fallbackError: fallbackError instanceof Error ? fallbackError.message : String(fallbackError)
+                    fallbackError: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
                   })
-                  
-                  const minimalContent = originalOutput.length > 1000 
-                    ? originalOutput.substring(0, 1000) + 
-                      "\n\n...Output severely truncated due to multiple system errors...\n\n" +
-                      `Original output was ${originalOutput.length} characters. ` +
-                      `Both primary and fallback truncation systems failed.`
-                    : originalOutput
-                  
+
+                  const minimalContent =
+                    originalOutput.length > 1000
+                      ? originalOutput.substring(0, 1000) +
+                        "\n\n...Output severely truncated due to multiple system errors...\n\n" +
+                        `Original output was ${originalOutput.length} characters. ` +
+                        `Both primary and fallback truncation systems failed.`
+                      : originalOutput
+
                   truncated = {
                     content: minimalContent,
                     truncated: originalOutput.length > 1000,
-                    outputPath: ""
+                    outputPath: "",
                   }
                 }
               }
-              
+
               const metadata = {
                 ...(result.metadata ?? {}),
                 truncated: truncated.truncated,
                 ...(truncated.truncated && { outputPath: truncated.outputPath }),
-                ...(truncationError && { 
+                ...(truncationError && {
                   truncationError: truncationError.message,
-                  truncationFallback: true 
-                })
+                  truncationFallback: true,
+                }),
               }
 
               return {
@@ -1087,16 +1089,17 @@ export namespace SessionPrompt {
                 content: result.content, // directly return content to preserve ordering when outputting to model
               }
             } catch (error) {
-              log.error("MCP tool execution failed", { 
-                tool: key, 
-                sessionID: ctx.sessionID, 
+              const ctx = context(args, opts)
+              log.error("MCP tool execution failed", {
+                tool: key,
+                sessionID: ctx.sessionID,
                 callID: opts.toolCallId,
-                error: error instanceof Error ? error.message : String(error) 
+                error: error instanceof Error ? error.message : String(error),
               })
               throw error // Re-throw execution errors
             }
           }
-          tools[key] = item
+          tools[key] = item as any
         } catch (error) {
           log.error("Failed to register MCP tool", { 
             tool: key, 
