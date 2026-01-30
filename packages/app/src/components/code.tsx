@@ -1,22 +1,43 @@
 import { bundledLanguages, type BundledLanguage, type ShikiTransformer } from "shiki"
 import { splitProps, type ComponentProps, createEffect, onMount, onCleanup, createMemo, createResource } from "solid-js"
-import { useFile } from "@/context/file"
+import { useFile, type SelectedLineRange } from "@/context/file"
 import { useLayout } from "@/context/layout"
 import { useShiki } from "@/context/shiki"
 import { getFileExtension, getNodeOffsetInLine, getSelectionInContainer } from "@/utils"
 
 interface Props extends ComponentProps<"div"> {
-  code: string
-  path: string
+  file: {
+    name: string
+    contents: string
+    cacheKey?: string
+  }
+  enableLineSelection?: boolean
+  selectedLines?: SelectedLineRange | null
+  commentedLines?: SelectedLineRange[]
+  onRendered?: () => void
+  onLineSelected?: (range: SelectedLineRange | null) => void
+  onLineSelectionEnd?: (range: SelectedLineRange | null) => void
+  overflow?: "scroll" | "hidden" | "auto"
 }
 
 export function Code(props: Props) {
   const file = useFile()
   const layout = useLayout()
   const highlighter = useShiki()
-  const [local, others] = splitProps(props, ["class", "classList", "code", "path"])
+  const [local, others] = splitProps(props, [
+    "class",
+    "classList",
+    "file",
+    "enableLineSelection",
+    "selectedLines",
+    "commentedLines",
+    "onRendered",
+    "onLineSelected",
+    "onLineSelectionEnd",
+    "overflow",
+  ])
   const lang = createMemo(() => {
-    const ext = getFileExtension(local.path)
+    const ext = getFileExtension(local.file.name)
     if (ext in bundledLanguages) return ext
     return "text"
   })
@@ -28,7 +49,7 @@ export function Code(props: Props) {
     if (!highlighter.getLoadedLanguages().includes(lang())) {
       await highlighter.loadLanguage(lang() as BundledLanguage)
     }
-    return highlighter.codeToHtml(local.code || "", {
+    return highlighter.codeToHtml(local.file.contents || "", {
       lang: lang() && lang() in bundledLanguages ? lang() : "text",
       theme: "opencode",
       transformers: [transformerUnifiedDiff(), transformerDiffGroups()],
@@ -41,29 +62,29 @@ export function Code(props: Props) {
     let ticking = false
     const onScroll = () => {
       if (!container) return
-      if (file.active()?.path !== local.path) return
+      if (file.active()?.path !== local.file.name) return
       if (ticking) return
       ticking = true
       requestAnimationFrame(() => {
         ticking = false
-        file.setScrollTop(local.path, container!.scrollTop)
+        file.setScrollTop(local.file.name, container!.scrollTop)
       })
     }
 
     const onSelectionChange = () => {
       if (!container) return
       if (isProgrammaticSelection) return
-      if (file.active()?.path !== local.path) return
+      if (file.active()?.path !== local.file.name) return
       const d = getSelectionInContainer(container)
       if (!d) return
-      const p = file.selection(local.path)
+      const p = file.selection(local.file.name)
       if (p && p.startLine === d.sl && p.endLine === d.el && p.startChar === d.sch && p.endChar === d.ech) return
-      file.setSelection(local.path, { startLine: d.sl, startChar: d.sch, endLine: d.el, endChar: d.ech })
+      file.setSelection(local.file.name, { startLine: d.sl, startChar: d.sch, endLine: d.el, endChar: d.ech })
     }
 
     const MOD = typeof navigator === "object" && /(Mac|iPod|iPhone|iPad)/.test(navigator.platform) ? "Meta" : "Control"
     const onKeyDown = (e: KeyboardEvent) => {
-      if (file.active()?.path !== local.path) return
+      if (file.active()?.path !== local.file.name) return
       const ae = document.activeElement as HTMLElement | undefined
       const tag = (ae?.tagName || "").toLowerCase()
       const inputFocused = !!ae && (tag === "input" || tag === "textarea" || ae.isContentEditable)
@@ -79,7 +100,7 @@ export function Code(props: Props) {
         const last = lines[lines.length - 1]
         r.selectNodeContents(last)
         const lastLen = r.toString().length
-        file.setSelection(local.path, { startLine: 1, startChar: 0, endLine: lines.length, endChar: lastLen })
+        file.setSelection(local.file.name, { startLine: 1, startChar: 0, endLine: lines.length, endChar: lastLen })
       }
     }
 
@@ -98,18 +119,19 @@ export function Code(props: Props) {
   createEffect(() => {
     const content = html()
     if (!container || !content) return
-    const top = file.scrollTop(local.path)
+    const top = file.scrollTop(local.file.name)
     if (top !== undefined && container.scrollTop !== top) container.scrollTop = top
+    local.onRendered?.()
   })
 
   // Sync selection from store -> DOM
   createEffect(() => {
     const content = html()
     if (!container || !content) return
-    if (file.active()?.path !== local.path) return
+    if (file.active()?.path !== local.file.name) return
     const codeEl = container.querySelector("code") as HTMLElement | undefined
     if (!codeEl) return
-    const target = file.selection(local.path)
+    const target = file.selection(local.file.name)
     const current = getSelectionInContainer(container)
     const sel = window.getSelection()
     if (!sel) return
@@ -185,20 +207,20 @@ export function Code(props: Props) {
       originalPre.style.display = ""
     }
 
-    const expanded = file.folded(local.path)
+    const expanded = file.folded(local.file.name)
     if (view === "split") {
       const left = container.querySelector<HTMLElement>(".diff-split pre:nth-child(1) code")
       const right = container.querySelector<HTMLElement>(".diff-split pre:nth-child(2) code")
       if (left)
-        applyDiffFolding(left, 3, { expanded, onExpand: (key) => file.unfold(local.path, key), side: "left" })
+        applyDiffFolding(left, 3, { expanded, onExpand: (key) => file.unfold(local.file.name, key), side: "left" })
       if (right)
-        applyDiffFolding(right, 3, { expanded, onExpand: (key) => file.unfold(local.path, key), side: "right" })
+        applyDiffFolding(right, 3, { expanded, onExpand: (key) => file.unfold(local.file.name, key), side: "right" })
     } else {
       const code = container.querySelector<HTMLElement>("pre code")
       if (code)
         applyDiffFolding(code, 3, {
           expanded,
-          onExpand: (key) => file.unfold(local.path, key),
+          onExpand: (key) => file.unfold(local.file.name, key),
         })
     }
   })
@@ -252,7 +274,7 @@ export function Code(props: Props) {
     const content = html()
     if (!container || !content) return
     const view = layout.review.diffStyle()
-    const raw = file.changeIndex(local.path)
+    const raw = file.changeIndex(local.file.name)
     if (raw === undefined) return
     const total = countGroups()
     if (total <= 0) return
@@ -261,7 +283,7 @@ export function Code(props: Props) {
     const navigated = lastRawIdx !== undefined && lastRawIdx !== raw
 
     if (next !== raw) {
-      file.setChangeIndex(local.path, next)
+      file.setChangeIndex(local.file.name, next)
       applyHighlight(next, true)
     } else {
       if (lastView !== view || lastContent !== content) applyHighlight(next)
