@@ -549,10 +549,15 @@ export namespace ACP {
             return undefined
           })
 
-        for (const msg of messages ?? []) {
+        const replayMessages = async (remaining: SessionMessageResponse[]): Promise<void> => {
+          const msg = remaining[0]
+          if (!msg) return
           log.debug("replay message", msg)
           await this.processMessage(msg)
+          return replayMessages(remaining.slice(1))
         }
+
+        await replayMessages(messages ?? [])
 
         return mode
       } catch (e) {
