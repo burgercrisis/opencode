@@ -49,4 +49,8 @@ export namespace SystemPrompt {
       ].join("\n"),
     ]
   }
+
+  export async function custom(): Promise<string[]> {
+    return []
+  }
 }
