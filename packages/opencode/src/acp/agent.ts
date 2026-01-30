@@ -507,95 +507,33 @@ export namespace ACP {
       const directory = params.cwd
       const mcpServers = params.mcpServers ?? []
 
-      try {
-        const model = await defaultModel(this.config, directory)
+      const forked = await this.sdk.session
+        .fork(
+          {
+            sessionID: params.sessionId,
+            directory,
+          },
+          { throwOnError: true },
+        )
+        .then((x) => x.data)
 
-        const forked = await this.sdk.session
-          .fork(
-            {
-              sessionID: params.sessionId,
-              directory,
-            },
-            { throwOnError: true },
-          )
-          .then((x) => x.data)
-
-        if (!forked) {
-          throw new Error("Fork session returned no data")
-        }
-
-        const sessionId = forked.id
-        await this.sessionManager.load(sessionId, directory, mcpServers, model)
-
-        log.info("fork_session", { sessionId, mcpServers: mcpServers.length })
-
-        const mode = await this.loadSessionMode({
-          cwd: directory,
-          mcpServers,
-          sessionId,
-        })
-
-        const messages = await this.sdk.session
-          .messages(
-            {
-              sessionID: sessionId,
-              directory,
-            },
-            { throwOnError: true },
-          )
-          .then((x) => x.data)
-          .catch((err) => {
-            log.error("unexpected error when fetching message", { error: err })
-            return undefined
-          })
-
-        const replayMessages = async (remaining: SessionMessageResponse[]): Promise<void> => {
-          const msg = remaining[0]
-          if (!msg) return
-          log.debug("replay message", msg)
-          await this.processMessage(msg)
-          return replayMessages(remaining.slice(1))
-        }
-
-        await replayMessages(messages ?? [])
-
-        return mode
-      } catch (e) {
-        const error = MessageV2.fromError(e, {
-          providerID: this.config.defaultModel?.providerID ?? "unknown",
-        })
-        if (LoadAPIKeyError.isInstance(error)) {
-          throw RequestError.authRequired()
-        }
-        throw e
+      if (!forked) {
+        throw new Error("Fork session returned no data")
       }
+
+      return this.loadSession({
+        sessionId: forked.id,
+        cwd: directory,
+        mcpServers,
+      })
     }
 
     async unstable_resumeSession(params: ResumeSessionRequest): Promise<ResumeSessionResponse> {
-      const directory = params.cwd
-      const sessionId = params.sessionId
-      const mcpServers = params.mcpServers ?? []
-
-      try {
-        const model = await defaultModel(this.config, directory)
-        await this.sessionManager.load(sessionId, directory, mcpServers, model)
-
-        log.info("resume_session", { sessionId, mcpServers: mcpServers.length })
-
-        return this.loadSessionMode({
-          cwd: directory,
-          mcpServers,
-          sessionId,
-        })
-      } catch (e) {
-        const error = MessageV2.fromError(e, {
-          providerID: this.config.defaultModel?.providerID ?? "unknown",
-        })
-        if (LoadAPIKeyError.isInstance(error)) {
-          throw RequestError.authRequired()
-        }
-        throw e
-      }
+      return this.loadSession({
+        sessionId: params.sessionId,
+        cwd: params.cwd,
+        mcpServers: params.mcpServers ?? [],
+      })
     }
 
     private async processMessage(message: SessionMessageResponse) {
@@ -836,35 +774,6 @@ export namespace ACP {
 
     async unstable_setSessionModel(params: SetSessionModelRequest) {
       return this.setSessionModel(params)
-    }
-
-    async unstable_forkSession(params: ForkSessionRequest): Promise<ForkSessionResponse> {
-      const session = this.sessionManager.get(params.sessionId)
-      const res = await this.sdk.session.fork(
-        {
-          sessionID: params.sessionId,
-          directory: session.cwd,
-        },
-        { throwOnError: true },
-      )
-      const data = res.data
-      if (!data) throw new Error("Failed to fork session")
-
-      const model = await defaultModel(this.config, session.cwd)
-      await this.sessionManager.create(session.cwd, [], model, data.id)
-
-      return {
-        sessionId: data.id,
-        _meta: {},
-      }
-    }
-
-    async unstable_resumeSession(params: ResumeSessionRequest): Promise<ResumeSessionResponse> {
-      return this.loadSession({
-        sessionId: params.sessionId,
-        cwd: params.cwd,
-        mcpServers: [],
-      })
     }
 
     async setSessionMode(params: SetSessionModeRequest): Promise<SetSessionModeResponse | void> {
