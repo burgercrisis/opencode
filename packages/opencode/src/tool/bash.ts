@@ -6,6 +6,7 @@ import DESCRIPTION from "./bash.txt"
 import { Log } from "../util/log"
 import { Instance } from "../project/instance"
 import { lazy } from "@/util/lazy"
+import { iife } from "@/util/iife"
 import { Language } from "web-tree-sitter"
 
 import { $ } from "bun"
@@ -261,36 +262,37 @@ export const BashTool = Tool.define("bash", async () => {
         metadata: {},
       })
 
-      const { processedCommand, finalEnv } = (() => {
+      const baseEnv = iife(() => {
+        const initial = { ...process.env }
+        if (process.platform !== "win32") return initial
+        return Object.entries(initial).reduce((acc, [key, value]) => {
+          const newKey = key.toUpperCase()
+          const newValue = value ? value.replace(/%([^%]+)%/g, (_, name) => {
+            const val = initial[name] || initial[name.toUpperCase()]
+            return val !== undefined ? val : `%${name}%`
+          }) : value
+          return { ...acc, [newKey]: newValue }
+        }, {} as Record<string, string>)
+      })
+
+      const { processedCommand, finalEnv } = iife(() => {
         const initialProcessedCommand = params.command
-        const initialEnv = { ...process.env }
+        const initialEnv = baseEnv
 
-        return process.platform !== "win32"
-          ? { processedCommand: initialProcessedCommand, finalEnv: initialEnv }
-          : (() => {
-              const step1 =
-                Shell.isCmdCommand(initialProcessedCommand) && initialProcessedCommand.includes("&&")
-                  ? (() => {
-                      const match = initialProcessedCommand.match(/^(cmd(?:\.exe)?)\s+(\S+)\s+(.*)$/i)
-                      return match && match[3].includes("&&") && /%\w+%/.test(match[3]) && !Shell.hasDynamicEnvVars(match[3])
-                        ? `${match[1]} ${match[2]} "${match[3]}"`
-                        : initialProcessedCommand
-                    })()
-                  : initialProcessedCommand
+        if (process.platform !== "win32") return { processedCommand: initialProcessedCommand, finalEnv: initialEnv }
 
-              const step2 =
-                step1.includes("set") && step1.includes("&&") && Shell.isCmdCommand(step1)
-                  ? (() => {
-                      const setMatch = step1.match(/set\s+(\w+)=([^&]+)/i)
-                      return setMatch
-                        ? { cmd: step1, env: { ...initialEnv, [setMatch[1]]: setMatch[2] } }
-                        : { cmd: step1, env: initialEnv }
-                    })()
-                  : { cmd: step1, env: initialEnv }
+        const step2 =
+          initialProcessedCommand.includes("set") && initialProcessedCommand.includes("&&") && Shell.isCmdCommand(initialProcessedCommand)
+            ? iife(() => {
+                const setMatch = initialProcessedCommand.match(/set\s+(\w+)=([^&]+)/i)
+                return setMatch
+                  ? { cmd: initialProcessedCommand, env: { ...initialEnv, [setMatch[1]]: setMatch[2] } }
+                  : { cmd: initialProcessedCommand, env: initialEnv }
+              })
+            : { cmd: initialProcessedCommand, env: initialEnv }
 
-              return { processedCommand: step2.cmd, finalEnv: step2.env }
-            })()
-      })()
+        return { processedCommand: step2.cmd, finalEnv: step2.env }
+      })
 
       const config = await Config.get()
       const spawnConfig = Shell.getSpawnConfig(processedCommand, config.shell)
@@ -299,11 +301,6 @@ export const BashTool = Tool.define("bash", async () => {
       Shell.isCmdBuiltin(processedCommand) && log.info("Detected bare CMD builtin, automatically wrapping", {
         command: processedCommand.substring(0, 100),
       })
-
-      // Log regardless of OPENCODE_DEBUG_SHELL for now to see why tests fail
-      console.log(`[BashTool] Executing: ${processedCommand}`)
-      console.log(`[BashTool] Executable: ${spawnConfig.executable}`)
-      console.log(`[BashTool] Args: ${JSON.stringify(spawnConfig.args)}`)
 
       const proc = Bun.spawn([spawnConfig.executable, ...spawnConfig.args], {
         cwd,
@@ -358,10 +355,10 @@ export const BashTool = Tool.define("bash", async () => {
         }),
       ])
 
-      const { output: finalOutput, hasErrors } = Shell.isPowerShellCommand(params.command)
-        ? processPowerShellOutput(output, params.command)
-        : (Shell.isCmdCommand(params.command)
-            ? { output: processCmdOutput(output, params.command), hasErrors: false }
+      const { output: finalOutput, hasErrors } = Shell.isPowerShellCommand(processedCommand)
+        ? processPowerShellOutput(output, processedCommand)
+        : (Shell.isCmdCommand(processedCommand)
+            ? { output: processCmdOutput(output, processedCommand), hasErrors: false }
             : { output, hasErrors: false })
 
       const resultMetadata = [
