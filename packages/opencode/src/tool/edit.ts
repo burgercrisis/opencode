@@ -184,16 +184,19 @@ function levenshtein(a: string, b: string): number {
     const prevRow = acc[rowIdx - 1]
     const currentRow = acc[rowIdx]
 
-    const newRow = Array.from({ length: b.length }).reduce<number[]>((rowAcc, __, j) => {
+    const processRow = (rowAcc: number[], j: number): number[] => {
       const colIdx = j + 1
+      if (colIdx > b.length) return rowAcc
       const cost = a[rowIdx - 1] === b[colIdx - 1] ? 0 : 1
       const newValue = Math.min(
         prevRow[colIdx] + 1,
         rowAcc[colIdx - 1] + 1,
         prevRow[colIdx - 1] + cost,
       )
-      return [...rowAcc, newValue]
-    }, [currentRow[0]])
+      return processRow([...rowAcc, newValue], colIdx)
+    }
+
+    const newRow = processRow([currentRow[0]], 0)
 
     return [...acc.slice(0, rowIdx), newRow, ...acc.slice(rowIdx + 1)]
   }, initialMatrix)
@@ -219,23 +222,37 @@ export const LineTrimmedReplacer: Replacer = function* (content, find) {
   const originalLines = content.split("\n")
   const searchLines = find.endsWith("\n") ? find.split("\n").slice(0, -1) : find.split("\n")
 
-  const range = Array.from({ length: originalLines.length - searchLines.length + 1 }, (_, i) => i)
+  const processRange = (acc: string[], i: number): string[] => {
+    if (i > originalLines.length - searchLines.length) return acc
 
-  yield* range.reduce<string[]>((acc, i) => {
-    const matches = searchLines.every((searchLine, j) => originalLines[i + j].trim() === searchLine.trim())
+    const checkMatch = (j: number): boolean => {
+      if (j >= searchLines.length) return true
+      if (originalLines[i + j].trim() !== searchLines[j].trim()) return false
+      return checkMatch(j + 1)
+    }
 
-    return matches ? (() => {
-      const start = originalLines.slice(0, i).reduce((sAcc, line) => sAcc + line.length + 1, 0)
-      const end =
-        start +
-        searchLines.reduce(
-          (eAcc, _, j) => eAcc + originalLines[i + j].length + (j < searchLines.length - 1 ? 1 : 0),
-          0,
-        )
+    const matches = checkMatch(0)
+
+    const nextAcc = matches ? (() => {
+      const getStart = (idx: number, current: number): number => {
+        if (idx >= i) return current
+        return getStart(idx + 1, current + originalLines[idx].length + 1)
+      }
+      const start = getStart(0, 0)
+
+      const getEnd = (j: number, current: number): number => {
+        if (j >= searchLines.length) return current
+        return getEnd(j + 1, current + originalLines[i + j].length + (j < searchLines.length - 1 ? 1 : 0))
+      }
+      const end = getEnd(0, start)
 
       return [...acc, content.substring(start, end)]
     })() : acc
-  }, [])
+
+    return processRange(nextAcc, i + 1)
+  }
+
+  yield* processRange([], 0)
 }
 
 export const BlockAnchorReplacer: Replacer = function* (content, find) {
@@ -246,52 +263,71 @@ export const BlockAnchorReplacer: Replacer = function* (content, find) {
   const lastLineSearch = searchLines.length < 3 ? "" : searchLines[searchLines.length - 1].trim()
   const searchBlockSize = searchLines.length
 
-  // Collect all candidate positions where both anchors match
-  const candidates = (searchLines.length < 3) ? [] : originalLines.reduce<Array<{ startLine: number; endLine: number }>>(
-    (acc, line, i) => {
-      const isFirstMatch = line.trim() === firstLineSearch
-      const endLine = isFirstMatch ? originalLines.findIndex(
-        (l, index) => index >= i + 2 && l.trim() === lastLineSearch,
-      ) : -1
+  const findLastLine = (startIdx: number): number => {
+    const searchFrom = (idx: number): number => {
+      if (idx >= originalLines.length) return -1
+      if (originalLines[idx].trim() === lastLineSearch) return idx
+      return searchFrom(idx + 1)
+    }
+    return searchFrom(startIdx)
+  }
 
-      return endLine !== -1 ? [...acc, { startLine: i, endLine }] : acc
-    },
-    [],
-  )
+  const collectCandidates = (acc: Array<{ startLine: number; endLine: number }>, i: number): Array<{ startLine: number; endLine: number }> => {
+    if (i >= originalLines.length) return acc
+    const isFirstMatch = originalLines[i].trim() === firstLineSearch
+    const endLine = isFirstMatch ? findLastLine(i + 2) : -1
+    const nextAcc = endLine !== -1 ? [...acc, { startLine: i, endLine }] : acc
+    return collectCandidates(nextAcc, i + 1)
+  }
+
+  const candidates = (searchLines.length < 3) ? [] : collectCandidates([], 0)
 
   const getSimilarity = (startLine: number, endLine: number) => {
     const actualBlockSize = endLine - startLine + 1
-    const linesToCheck = Math.min(searchBlockSize - 2, actualBlockSize - 2) // Middle lines only
+    const linesToCheck = Math.min(searchBlockSize - 2, actualBlockSize - 2)
 
-    return linesToCheck > 0
-      ? Array.from({ length: linesToCheck }).reduce<number>((acc, _, j) => {
-          const originalLine = originalLines[startLine + j + 1].trim()
-          const searchLine = searchLines[j + 1].trim()
-          const maxLen = Math.max(originalLine.length, searchLine.length)
-          return maxLen === 0 ? acc : acc + (1 - levenshtein(originalLine, searchLine) / maxLen) / linesToCheck
-        }, 0)
-      : 1.0
+    const calculateSimilarity = (acc: number, j: number): number => {
+      if (j >= linesToCheck) return acc
+      const originalLine = originalLines[startLine + j + 1].trim()
+      const searchLine = searchLines[j + 1].trim()
+      const maxLen = Math.max(originalLine.length, searchLine.length)
+      const similarity = maxLen === 0 ? 0 : (1 - levenshtein(originalLine, searchLine) / maxLen)
+      return calculateSimilarity(acc + similarity / linesToCheck, j + 1)
+    }
+
+    return linesToCheck > 0 ? calculateSimilarity(0, 0) : 1.0
   }
 
   const getMatchContent = (startLine: number, endLine: number) => {
-    const start = originalLines.slice(0, startLine).reduce((acc, l) => acc + l.length + 1, 0)
-    const end =
-      start +
-      originalLines
-        .slice(startLine, endLine + 1)
-        .reduce((acc, l, idx) => acc + l.length + (idx < endLine - startLine ? 1 : 0), 0)
+    const getStart = (idx: number, current: number): number => {
+      if (idx >= startLine) return current
+      return getStart(idx + 1, current + originalLines[idx].length + 1)
+    }
+    const start = getStart(0, 0)
+
+    const getEndOffset = (idx: number, current: number): number => {
+      if (idx > endLine) return current
+      return getEndOffset(idx + 1, current + originalLines[idx].length + (idx < endLine ? 1 : 0))
+    }
+    const end = start + getEndOffset(startLine, 0)
     return content.substring(start, end)
   }
 
-  const best = candidates.length === 1
+  const findBest = (idx: number, currentBest: { match: { startLine: number; endLine: number } | null, max: number, threshold: number }): typeof currentBest => {
+    if (idx >= candidates.length) return currentBest
+    const candidate = candidates[idx]
+    const similarity = getSimilarity(candidate.startLine, candidate.endLine)
+    const nextBest = similarity > currentBest.max
+      ? { match: candidate, max: similarity, threshold: currentBest.threshold }
+      : currentBest
+    return findBest(idx + 1, nextBest)
+  }
+
+  const initialBest = candidates.length === 1
     ? { match: candidates[0], max: getSimilarity(candidates[0].startLine, candidates[0].endLine), threshold: SINGLE_CANDIDATE_SIMILARITY_THRESHOLD }
-    : candidates.reduce(
-        (acc, candidate) => {
-          const similarity = getSimilarity(candidate.startLine, candidate.endLine)
-          return similarity > acc.max ? { match: candidate, max: similarity, threshold: MULTIPLE_CANDIDATES_SIMILARITY_THRESHOLD } : acc
-        },
-        { match: null as { startLine: number; endLine: number } | null, max: -1, threshold: MULTIPLE_CANDIDATES_SIMILARITY_THRESHOLD },
-      )
+    : { match: null as { startLine: number; endLine: number } | null, max: -1, threshold: MULTIPLE_CANDIDATES_SIMILARITY_THRESHOLD }
+
+  const best = candidates.length === 1 ? initialBest : findBest(0, initialBest)
 
   yield* (best.match && best.max >= best.threshold) ? [getMatchContent(best.match.startLine, best.match.endLine)] : []
 }
@@ -300,11 +336,10 @@ export const WhitespaceNormalizedReplacer: Replacer = function* (content, find) 
   const normalizeWhitespace = (text: string) => text.replace(/\s+/g, " ").trim()
   const normalizedFind = normalizeWhitespace(find)
 
-  // Handle single line matches
   const lines = content.split("\n")
-  const singleLineRange = Array.from({ length: lines.length }, (_, i) => i)
 
-  yield* singleLineRange.reduce<string[]>((acc, i) => {
+  const processSingleLines = (acc: string[], i: number): string[] => {
+    if (i >= lines.length) return acc
     const line = lines[i]
     const isExact = normalizeWhitespace(line) === normalizedFind
     const match = !isExact && normalizeWhitespace(line).includes(normalizedFind) ? (() => {
@@ -313,16 +348,24 @@ export const WhitespaceNormalizedReplacer: Replacer = function* (content, find) 
       return pattern ? line.match(new RegExp(pattern)) : null
     })() : null
 
-    return isExact ? [...acc, line] : (match ? [...acc, match[0]] : acc)
-  }, [])
+    const nextAcc = isExact ? [...acc, line] : (match ? [...acc, match[0]] : acc)
+    return processSingleLines(nextAcc, i + 1)
+  }
 
-  // Handle multi-line matches
+  yield* processSingleLines([], 0)
+
   const findLines = find.split("\n")
-  const multiLineRange = findLines.length > 1 ? Array.from({ length: lines.length - findLines.length + 1 }, (_, i) => i) : []
-  yield* multiLineRange.reduce<string[]>((acc, i) => {
+
+  const processMultiLines = (acc: string[], i: number): string[] => {
+    if (i > lines.length - findLines.length) return acc
     const block = lines.slice(i, i + findLines.length).join("\n")
-    return normalizeWhitespace(block) === normalizedFind ? [...acc, block] : acc
-  }, [])
+    const nextAcc = normalizeWhitespace(block) === normalizedFind ? [...acc, block] : acc
+    return processMultiLines(nextAcc, i + 1)
+  }
+
+  if (findLines.length > 1) {
+    yield* processMultiLines([], 0)
+  }
 }
 
 export const IndentationFlexibleReplacer: Replacer = function* (content, find) {
@@ -336,19 +379,28 @@ export const IndentationFlexibleReplacer: Replacer = function* (content, find) {
       }),
     )
 
-    return nonEmptyLines.length === 0 ? text : lines.map((line) => (line.trim().length === 0 ? line : line.slice(minIndent))).join("\n")
+    const processLines = (acc: string[], idx: number): string[] => {
+      if (idx >= lines.length) return acc
+      const line = lines[idx]
+      const nextLine = line.trim().length === 0 ? line : line.slice(minIndent)
+      return processLines([...acc, nextLine], idx + 1)
+    }
+
+    return nonEmptyLines.length === 0 ? text : processLines([], 0).join("\n")
   }
 
   const normalizedFind = removeIndentation(find)
   const contentLines = content.split("\n")
   const findLines = find.split("\n")
 
-  const range = Array.from({ length: contentLines.length - findLines.length + 1 }, (_, i) => i)
-
-  yield* range.reduce<string[]>((acc, i) => {
+  const processRange = (acc: string[], i: number): string[] => {
+    if (i > contentLines.length - findLines.length) return acc
     const block = contentLines.slice(i, i + findLines.length).join("\n")
-    return removeIndentation(block) === normalizedFind ? [...acc, block] : acc
-  }, [])
+    const nextAcc = removeIndentation(block) === normalizedFind ? [...acc, block] : acc
+    return processRange(nextAcc, i + 1)
+  }
+
+  yield* processRange([], 0)
 }
 
 export const EscapeNormalizedReplacer: Replacer = function* (content, find) {
@@ -378,23 +430,28 @@ export const EscapeNormalizedReplacer: Replacer = function* (content, find) {
   const lines = content.split("\n")
   const findLines = unescapedFind.split("\n")
 
-  const range = Array.from({ length: lines.length - findLines.length + 1 }, (_, i) => i)
-
-  yield* range.reduce<string[]>((acc, i) => {
+  const processRange = (acc: string[], i: number): string[] => {
+    if (i > lines.length - findLines.length) return acc
     const block = lines.slice(i, i + findLines.length).join("\n")
-    return unescapeString(block) === unescapedFind ? [...acc, block] : acc
-  }, [])
+    const nextAcc = unescapeString(block) === unescapedFind ? [...acc, block] : acc
+    return processRange(nextAcc, i + 1)
+  }
+
+  yield* processRange([], 0)
 }
 
 export const MultiOccurrenceReplacer: Replacer = function* (content, find) {
-  // This replacer yields all exact matches, allowing the replace function
-  // to handle multiple occurrences based on replaceAll parameter
-  const findIndices = (start: number): number[] => {
+  const findIndices = (start: number, acc: number[]): number[] => {
     const index = content.indexOf(find, start)
-    return index === -1 ? [] : [index, ...findIndices(index + find.length)]
+    return index === -1 ? acc : findIndices(index + find.length, [...acc, index])
   }
 
-  yield* findIndices(0).map(() => find)
+  const processIndices = (indices: number[], acc: string[]): string[] => {
+    if (indices.length === 0) return acc
+    return processIndices(indices.slice(1), [...acc, find])
+  }
+
+  yield* processIndices(findIndices(0, []), [])
 }
 
 export const TrimmedBoundaryReplacer: Replacer = function* (content, find) {
@@ -407,12 +464,14 @@ export const TrimmedBoundaryReplacer: Replacer = function* (content, find) {
   const lines = content.split("\n")
   const findLines = find.split("\n")
 
-  const range = Array.from({ length: lines.length - findLines.length + 1 }, (_, i) => i)
-
-  yield* range.reduce<string[]>((acc, i) => {
+  const processRange = (acc: string[], i: number): string[] => {
+    if (i > lines.length - findLines.length) return acc
     const block = lines.slice(i, i + findLines.length).join("\n")
-    return block.trim() === trimmedFind ? [...acc, block] : acc
-  }, [])
+    const nextAcc = block.trim() === trimmedFind ? [...acc, block] : acc
+    return processRange(nextAcc, i + 1)
+  }
+
+  yield* processRange([], 0)
 }
 
 export const ContextAwareReplacer: Replacer = function* (content, find) {
@@ -426,61 +485,88 @@ export const ContextAwareReplacer: Replacer = function* (content, find) {
   const firstLine = searchLines[0].trim()
   const lastLine = searchLines[searchLines.length - 1].trim()
 
-  // Find blocks that start and end with the context anchors
-  const range = findLines.length < 3 ? [] : Array.from({ length: contentLines.length }, (_, i) => i)
+  const findLastLine = (startIdx: number): number => {
+    const searchFrom = (idx: number): number => {
+      if (idx >= contentLines.length) return -1
+      if (contentLines[idx].trim() === lastLine) return idx
+      return searchFrom(idx + 1)
+    }
+    return searchFrom(startIdx)
+  }
 
-  yield* range.reduce<string[]>((acc, i) => {
+  const processRange = (acc: string[], i: number): string[] => {
+    if (i >= contentLines.length) return acc
     const isFirstMatch = contentLines[i].trim() === firstLine
-    const j = isFirstMatch ? contentLines.findIndex((l, idx) => idx >= i + 2 && l.trim() === lastLine) : -1
+    const j = isFirstMatch ? findLastLine(i + 2) : -1
 
-    return j !== -1 ? (() => {
+    const nextAcc = j !== -1 ? (() => {
       const blockLines = contentLines.slice(i, j + 1)
       const block = blockLines.join("\n")
 
-      const stats = blockLines.length === searchLines.length ? Array.from({ length: blockLines.length - 2 }, (_, k) => k + 1).reduce(
-        (sAcc, k) => {
-          const blockLine = blockLines[k].trim()
-          const findLine = searchLines[k].trim()
-          const isEmpty = blockLine.length === 0 && findLine.length === 0
-          return {
-            matching: sAcc.matching + (!isEmpty && blockLine === findLine ? 1 : 0),
-            total: sAcc.total + (!isEmpty ? 1 : 0),
-          }
-        },
-        { matching: 0, total: 0 },
-      ) : { matching: 0, total: 1 } // total 1 to avoid division by zero and fail the check
+      const getStats = (idx: number, currentStats: { matching: number, total: number }): typeof currentStats => {
+        if (idx >= blockLines.length - 1) return currentStats
+        const blockLine = blockLines[idx].trim()
+        const findLine = searchLines[idx].trim()
+        const isEmpty = blockLine.length === 0 && findLine.length === 0
+        return getStats(idx + 1, {
+          matching: currentStats.matching + (!isEmpty && blockLine === findLine ? 1 : 0),
+          total: currentStats.total + (!isEmpty ? 1 : 0),
+        })
+      }
+
+      const stats = blockLines.length === searchLines.length
+        ? getStats(1, { matching: 0, total: 0 })
+        : { matching: 0, total: 1 }
 
       return (stats.total === 0 || stats.matching / stats.total >= 0.5) ? [...acc, block] : acc
     })() : acc
-  }, [])
+
+    return processRange(nextAcc, i + 1)
+  }
+
+  if (findLines.length >= 3) {
+    yield* processRange([], 0)
+  }
 }
 
 export function trimDiff(diff: string): string {
   const lines = diff.split("\n")
-  const contentLines = lines.filter(
-    (line) =>
-      (line.startsWith("+") || line.startsWith("-") || line.startsWith(" ")) &&
-      !line.startsWith("---") &&
-      !line.startsWith("+++"),
-  )
 
-  const min = contentLines.reduce((acc, line) => {
+  const getContentLines = (acc: string[], idx: number): string[] => {
+    if (idx >= lines.length) return acc
+    const line = lines[idx]
+    const isContent = (line.startsWith("+") || line.startsWith("-") || line.startsWith(" ")) &&
+      !line.startsWith("---") &&
+      !line.startsWith("+++")
+    return getContentLines(isContent ? [...acc, line] : acc, idx + 1)
+  }
+
+  const contentLines = getContentLines([], 0)
+
+  const getMinIndent = (currentMin: number, idx: number): number => {
+    if (idx >= contentLines.length) return currentMin
+    const line = contentLines[idx]
     const content = line.slice(1)
     const match = content.trim().length > 0 ? content.match(/^(\s*)/) : null
-    return match ? Math.min(acc, match[1].length) : acc
-  }, Infinity)
+    const nextMin = match ? Math.min(currentMin, match[1].length) : currentMin
+    return getMinIndent(nextMin, idx + 1)
+  }
 
-  return (contentLines.length === 0 || min === Infinity || min === 0) ? diff : lines
-    .map((line) => {
-      const isContent =
-        (line.startsWith("+") || line.startsWith("-") || line.startsWith(" ")) &&
-        !line.startsWith("---") &&
-        !line.startsWith("+++")
-      const prefix = line[0]
-      const content = line.slice(1)
-      return !isContent ? line : prefix + content.slice(min)
-    })
-    .join("\n")
+  const min = getMinIndent(Infinity, 0)
+
+  const processLines = (acc: string[], idx: number): string[] => {
+    if (idx >= lines.length) return acc
+    const line = lines[idx]
+    const isContent = (line.startsWith("+") || line.startsWith("-") || line.startsWith(" ")) &&
+      !line.startsWith("---") &&
+      !line.startsWith("+++")
+    const prefix = line[0]
+    const content = line.slice(1)
+    const nextLine = !isContent ? line : prefix + content.slice(min)
+    return processLines([...acc, nextLine], idx + 1)
+  }
+
+  return (contentLines.length === 0 || min === Infinity || min === 0) ? diff : processLines([], 0).join("\n")
 }
 
 /**
@@ -519,7 +605,7 @@ export function replace(
     return (acc.length > 0 && !replaceAll) ? acc : [...acc, ...Array.from(replacer(content, oldString))]
   }, [])
 
-  const uniqueMatches = [...new Set(matches)]
+  const uniqueMatches = Array.from(new Set(matches))
 
   return matches.length === 0 ? (() => { throw new Error("oldString not found in content") })() : (
     replaceAll ? uniqueMatches.reduce((acc, match) => acc.replaceAll(match, newString), content) : (
