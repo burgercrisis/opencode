@@ -19,7 +19,7 @@ async function demonstrateAgentResolution() {
   try {
     const defaultAgent = await Agent.defaultAgent()
     console.log(`✅ Default agent: ${defaultAgent}`)
-  } catch (error) {
+  } catch (error: any) {
     console.log(`❌ Default agent failed: ${error.message}`)
   }
 
@@ -28,7 +28,7 @@ async function demonstrateAgentResolution() {
     const agents = await Agent.list()
     const visibleAgents = agents.filter(a => !a.hidden).map(a => a.name)
     console.log(`✅ Available agents: ${visibleAgents.join(', ')}`)
-  } catch (error) {
+  } catch (error: any) {
     console.log(`❌ Agent list failed: ${error.message}`)
   }
 
@@ -48,7 +48,7 @@ async function demonstrateModelResolution() {
   try {
     const defaultModel = await Provider.defaultModel()
     console.log(`✅ Default model: ${defaultModel.providerID}/${defaultModel.modelID}`)
-  } catch (error) {
+  } catch (error: any) {
     console.log(`❌ Default model failed: ${error.message}`)
   }
 
@@ -57,7 +57,7 @@ async function demonstrateModelResolution() {
     const providers = await Provider.list()
     const providerIds = Object.values(providers).map(p => p.id)
     console.log(`✅ Available providers: ${providerIds.join(', ')}`)
-  } catch (error) {
+  } catch (error: any) {
     console.log(`❌ Provider list failed: ${error.message}`)
   }
 
@@ -112,7 +112,7 @@ async function main() {
     console.log("• Provider and model unavailability")
     console.log("• Debugging with comprehensive logging")
     
-  } catch (error) {
+  } catch (error: any) {
     console.error(`\n❌ Demo failed: ${error.message}`)
     console.error(error.stack)
   }
