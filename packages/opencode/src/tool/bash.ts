@@ -355,11 +355,11 @@ export const BashTool = Tool.define("bash", async () => {
         }),
       ])
 
-      const { output: finalOutput, hasErrors } = Shell.isPowerShellCommand(processedCommand)
-        ? processPowerShellOutput(output, processedCommand)
-        : (Shell.isCmdCommand(processedCommand)
-            ? { output: processCmdOutput(output, processedCommand), hasErrors: false }
-            : { output, hasErrors: false })
+      const { output: finalOutput, hasErrors } = iife(() => {
+        if (Shell.isPowerShellCommand(processedCommand)) return processPowerShellOutput(output, processedCommand)
+        if (Shell.isCmdCommand(processedCommand)) return { output: processCmdOutput(output, processedCommand), hasErrors: false }
+        return { output, hasErrors: false }
+      })
 
       const resultMetadata = [
         status.timedOut ? `bash tool terminated command after exceeding timeout ${timeout} ms` : null,
