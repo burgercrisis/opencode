@@ -55,56 +55,53 @@ export const ListTool = Tool.define("list", {
     })
 
     const ignoreGlobs = IGNORE_PATTERNS.map((p) => `!${p}*`).concat(params.ignore?.map((p) => `!${p}`) || [])
-    const files = []
-    for await (const file of Ripgrep.files({ cwd: searchPath, glob: ignoreGlobs })) {
-      files.push(file)
-      if (files.length >= LIMIT) break
+
+    const collectFiles = async (gen: AsyncGenerator<string>, acc: string[]): Promise<string[]> => {
+      if (acc.length >= LIMIT) return acc
+      const { value, done } = await gen.next()
+      if (done) return acc
+      return collectFiles(gen, [...acc, value])
     }
 
-    // Build directory structure
-    const dirs = new Set<string>()
-    const filesByDir = new Map<string, string[]>()
+    const files = await collectFiles(Ripgrep.files({ cwd: searchPath, glob: ignoreGlobs }), [])
 
-    for (const file of files) {
-      const dir = path.dirname(file)
-      const parts = dir === "." ? [] : dir.split("/")
+    const normalizedFiles = files.map((f) => f.replace(/\\/g, "/"))
 
-      // Add all parent directories
-      for (let i = 0; i <= parts.length; i++) {
-        const dirPath = i === 0 ? "." : parts.slice(0, i).join("/")
-        dirs.add(dirPath)
-      }
+    const { dirs, filesByDir } = normalizedFiles.reduce(
+      (acc, file) => {
+        const dir = path.dirname(file)
+        const parts = dir === "." ? [] : dir.split("/")
 
-      // Add file to its directory
-      if (!filesByDir.has(dir)) filesByDir.set(dir, [])
-      filesByDir.get(dir)!.push(path.basename(file))
-    }
+        const newDirs = parts.reduce(
+          (dAcc, _, i) => dAcc.add(parts.slice(0, i + 1).join("/")),
+          new Set(acc.dirs).add(".")
+        )
 
-    function renderDir(dirPath: string, depth: number): string {
+        return {
+          dirs: newDirs,
+          filesByDir: new Map(acc.filesByDir).set(dir, [...(acc.filesByDir.get(dir) || []), path.basename(file)]),
+        }
+      },
+      { dirs: new Set<string>(), filesByDir: new Map<string, string[]>() }
+    )
+
+    const renderDir = (dirPath: string, depth: number): string => {
       const indent = "  ".repeat(depth)
-      let output = ""
-
-      if (depth > 0) {
-        output += `${indent}${path.basename(dirPath)}/\n`
-      }
-
+      const header = depth > 0 ? `${indent}${path.basename(dirPath)}/\n` : ""
       const childIndent = "  ".repeat(depth + 1)
-      const children = Array.from(dirs)
+
+      const subDirsOutput = Array.from(dirs)
         .filter((d) => path.dirname(d) === dirPath && d !== dirPath)
         .sort()
+        .map((child) => renderDir(child, depth + 1))
+        .join("")
 
-      // Render subdirectories first
-      for (const child of children) {
-        output += renderDir(child, depth + 1)
-      }
+      const filesOutput = (filesByDir.get(dirPath) || [])
+        .sort()
+        .map((file) => `${childIndent}${file}\n`)
+        .join("")
 
-      // Render files
-      const files = filesByDir.get(dirPath) || []
-      for (const file of files.sort()) {
-        output += `${childIndent}${file}\n`
-      }
-
-      return output
+      return header + subDirsOutput + filesOutput
     }
 
     const output = `${searchPath}/\n` + renderDir(".", 0)
