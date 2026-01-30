@@ -916,7 +916,7 @@ export const GithubRunCommand = cmd({
         })
 
         // result should always be assistant just satisfying type checker
-        if ((result as any).info.role === "assistant" && (result as any).info.error) {
+        if ((result as any).info?.role === "assistant" && (result as any).info?.error) {
           console.error("Agent error:", (result as any).info.error)
           throw new Error(
             `${(result as any).info.error.name}: ${"message" in (result as any).info.error ? (result as any).info.error.message : ""}`,
