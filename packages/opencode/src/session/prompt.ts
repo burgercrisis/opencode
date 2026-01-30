@@ -1545,7 +1545,7 @@ export namespace SessionPrompt {
 
               try {
                 const file = Bun.file(filepath)
-                let fileData: ArrayBuffer
+                let fileData: Uint8Array
                 
                 try {
                   fileData = await file.bytes()
@@ -1746,7 +1746,7 @@ export namespace SessionPrompt {
     // Switching from plan mode to build mode
     if (input.agent.name !== "plan" && assistantMessage?.info?.agent === "plan") {
       try {
-        const plan = Session.plan(input.session)
+        const plan = Session.plan(input.session as any)
         let exists = false
         try {
           exists = await Bun.file(plan).exists()
