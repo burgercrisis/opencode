@@ -35,6 +35,7 @@ import { Installation } from "@/installation"
 import { MessageV2 } from "@/session/message-v2"
 import { Config } from "@/config/config"
 import { Todo } from "@/session/todo"
+import { iife } from "@/util/iife"
 import { z } from "zod"
 import { LoadAPIKeyError } from "ai"
 import type { Event, OpencodeClient, SessionMessageResponse } from "@opencode-ai/sdk/v2"
@@ -597,11 +598,15 @@ export namespace ACP {
       if (message.info.role !== "assistant" && message.info.role !== "user") return
       const sessionId = message.info.sessionID
 
-      for (const part of message.parts) {
-        if (part.type === "tool") {
-          switch (part.state.status) {
-            case "pending":
-              await this.connection
+      const processParts = async (remaining: SessionMessageResponse["parts"]): Promise<void> => {
+        const part = remaining[0]
+        if (!part) return
+
+        await iife(async () => {
+          if (part.type === "tool") {
+            const status = part.state.status
+            if (status === "pending") {
+              return this.connection
                 .sessionUpdate({
                   sessionId,
                   update: {
@@ -614,12 +619,10 @@ export namespace ACP {
                     rawInput: {},
                   },
                 })
-                .catch((err) => {
-                  log.error("failed to send tool pending to ACP", { error: err })
-                })
-              break
-            case "running":
-              await this.connection
+                .catch((error) => log.error("failed to send tool pending replay to ACP", { error }))
+            }
+            if (status === "running") {
+              return this.connection
                 .sessionUpdate({
                   sessionId,
                   update: {
@@ -632,90 +635,27 @@ export namespace ACP {
                     rawInput: part.state.input,
                   },
                 })
-                .catch((err) => {
-                  log.error("failed to send tool in_progress to ACP", { error: err })
-                })
-              break
-            case "completed":
-              const kind = toToolKind(part.tool)
-              const content: ToolCallContent[] = [
-                {
-                  type: "content",
-                  content: {
-                    type: "text",
-                    text: part.state.output,
-                  },
-                },
-              ]
-
-              if (kind === "edit") {
-                const input = part.state.input
-                const filePath = typeof input["filePath"] === "string" ? input["filePath"] : ""
-                const oldText = typeof input["oldString"] === "string" ? input["oldString"] : ""
-                const newText =
-                  typeof input["newString"] === "string"
-                    ? input["newString"]
-                    : typeof input["content"] === "string"
-                      ? input["content"]
-                      : ""
-                content.push({
-                  type: "diff",
-                  path: filePath,
-                  oldText,
-                  newText,
-                })
-              }
-
-              if (part.tool === "todowrite") {
-                const parsedTodos = z.array(Todo.Info).safeParse(JSON.parse(part.state.output))
-                if (parsedTodos.success) {
-                  await this.connection
-                    .sessionUpdate({
-                      sessionId,
-                      update: {
-                        sessionUpdate: "plan",
-                        entries: parsedTodos.data.map((todo) => {
-                          const status: PlanEntry["status"] =
-                            todo.status === "cancelled" ? "completed" : (todo.status as PlanEntry["status"])
-                          return {
-                            priority: "medium",
-                            status,
-                            content: todo.content,
-                          }
-                        }),
-                      },
-                    })
-                    .catch((err) => {
-                      log.error("failed to send session update for todo", { error: err })
-                    })
-                } else {
-                  log.error("failed to parse todo output", { error: parsedTodos.error })
-                }
-              }
-
-              await this.connection
+                .catch((error) => log.error("failed to send tool in_progress replay to ACP", { error }))
+            }
+            if (status === "completed") {
+              return this.connection
                 .sessionUpdate({
                   sessionId,
                   update: {
                     sessionUpdate: "tool_call_update",
                     toolCallId: part.callID,
                     status: "completed",
-                    kind,
-                    content,
+                    kind: toToolKind(part.tool),
                     title: part.state.title,
                     rawInput: part.state.input,
-                    rawOutput: {
-                      output: part.state.output,
-                      metadata: part.state.metadata,
-                    },
+                    rawOutput: { output: part.state.output, metadata: part.state.metadata },
+                    content: [{ type: "content", content: { type: "text", text: part.state.output } }],
                   },
                 })
-                .catch((err) => {
-                  log.error("failed to send tool completed to ACP", { error: err })
-                })
-              break
-            case "error":
-              await this.connection
+                .catch((error) => log.error("failed to send tool completed replay to ACP", { error }))
+            }
+            if (status === "error") {
+              return this.connection
                 .sessionUpdate({
                   sessionId,
                   update: {
@@ -725,140 +665,30 @@ export namespace ACP {
                     kind: toToolKind(part.tool),
                     title: part.tool,
                     rawInput: part.state.input,
-                    content: [
-                      {
-                        type: "content",
-                        content: {
-                          type: "text",
-                          text: part.state.error,
-                        },
-                      },
-                    ],
-                    rawOutput: {
-                      error: part.state.error,
-                    },
+                    content: [{ type: "content", content: { type: "text", text: part.state.error } }],
+                    rawOutput: { error: part.state.error },
                   },
                 })
-                .catch((err) => {
-                  log.error("failed to send tool error to ACP", { error: err })
-                })
-              break
-          }
-        } else if (part.type === "text") {
-          if (part.text) {
-            const audience: Role[] | undefined = part.synthetic ? ["assistant"] : part.ignored ? ["user"] : undefined
-            await this.connection
-              .sessionUpdate({
-                sessionId,
-                update: {
-                  sessionUpdate: message.info.role === "user" ? "user_message_chunk" : "agent_message_chunk",
-                  content: {
-                    type: "text",
-                    text: part.text,
-                    ...(audience && { annotations: { audience } }),
-                  },
-                },
-              })
-              .catch((err) => {
-                log.error("failed to send text to ACP", { error: err })
-              })
-          }
-        } else if (part.type === "file") {
-          // Replay file attachments as appropriate ACP content blocks.
-          // OpenCode stores files internally as { type: "file", url, filename, mime }.
-          // We convert these back to ACP blocks based on the URL scheme and MIME type:
-          // - file:// URLs → resource_link
-          // - data: URLs with image/* → image block
-          // - data: URLs with text/* or application/json → resource with text
-          // - data: URLs with other types → resource with blob
-          const url = part.url
-          const filename = part.filename ?? "file"
-          const mime = part.mime || "application/octet-stream"
-          const messageChunk = message.info.role === "user" ? "user_message_chunk" : "agent_message_chunk"
-
-          if (url.startsWith("file://")) {
-            // Local file reference - send as resource_link
-            await this.connection
-              .sessionUpdate({
-                sessionId,
-                update: {
-                  sessionUpdate: messageChunk,
-                  content: { type: "resource_link", uri: url, name: filename, mimeType: mime },
-                },
-              })
-              .catch((err) => {
-                log.error("failed to send resource_link to ACP", { error: err })
-              })
-          } else if (url.startsWith("data:")) {
-            // Embedded content - parse data URL and send as appropriate block type
-            const base64Match = url.match(/^data:([^;]+);base64,(.*)$/)
-            const dataMime = base64Match?.[1]
-            const base64Data = base64Match?.[2] ?? ""
-
-            const effectiveMime = dataMime || mime
-
-            if (effectiveMime.startsWith("image/")) {
-              // Image - send as image block
-              await this.connection
-                .sessionUpdate({
-                  sessionId,
-                  update: {
-                    sessionUpdate: messageChunk,
-                    content: {
-                      type: "image",
-                      mimeType: effectiveMime,
-                      data: base64Data,
-                      uri: `file://${filename}`,
-                    },
-                  },
-                })
-                .catch((err) => {
-                  log.error("failed to send image to ACP", { error: err })
-                })
-            } else {
-              // Non-image: text types get decoded, binary types stay as blob
-              const isText = effectiveMime.startsWith("text/") || effectiveMime === "application/json"
-              const resource = isText
-                ? {
-                    uri: `file://${filename}`,
-                    mimeType: effectiveMime,
-                    text: Buffer.from(base64Data, "base64").toString("utf-8"),
-                  }
-                : { uri: `file://${filename}`, mimeType: effectiveMime, blob: base64Data }
-
-              await this.connection
-                .sessionUpdate({
-                  sessionId,
-                  update: {
-                    sessionUpdate: messageChunk,
-                    content: { type: "resource", resource },
-                  },
-                })
-                .catch((err) => {
-                  log.error("failed to send resource to ACP", { error: err })
-                })
+                .catch((error) => log.error("failed to send tool error replay to ACP", { error }))
             }
           }
-          // URLs that don't match file:// or data: are skipped (unsupported)
-        } else if (part.type === "reasoning") {
-          if (part.text) {
-            await this.connection
+          if (part.type === "text" && part.ignored !== true) {
+            return this.connection
               .sessionUpdate({
                 sessionId,
                 update: {
-                  sessionUpdate: "agent_thought_chunk",
-                  content: {
-                    type: "text",
-                    text: part.text,
-                  },
+                  sessionUpdate: message.info.role === "assistant" ? "agent_message_chunk" : "user_message_chunk",
+                  content: { type: "text", text: part.text },
                 },
               })
-              .catch((err) => {
-                log.error("failed to send reasoning to ACP", { error: err })
-              })
+              .catch((error) => log.error("failed to send text replay to ACP", { error }))
           }
-        }
+        })
+
+        return processParts(remaining.slice(1))
       }
+
+      await processParts(message.parts)
     }
 
     private async loadSessionMode(params: LoadSessionRequest) {
@@ -1053,67 +883,76 @@ export namespace ACP {
 
       const agent = session.modeId ?? (await AgentModule.defaultAgent())
 
-      const parts = params.prompt.flatMap((part) => {
-        if (part.type === "text") {
-          const audience = part.annotations?.audience
-          const assistant = audience?.length === 1 && audience[0] === "assistant"
-          const user = audience?.length === 1 && audience[0] === "user"
-          return [
-            {
-              type: "text" as const,
-              text: part.text,
-              ...(assistant && { synthetic: true }),
-              ...(user && { ignored: true }),
-            },
-          ]
-        }
-        if (part.type === "image") {
-          const parsed = parseUri(part.uri ?? "")
-          const file = parsed.type === "file" ? parsed.filename : "image"
-          if (part.data) {
+      const processPromptParts = (remaining: PromptRequest["prompt"], acc: any[]): any[] => {
+        const part = remaining[0]
+        if (!part) return acc
+
+        const nextParts = iife(() => {
+          if (part.type === "text") {
+            const audience = part.annotations?.audience
+            const assistant = audience?.length === 1 && audience[0] === "assistant"
+            const user = audience?.length === 1 && audience[0] === "user"
             return [
               {
-                type: "file" as const,
-                url: `data:${part.mimeType};base64,${part.data}`,
-                filename: file,
-                mime: part.mimeType,
+                type: "text" as const,
+                text: part.text,
+                ...(assistant && { synthetic: true }),
+                ...(user && { ignored: true }),
               },
             ]
           }
-          if (part.uri?.startsWith("http:")) {
-            return [
-              {
-                type: "file" as const,
-                url: part.uri,
-                filename: file,
-                mime: part.mimeType,
-              },
-            ]
+          if (part.type === "image") {
+            const parsed = parseUri(part.uri ?? "")
+            const file = parsed.type === "file" ? (parsed as any).filename : "image"
+            if (part.data) {
+              return [
+                {
+                  type: "file" as const,
+                  url: `data:${part.mimeType};base64,${part.data}`,
+                  filename: file,
+                  mime: part.mimeType,
+                },
+              ]
+            }
+            if (part.uri?.startsWith("http:")) {
+              return [
+                {
+                  type: "file" as const,
+                  url: part.uri,
+                  filename: file,
+                  mime: part.mimeType,
+                },
+              ]
+            }
           }
-        }
-        if (part.type === "resource_link") {
-          const parsed = parseUri(part.uri)
-          if (part.name && parsed.type === "file") parsed.filename = part.name
-          return [parsed]
-        }
-        if (part.type === "resource") {
-          const res = part.resource
-          if ("text" in res && res.text) return [{ type: "text" as const, text: res.text }]
-          if ("blob" in res && res.blob && res.mimeType) {
-            const parsed = parseUri(res.uri ?? "")
-            const file = parsed.type === "file" ? parsed.filename : "file"
-            return [
-              {
-                type: "file" as const,
-                url: `data:${res.mimeType};base64,${res.blob}`,
-                filename: file,
-                mime: res.mimeType,
-              },
-            ]
+          if (part.type === "resource_link") {
+            const parsed = parseUri(part.uri)
+            if (part.name && parsed.type === "file") (parsed as any).filename = part.name
+            return [parsed]
           }
-        }
-        return []
-      })
+          if (part.type === "resource") {
+            const res = part.resource
+            if ("text" in res && res.text) return [{ type: "text" as const, text: res.text }]
+            if ("blob" in res && res.blob && res.mimeType) {
+              const parsed = parseUri(res.uri ?? "")
+              const file = parsed.type === "file" ? (parsed as any).filename : "file"
+              return [
+                {
+                  type: "file" as const,
+                  url: `data:${res.mimeType};base64,${res.blob}`,
+                  filename: file,
+                  mime: res.mimeType,
+                },
+              ]
+            }
+          }
+          return []
+        })
+
+        return processPromptParts(remaining.slice(1), [...acc, ...nextParts])
+      }
+
+      const parts = processPromptParts(params.prompt, [])
 
       log.info("parts", { parts })
 
