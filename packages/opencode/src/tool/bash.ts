@@ -209,6 +209,7 @@ export const BashTool = Tool.define("bash", async () => {
 
       const { directories, patterns, always } = _tree.rootNode.descendantsOfType("command").reduce(
         (acc, node) => {
+          if (!node) return acc
           const command = Array.from({ length: node.childCount })
             .map((_, i) => node.child(i))
             .filter(
@@ -216,6 +217,8 @@ export const BashTool = Tool.define("bash", async () => {
                 !!child && ["command_name", "word", "string", "raw_string", "concatenation"].includes(child.type),
             )
             .map((child) => child.text)
+
+          if (command.length === 0) return acc
 
           const newDirectories = ["cd", "rm", "cp", "mv", "mkdir", "touch", "chmod", "chown", "cat"].includes(command[0])
             ? command.slice(1).reduce((dAcc, arg) => {
@@ -271,6 +274,7 @@ export const BashTool = Tool.define("bash", async () => {
             const val = initial[name] || initial[name.toUpperCase()]
             return val !== undefined ? val : `%${name}%`
           }) : value
+          if (newValue === undefined) return acc
           return { ...acc, [newKey]: newValue }
         }, {} as Record<string, string>)
       })
