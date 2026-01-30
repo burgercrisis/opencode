@@ -2291,11 +2291,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       try {
         if (stdoutStream) {
           stdoutStream.removeAllListeners()
-          stdoutStream.destroy()
+          ;(stdoutStream as any).destroy?.()
         }
         if (stderrStream) {
           stderrStream.removeAllListeners()
-          stderrStream.destroy()
+          ;(stderrStream as any).destroy?.()
         }
         if (proc && !proc.killed) {
           proc.kill('SIGTERM')
@@ -2822,11 +2822,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
          ],
        })
        
-       const text = await llmResult.text.catch(async (err) => {
-         log.error("failed to generate title", { 
-           sessionID: input.session.id, 
-           error: err instanceof Error ? err.message : String(err) 
-         })
+       const text = await llmResult.text.catch(async (err: any) => {
+        log.error("failed to generate title", { 
+          sessionID: input.session.id, 
+          error: err instanceof Error ? err.message : String(err) 
+        })
          
          // Cleanup on title generation failure
          try {
@@ -2848,11 +2848,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
            (draft) => {
              try {
                const cleaned = text
-                 .replace(/<thinking>[\s\S]*?<\/thinking>\s*/g, "")
-                 .split("\n")
-                 .map((line) => line.trim())
-                 .find((line) => line.length > 0)
-               if (!cleaned) return
+                .replace(/<thinking>[\s\S]*?<\/thinking>\s*/g, "")
+                .split("\n")
+                .map((line: string) => line.trim())
+                .find((line: string) => line.length > 0)
+              if (!cleaned) return
                 const title = cleaned.length > 100 ? cleaned.substring(0, 97) + "..." : cleaned
                draft.title = title
              } catch (processError) {
