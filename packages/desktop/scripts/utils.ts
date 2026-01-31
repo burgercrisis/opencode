@@ -1,4 +1,6 @@
 import { $ } from "bun"
+import { copyFileSync, mkdirSync, existsSync, unlinkSync, readdirSync } from "node:fs"
+import { join, dirname } from "node:path"
 
 export const SIDECAR_BINARIES: Array<{ rustTarget: string; ocBinary: string; assetExt: string }> = [
   {
@@ -28,23 +30,69 @@ export const SIDECAR_BINARIES: Array<{ rustTarget: string; ocBinary: string; ass
   },
 ]
 
-export const RUST_TARGET = Bun.env.RUST_TARGET
+export const RUST_TARGET =
+  Bun.env.RUST_TARGET ||
+  Bun.env.TAURI_ENV_TARGET_TRIPLE ||
+  (process.platform === "win32"
+    ? "x86_64-pc-windows-msvc"
+    : process.platform === "darwin"
+      ? process.arch === "arm64"
+        ? "aarch64-apple-darwin"
+        : "x86_64-apple-darwin"
+      : process.arch === "arm64"
+        ? "aarch64-unknown-linux-gnu"
+        : "x86_64-unknown-linux-gnu")
 
 export function getCurrentSidecar(target = RUST_TARGET) {
-  if (!target && !RUST_TARGET) throw new Error("RUST_TARGET not set")
+  if (!target) throw new Error("RUST_TARGET not set and could not be inferred")
 
   const binaryConfig = SIDECAR_BINARIES.find((b) => b.rustTarget === target)
-  if (!binaryConfig) throw new Error(`Sidecar configuration not available for Rust target '${RUST_TARGET}'`)
+  if (!binaryConfig) throw new Error(`Sidecar configuration not available for Rust target '${target}'`)
 
   return binaryConfig
 }
 
 export async function copyBinaryToSidecarFolder(source: string, target = RUST_TARGET) {
-  await $`mkdir -p src-tauri/sidecars`
   const dest = windowsify(`src-tauri/sidecars/opencode-cli-${target}`)
-  await $`cp ${source} ${dest}`
+  
+  // Ensure directory exists
+  const destDir = dirname(dest)
+  if (!existsSync(destDir)) {
+    mkdirSync(destDir, { recursive: true })
+  } else {
+    // Clean up any existing opencode-cli files in the sidecar folder to avoid conflicts/locks
+    try {
+      const files = readdirSync(destDir)
+      for (const file of files) {
+        if (file.startsWith("opencode-cli")) {
+          const filePath = join(destDir, file)
+          try {
+            // Remove read-only attribute if it exists
+            if (process.platform === "win32") {
+              await $`attrib -r ${filePath}`.quiet()
+            }
+            unlinkSync(filePath)
+          } catch (e) {
+            console.warn(`Could not delete ${filePath}: ${e.message}`)
+          }
+        }
+      }
+    } catch (e) {
+      console.warn(`Could not read sidecar directory: ${e.message}`)
+    }
+  }
 
-  console.log(`Copied ${source} to ${dest}`)
+  copyFileSync(source, dest)
+  
+  // Ensure the new file is not read-only and is "unblocked" for Windows
+  if (process.platform === "win32") {
+    try {
+      await $`attrib -r ${dest}`.quiet()
+      await $`powershell -Command "Unblock-File -Path '${dest}'"`.quiet()
+    } catch (e) {
+      // Ignore errors if attributes can't be set
+    }
+  }
 }
 
 export function windowsify(path: string) {
