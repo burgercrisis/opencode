@@ -4,7 +4,6 @@ import { EditTool } from "./edit"
 import DESCRIPTION from "./multiedit.txt"
 import path from "path"
 import { Instance } from "../project/instance"
-import { Filesystem } from "../util/filesystem"
 
 export const MultiEditTool = Tool.define("multiedit", {
   description: DESCRIPTION,
@@ -23,8 +22,9 @@ export const MultiEditTool = Tool.define("multiedit", {
   }),
   async execute(params, ctx) {
     const tool = await EditTool.init()
-    const results = []
-    for (const [, edit] of params.edits.entries()) {
+
+    const results = await params.edits.reduce(async (accPromise, edit) => {
+      const acc = await accPromise
       const result = await tool.execute(
         {
           filePath: params.filePath,
@@ -34,10 +34,11 @@ export const MultiEditTool = Tool.define("multiedit", {
         },
         ctx,
       )
-      results.push(result)
-    }
+      return [...acc, result]
+    }, Promise.resolve([] as Awaited<ReturnType<typeof tool.execute>>[]))
+
     return {
-      title: Filesystem.relativePath(Instance.worktree, params.filePath),
+      title: path.relative(Instance.worktree, params.filePath),
       metadata: {
         results: results.map((r) => r.metadata),
       },

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-APP=shuvcode
+APP=opencode
 
 MUTED='\033[0;2m'
 RED='\033[0;31m'
@@ -205,8 +205,8 @@ print_message() {
 }
 
 check_version() {
-    if command -v shuvcode >/dev/null 2>&1; then
-        shuvcode_path=$(which shuvcode)
+    if command -v opencode >/dev/null 2>&1; then
+        opencode_path=$(which opencode)
 
         ## Check the installed version
         installed_version=$(opencode --version 2>/dev/null || echo "")
@@ -261,7 +261,7 @@ download_with_progress() {
     fi
 
     local tmp_dir=${TMPDIR:-/tmp}
-    local basename="${tmp_dir}/shuvcode_install_$$"
+    local basename="${tmp_dir}/opencode_install_$$"
     local tracefile="${basename}.trace"
 
     rm -f "$tracefile"
@@ -311,8 +311,8 @@ download_with_progress() {
 }
 
 download_and_install() {
-    print_message info "\n${MUTED}Installing ${NC}shuvcode ${MUTED}version: ${NC}$specific_version"
-    local tmp_dir="${TMPDIR:-/tmp}/shuvcode_install_$$"
+    print_message info "\n${MUTED}Installing ${NC}opencode ${MUTED}version: ${NC}$specific_version"
+    local tmp_dir="${TMPDIR:-/tmp}/opencode_install_$$"
     mkdir -p "$tmp_dir"
 
     if [[ "$os" == "windows" ]] || ! [ -t 2 ] || ! download_with_progress "$url" "$tmp_dir/$filename"; then
@@ -352,9 +352,9 @@ add_to_path() {
     if grep -Fxq "$command" "$config_file"; then
         print_message info "Command already exists in $config_file, skipping write."
     elif [[ -w $config_file ]]; then
-        echo -e "\n# shuvcode" >> "$config_file"
+        echo -e "\n# opencode" >> "$config_file"
         echo "$command" >> "$config_file"
-        print_message info "${MUTED}Successfully added ${NC}shuvcode ${MUTED}to \$PATH in ${NC}$config_file"
+        print_message info "${MUTED}Successfully added ${NC}opencode ${MUTED}to \$PATH in ${NC}$config_file"
     else
         print_message warning "Manually add the directory to $config_file (or similar):"
         print_message info "  $command"
@@ -430,16 +430,17 @@ if [ -n "${GITHUB_ACTIONS-}" ] && [ "${GITHUB_ACTIONS}" == "true" ]; then
 fi
 
 echo -e ""
-echo -e "${MUTED}      ${NC}     ▄     "
-echo -e "${MUTED}█▀▀▀ █ █ █ █ █ ${NC}█▀▀▀ █▀▀█ █▀▀█ █▀▀█"
-echo -e "${MUTED}▀▀▀█ █▀▀█ █ █ █ ${NC}█░░░ █░░█ █░░█ █▀▀▀"
-echo -e "${MUTED}▀▀▀▀ ▀  ▀ ▀▀▀▀ ${NC}▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀"
+echo -e "${MUTED}                    ${NC}             ▄     "
+echo -e "${MUTED}█▀▀█ █▀▀█ █▀▀█ █▀▀▄ ${NC}█▀▀▀ █▀▀█ █▀▀█ █▀▀█"
+echo -e "${MUTED}█░░█ █░░█ █▀▀▀ █░░█ ${NC}█░░░ █░░█ █░░█ █▀▀▀"
+echo -e "${MUTED}▀▀▀▀ █▀▀▀ ▀▀▀▀ ▀  ▀ ${NC}▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀"
 echo -e ""
 echo -e ""
-echo -e "${MUTED}Shuvcode includes free models, to start:${NC}"
+echo -e "${MUTED}OpenCode includes free models, to start:${NC}"
 echo -e ""
 echo -e "cd <project>  ${MUTED}# Open directory${NC}"
-echo -e "shuvcode      ${MUTED}# Run command${NC}"
+echo -e "opencode      ${MUTED}# Run command${NC}"
 echo -e ""
-echo -e "${MUTED}A fork of opencode. For more info visit ${NC}https://shuv.ai"
+echo -e "${MUTED}For more information visit ${NC}https://opencode.ai/docs"
+echo -e ""
 echo -e ""

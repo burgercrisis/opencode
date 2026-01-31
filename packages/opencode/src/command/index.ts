@@ -3,7 +3,6 @@ import z from "zod"
 import { Config } from "../config/config"
 import { Instance } from "../project/instance"
 import { Identifier } from "../id/id"
-import { Plugin } from "../plugin"
 import PROMPT_INITIALIZE from "./template/initialize.txt"
 import PROMPT_REVIEW from "./template/review.txt"
 import { MCP } from "../mcp"
@@ -28,16 +27,17 @@ export namespace Command {
       agent: z.string().optional(),
       model: z.string().optional(),
       mcp: z.boolean().optional(),
+      // workaround for zod not supporting async functions natively so we use getters
+      // https://zod.dev/v4/changelog?id=zfunction
       template: z.promise(z.string()).or(z.string()),
       subtask: z.boolean().optional(),
       hints: z.array(z.string()),
-      sessionOnly: z.boolean().optional(),
-      aliases: z.array(z.string()).optional(),
     })
     .meta({
       ref: "Command",
     })
 
+  // for some reason zod is inferring `string` for z.promise(z.string()).or(z.string()) so we have to manually override it
   export type Info = Omit<z.infer<typeof Info>, "template"> & { template: Promise<string> | string }
 
   export function hints(template: string): string[] {
@@ -78,7 +78,7 @@ export namespace Command {
       },
     }
 
-    for (const [name, command] of Object.entries(cfg.command ?? {})) {
+    for (const [name, command] of Object.entries(cfg.command ?? {}) as [string, any][]) {
       result[name] = {
         name,
         agent: command.agent,
@@ -97,12 +97,14 @@ export namespace Command {
         mcp: true,
         description: prompt.description,
         get template() {
+          // since a getter can't be async we need to manually return a promise here
           return new Promise<string>(async (resolve, reject) => {
             const template = await MCP.getPrompt(
               prompt.client,
               prompt.name,
               prompt.arguments
-                ? Object.fromEntries(prompt.arguments?.map((argument, i) => [argument.name, `$${i + 1}`]))
+                ? // substitute each argument with $1, $2, etc.
+                  Object.fromEntries(prompt.arguments?.map((argument, i) => [argument.name, `$${i + 1}`]))
                 : {},
             ).catch(reject)
             resolve(
@@ -116,32 +118,11 @@ export namespace Command {
       }
     }
 
-    const plugins = await Plugin.list()
-    for (const plugin of plugins) {
-      const commands = plugin["plugin.command"]
-      if (!commands) continue
-      for (const [name, cmd] of Object.entries(commands)) {
-        if (result[name]) continue
-        result[name] = {
-          name,
-          description: cmd.description,
-          template: "",
-          sessionOnly: cmd.sessionOnly,
-          aliases: cmd.aliases,
-        }
-      }
-    }
-
     return result
   })
 
   export async function get(name: string) {
-    const commands = await state()
-    if (commands[name]) return commands[name]
-    for (const cmd of Object.values(commands)) {
-      if (cmd.aliases?.includes(name)) return cmd
-    }
-    return undefined
+    return state().then((x) => x[name])
   }
 
   export async function list() {

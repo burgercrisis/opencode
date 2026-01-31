@@ -10,20 +10,11 @@ export namespace Identifier {
     user: "usr",
     part: "prt",
     pty: "pty",
-  const prefixes = {
-    session: "ses",
-    message: "msg",
-    permission: "per",
-    question: "que",
-    user: "usr",
-    part: "prt",
-    pty: "pty",
     tool: "tool",
   } as const
 
   export function schema(prefix: keyof typeof prefixes) {
-    const start = prefixes[prefix]
-    return z.string().regex(new RegExp(`^${start}[0-9A-Za-z_]+$`))
+    return z.string().startsWith(prefixes[prefix])
   }
 
   const LENGTH = 26

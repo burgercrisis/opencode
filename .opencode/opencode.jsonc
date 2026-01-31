@@ -4,10 +4,24 @@
   // "enterprise": {
   //   "url": "https://enterprise.dev.opencode.ai",
   // },
-  "instructions": ["STYLE_GUIDE.md"],
   "provider": {
     "opencode": {
       "options": {},
+    },
+    "azure": {
+      "api": "https://{{AZURE_OPENAI_RESOURCE_NAME|AZURE_RESOURCE_NAME}}.openai.azure.com/openai/deployments/{{AZURE_OPENAI_DEPLOYMENT_ID|AZURE_DEPLOYMENT_ID}}",
+      "options": {
+        "apiVersion": "2024-06-01",
+      },
+      "models": {
+        "claude-3-5-sonnet": {
+          "id": "claude-3-5-sonnet",
+          "provider": {
+            "npm": "@ai-sdk/anthropic",
+            "api": "https://{{AZURE_OPENAI_RESOURCE_NAME|AZURE_RESOURCE_NAME}}.openai.azure.com/openai/deployments/{{AZURE_OPENAI_DEPLOYMENT_ID|AZURE_DEPLOYMENT_ID}}",
+          },
+        },
+      },
     },
   },
   "mcp": {

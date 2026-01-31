@@ -6,7 +6,6 @@ import DESCRIPTION from "./lsp.txt"
 import { Instance } from "../project/instance"
 import { pathToFileURL } from "url"
 import { assertExternalDirectory } from "./external-directory"
-import { Filesystem } from "../util/filesystem"
 
 const operations = [
   "goToDefinition",
@@ -18,6 +17,7 @@ const operations = [
   "prepareCallHierarchy",
   "incomingCalls",
   "outgoingCalls",
+  "diagnostics",
 ] as const
 
 export const LspTool = Tool.define("lsp", {
@@ -29,7 +29,7 @@ export const LspTool = Tool.define("lsp", {
     character: z.number().int().min(1).describe("The character offset (1-based, as shown in editors)"),
   }),
   execute: async (args, ctx) => {
-    const file = path.isAbsolute(args.filePath) ? args.filePath : Filesystem.join(Instance.directory, args.filePath)
+    const file = path.isAbsolute(args.filePath) ? args.filePath : path.join(Instance.directory, args.filePath)
     await assertExternalDirectory(ctx, file)
 
     await ctx.ask({
@@ -45,53 +45,34 @@ export const LspTool = Tool.define("lsp", {
       character: args.character - 1,
     }
 
-    const relPath = Filesystem.relativePath(Instance.worktree, file)
+    const relPath = path.relative(Instance.worktree, file)
     const title = `${args.operation} ${relPath}:${args.line}:${args.character}`
 
-    const exists = await Bun.file(file).exists()
-    if (!exists) {
-      throw new Error(`File not found: ${file}`)
-    }
-
-    const available = await LSP.hasClients(file)
-    if (!available) {
-      throw new Error("No LSP server available for this file type.")
-    }
+    !(await Bun.file(file).exists()) && (() => { throw new Error(`File not found: ${file}`) })()
+    !(await LSP.hasClients(file)) && (() => { throw new Error("No LSP server available for this file type.") })()
 
     await LSP.touchFile(file, true)
 
-    const result: unknown[] = await (async () => {
-      switch (args.operation) {
-        case "goToDefinition":
-          return LSP.definition(position)
-        case "findReferences":
-          return LSP.references(position)
-        case "hover":
-          return LSP.hover(position)
-        case "documentSymbol":
-          return LSP.documentSymbol(uri)
-        case "workspaceSymbol":
-          return LSP.workspaceSymbol("")
-        case "goToImplementation":
-          return LSP.implementation(position)
-        case "prepareCallHierarchy":
-          return LSP.prepareCallHierarchy(position)
-        case "incomingCalls":
-          return LSP.incomingCalls(position)
-        case "outgoingCalls":
-          return LSP.outgoingCalls(position)
-      }
-    })()
-
-    const output = (() => {
-      if (result.length === 0) return `No results found for ${args.operation}`
-      return JSON.stringify(result, null, 2)
-    })()
+    const result = await (args.operation === "diagnostics"
+      ? LSP.diagnostics().then((all) => all[file] || [])
+      : args.operation === "workspaceSymbol"
+        ? LSP.workspaceSymbol("")
+        : args.operation === "documentSymbol"
+          ? LSP.documentSymbol(uri)
+          : LSP[args.operation === "goToDefinition" ? "definition" :
+                args.operation === "findReferences" ? "references" :
+                args.operation === "hover" ? "hover" :
+                args.operation === "goToImplementation" ? "implementation" :
+                args.operation === "prepareCallHierarchy" ? "prepareCallHierarchy" :
+                args.operation === "incomingCalls" ? "incomingCalls" :
+                "outgoingCalls"](position))
 
     return {
       title,
       metadata: { result },
-      output,
+      output: args.operation === "diagnostics"
+        ? (result.length === 0 ? "No diagnostics found for this file." : (result as any[]).map(LSP.Diagnostic.pretty).join("\n"))
+        : (result.length === 0 ? `No results found for ${args.operation}` : JSON.stringify(result, null, 2)),
     }
   },
 })

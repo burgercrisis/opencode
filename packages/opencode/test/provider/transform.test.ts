@@ -39,8 +39,12 @@ describe("ProviderTransform.options - setCacheKey", () => {
   } as any
 
   test("should set promptCacheKey when providerOptions.setCacheKey is true", () => {
-    const result = ProviderTransform.options(mockModel, sessionID, { setCacheKey: true })
-    expect(result.promptCacheKey).toBe(sessionID.replace(/^ses_/, "sess_"))
+    const result = ProviderTransform.options({
+      model: mockModel,
+      sessionID,
+      providerOptions: { setCacheKey: true },
+    })
+    expect(result.promptCacheKey).toBe(sessionID)
   })
 
   test("should not set promptCacheKey when providerOptions.setCacheKey is false", () => {
@@ -76,8 +80,8 @@ describe("ProviderTransform.options - setCacheKey", () => {
         npm: "@ai-sdk/openai",
       },
     }
-    const result = ProviderTransform.options(openaiModel, sessionID, {})
-    expect(result.promptCacheKey).toBe(sessionID.replace(/^ses_/, "sess_"))
+    const result = ProviderTransform.options({ model: openaiModel, sessionID, providerOptions: {} })
+    expect(result.promptCacheKey).toBe(sessionID)
   })
 
   test("should set store=false for openai provider", () => {
@@ -562,25 +566,13 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
 
     const result = ProviderTransform.message(msgs, anthropicModel, {})
 
-    expect(result).toHaveLength(2)
+    expect(result).toHaveLength(1)
     expect(result[0].content).toHaveLength(1)
     expect(result[0].content[0]).toEqual({
       type: "tool-call",
       toolCallId: "123",
       toolName: "bash",
       input: { command: "ls" },
-    })
-    expect(result[1].role).toBe("tool")
-    expect(result[1].content).toHaveLength(1)
-    expect(result[1].content[0]).toEqual({
-      type: "tool-result",
-      toolCallId: "123",
-      toolName: "bash",
-      output: {
-        type: "error-text",
-        value:
-          "Tool result missing. The previous tool call did not complete (session may have been interrupted). Please retry.",
-      },
     })
   })
 
@@ -1064,8 +1056,8 @@ describe("ProviderTransform.variants", () => {
       cache: { read: 0.0001, write: 0.0002 },
     },
     limit: {
-      context: 128000,
-      output: 8192,
+      context: 200_000,
+      output: 64_000,
     },
     status: "active",
     options: {},
@@ -1229,6 +1221,102 @@ describe("ProviderTransform.variants", () => {
       expect(Object.keys(result)).toEqual(["none", "minimal", "low", "medium", "high", "xhigh"])
       expect(result.low).toEqual({ reasoningEffort: "low" })
       expect(result.high).toEqual({ reasoningEffort: "high" })
+    })
+  })
+
+  describe("@ai-sdk/github-copilot", () => {
+    test("standard models return low, medium, high", () => {
+      const model = createMockModel({
+        id: "gpt-4.5",
+        providerID: "github-copilot",
+        api: {
+          id: "gpt-4.5",
+          url: "https://api.githubcopilot.com",
+          npm: "@ai-sdk/github-copilot",
+        },
+      })
+      const result = ProviderTransform.variants(model)
+      expect(Object.keys(result)).toEqual(["low", "medium", "high"])
+      expect(result.low).toEqual({
+        reasoningEffort: "low",
+        reasoningSummary: "auto",
+        include: ["reasoning.encrypted_content"],
+      })
+    })
+
+    test("gpt-5.1-codex-max includes xhigh", () => {
+      const model = createMockModel({
+        id: "gpt-5.1-codex-max",
+        providerID: "github-copilot",
+        api: {
+          id: "gpt-5.1-codex-max",
+          url: "https://api.githubcopilot.com",
+          npm: "@ai-sdk/github-copilot",
+        },
+      })
+      const result = ProviderTransform.variants(model)
+      expect(Object.keys(result)).toEqual(["low", "medium", "high", "xhigh"])
+    })
+
+    test("gpt-5.1-codex-mini does not include xhigh", () => {
+      const model = createMockModel({
+        id: "gpt-5.1-codex-mini",
+        providerID: "github-copilot",
+        api: {
+          id: "gpt-5.1-codex-mini",
+          url: "https://api.githubcopilot.com",
+          npm: "@ai-sdk/github-copilot",
+        },
+      })
+      const result = ProviderTransform.variants(model)
+      expect(Object.keys(result)).toEqual(["low", "medium", "high"])
+    })
+
+    test("gpt-5.1-codex does not include xhigh", () => {
+      const model = createMockModel({
+        id: "gpt-5.1-codex",
+        providerID: "github-copilot",
+        api: {
+          id: "gpt-5.1-codex",
+          url: "https://api.githubcopilot.com",
+          npm: "@ai-sdk/github-copilot",
+        },
+      })
+      const result = ProviderTransform.variants(model)
+      expect(Object.keys(result)).toEqual(["low", "medium", "high"])
+    })
+
+    test("gpt-5.2 includes xhigh", () => {
+      const model = createMockModel({
+        id: "gpt-5.2",
+        providerID: "github-copilot",
+        api: {
+          id: "gpt-5.2",
+          url: "https://api.githubcopilot.com",
+          npm: "@ai-sdk/github-copilot",
+        },
+      })
+      const result = ProviderTransform.variants(model)
+      expect(Object.keys(result)).toEqual(["low", "medium", "high", "xhigh"])
+      expect(result.xhigh).toEqual({
+        reasoningEffort: "xhigh",
+        reasoningSummary: "auto",
+        include: ["reasoning.encrypted_content"],
+      })
+    })
+
+    test("gpt-5.2-codex includes xhigh", () => {
+      const model = createMockModel({
+        id: "gpt-5.2-codex",
+        providerID: "github-copilot",
+        api: {
+          id: "gpt-5.2-codex",
+          url: "https://api.githubcopilot.com",
+          npm: "@ai-sdk/github-copilot",
+        },
+      })
+      const result = ProviderTransform.variants(model)
+      expect(Object.keys(result)).toEqual(["low", "medium", "high", "xhigh"])
     })
   })
 
@@ -1635,103 +1723,5 @@ describe("ProviderTransform.variants", () => {
       const result = ProviderTransform.variants(model)
       expect(result).toEqual({})
     })
-  })
-})
-
-describe("ProviderTransform.message - anthropic tool-call pairing", () => {
-  const mockModel = {
-    id: "anthropic/claude-opus-4-5",
-    providerID: "anthropic",
-    api: {
-      id: "claude-opus-4-5-20251101",
-      url: "https://api.anthropic.com",
-      npm: "@ai-sdk/anthropic",
-    },
-    name: "Claude Opus 4.5",
-    capabilities: {
-      temperature: true,
-      reasoning: true,
-      attachment: true,
-      toolcall: true,
-      input: { text: true, audio: false, image: false, video: false, pdf: false },
-      output: { text: true, audio: false, image: false, video: false, pdf: false },
-      interleaved: false,
-    },
-    cost: {
-      input: 0,
-      output: 0,
-      cache: { read: 0, write: 0 },
-    },
-    limit: {
-      context: 200000,
-      output: 8192,
-    },
-    status: "active",
-    options: {},
-    headers: {},
-    release_date: "2025-11-01",
-  } as any
-
-  test("inserts a tool message when missing", () => {
-    const msgs = [
-      {
-        role: "assistant",
-        content: [
-          {
-            type: "tool-call",
-            toolCallId: "toolu_a",
-            toolName: "write",
-            input: { filePath: "/tmp/a", content: "x" },
-          },
-        ],
-      },
-      { role: "user", content: "Next." },
-    ] as any[]
-
-    const result = ProviderTransform.message(msgs, mockModel) as any[]
-
-    expect(result[0].role).toBe("assistant")
-    expect(result[1].role).toBe("tool")
-    expect(result[2].role).toBe("user")
-
-    const toolContent = result[1].content
-    expect(Array.isArray(toolContent)).toBe(true)
-    expect(toolContent[0].type).toBe("tool-result")
-    expect(toolContent[0].toolCallId).toBe("toolu_a")
-    expect(toolContent[0].toolName).toBe("write")
-    expect(toolContent[0].output.type).toBe("error-text")
-  })
-
-  test("patches missing tool results in existing tool message", () => {
-    const msgs = [
-      {
-        role: "assistant",
-        content: [
-          { type: "tool-call", toolCallId: "toolu_a", toolName: "write", input: { a: 1 } },
-          { type: "tool-call", toolCallId: "toolu_b", toolName: "bash", input: { command: "echo hi" } },
-        ],
-      },
-      {
-        role: "tool",
-        content: [
-          {
-            type: "tool-result",
-            toolCallId: "toolu_a",
-            toolName: "write",
-            output: { type: "text", value: "ok" },
-          },
-        ],
-      },
-    ] as any[]
-
-    const result = ProviderTransform.message(msgs, mockModel) as any[]
-
-    expect(result).toHaveLength(2)
-    expect(result[1].role).toBe("tool")
-
-    const ids = (result[1].content as any[]).filter((p) => p.type === "tool-result").map((p) => p.toolCallId)
-
-    expect(ids).toContain("toolu_a")
-    expect(ids).toContain("toolu_b")
   })
 })

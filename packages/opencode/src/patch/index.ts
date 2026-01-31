@@ -1,7 +1,6 @@
 import z from "zod"
 import * as path from "path"
 import * as fs from "fs/promises"
-import { readFileSync } from "fs"
 import { Log } from "../util/log"
 
 export namespace Patch {
@@ -76,29 +75,24 @@ export namespace Patch {
     lines: string[],
     startIdx: number,
   ): { filePath: string; movePath?: string; nextIdx: number } | null {
-    if (startIdx >= lines.length) return null
     const line = lines[startIdx]
 
     if (line.startsWith("*** Add File:")) {
-      const filePath = line.substring("*** Add File:".length).trim()
+      const filePath = line.slice(line.indexOf(":") + 1).trim()
       return filePath ? { filePath, nextIdx: startIdx + 1 } : null
     }
 
     if (line.startsWith("*** Delete File:")) {
-      const filePath = line.substring("*** Delete File:".length).trim()
+      const filePath = line.slice(line.indexOf(":") + 1).trim()
       return filePath ? { filePath, nextIdx: startIdx + 1 } : null
     }
 
     if (line.startsWith("*** Update File:")) {
-      const filePath = line.substring("*** Update File:".length).trim()
-      let movePath: string | undefined
-      let nextIdx = startIdx + 1
-
-      // Check for move directive
-      if (nextIdx < lines.length && lines[nextIdx].startsWith("*** Move to:")) {
-        movePath = lines[nextIdx].substring("*** Move to:".length).trim()
-        nextIdx++
-      }
+      const filePath = line.slice(line.indexOf(":") + 1).trim()
+      const nextIdxAfterHeader = startIdx + 1
+      const hasMove = nextIdxAfterHeader < lines.length && lines[nextIdxAfterHeader].startsWith("*** Move to:")
+      const movePath = hasMove ? lines[nextIdxAfterHeader].slice(lines[nextIdxAfterHeader].indexOf(":") + 1).trim() : undefined
+      const nextIdx = hasMove ? nextIdxAfterHeader + 1 : nextIdxAfterHeader
 
       return filePath ? { filePath, movePath, nextIdx } : null
     }
@@ -107,92 +101,80 @@ export namespace Patch {
   }
 
   function parseUpdateFileChunks(lines: string[], startIdx: number): { chunks: UpdateFileChunk[]; nextIdx: number } {
-    const chunks: UpdateFileChunk[] = []
-    let i = startIdx
+    const parseChunks = (currentIdx: number, acc: UpdateFileChunk[]): { chunks: UpdateFileChunk[]; nextIdx: number } => {
+      if (currentIdx >= lines.length || lines[currentIdx].startsWith("***")) {
+        return { chunks: acc, nextIdx: currentIdx }
+      }
 
-    while (i < lines.length && !lines[i].startsWith("***")) {
-      if (lines[i].startsWith("@@")) {
-        // Parse context line
-        const contextLine = lines[i].substring(2).trim()
-        i++
+      if (lines[currentIdx].startsWith("@@")) {
+        const contextLine = lines[currentIdx].substring(2).trim()
 
-        const oldLines: string[] = []
-        const newLines: string[] = []
-        let isEndOfFile = false
+        const parseLines = (
+          i: number,
+          oldL: string[],
+          newL: string[],
+          eof: boolean,
+        ): { nextI: number; oldLines: string[]; newLines: string[]; isEndOfFile: boolean } => {
+          if (i >= lines.length || lines[i].startsWith("@@") || lines[i].startsWith("***")) {
+            return { nextI: i, oldLines: oldL, newLines: newL, isEndOfFile: eof }
+          }
 
-        // Parse change lines
-        while (i < lines.length && !lines[i].startsWith("@@") && !lines[i].startsWith("***")) {
           const changeLine = lines[i]
-
           if (changeLine === "*** End of File") {
-            isEndOfFile = true
-            i++
-            break
+            return { nextI: i + 1, oldLines: oldL, newLines: newL, isEndOfFile: true }
           }
 
           if (changeLine.startsWith(" ")) {
-            // Keep line - appears in both old and new
             const content = changeLine.substring(1)
-            oldLines.push(content)
-            newLines.push(content)
-          } else if (changeLine.startsWith("-")) {
-            // Remove line - only in old
-            oldLines.push(changeLine.substring(1))
-          } else if (changeLine.startsWith("+")) {
-            // Add line - only in new
-            newLines.push(changeLine.substring(1))
+            return parseLines(i + 1, [...oldL, content], [...newL, content], eof)
           }
 
-          i++
+          if (changeLine.startsWith("-")) {
+            return parseLines(i + 1, [...oldL, changeLine.substring(1)], newL, eof)
+          }
+
+          if (changeLine.startsWith("+")) {
+            return parseLines(i + 1, oldL, [...newL, changeLine.substring(1)], eof)
+          }
+
+          return parseLines(i + 1, oldL, newL, eof)
         }
 
-        chunks.push({
-          old_lines: oldLines,
-          new_lines: newLines,
-          change_context: contextLine || undefined,
-          is_end_of_file: isEndOfFile || undefined,
-        })
-      } else {
-        i++
+        const { nextI, oldLines, newLines, isEndOfFile } = parseLines(currentIdx + 1, [], [], false)
+        return parseChunks(nextI, [
+          ...acc,
+          {
+            old_lines: oldLines,
+            new_lines: newLines,
+            change_context: contextLine || undefined,
+            is_end_of_file: isEndOfFile || undefined,
+          },
+        ])
       }
+
+      return parseChunks(currentIdx + 1, acc)
     }
 
-    return { chunks, nextIdx: i }
+    return parseChunks(startIdx, [])
   }
 
   function parseAddFileContent(lines: string[], startIdx: number): { content: string; nextIdx: number } {
-    let content = ""
-    let i = startIdx
-
-    while (i < lines.length && !lines[i].startsWith("***")) {
-      if (lines[i].startsWith("+")) {
-        content += lines[i].substring(1) + "\n"
+    const parse = (i: number, acc: string): { content: string; nextIdx: number } => {
+      if (i >= lines.length || lines[i].startsWith("***")) {
+        // Remove trailing newline
+        const content = acc.endsWith("\n") ? acc.slice(0, -1) : acc
+        return { content, nextIdx: i }
       }
-      i++
+
+      const nextAcc = lines[i].startsWith("+") ? acc + lines[i].substring(1) + "\n" : acc
+      return parse(i + 1, nextAcc)
     }
 
-    // Remove trailing newline
-    if (content.endsWith("\n")) {
-      content = content.slice(0, -1)
-    }
-
-    return { content, nextIdx: i }
-  }
-
-  function stripHeredoc(input: string): string {
-    // Match heredoc patterns like: cat <<'EOF'\n...\nEOF or <<EOF\n...\nEOF
-    const heredocMatch = input.match(/^(?:cat\s+)?<<['"]?(\w+)['"]?\s*\n([\s\S]*?)\n\1\s*$/)
-    if (heredocMatch) {
-      return heredocMatch[2]
-    }
-    return input
+    return parse(startIdx, "")
   }
 
   export function parsePatch(patchText: string): { hunks: Hunk[] } {
-    const cleaned = stripHeredoc(patchText.trim())
-    const lines = cleaned.split("\n")
-    const hunks: Hunk[] = []
-    let i = 0
+    const lines = patchText.split(/\r?\n/)
 
     // Look for Begin/End patch markers
     const beginMarker = "*** Begin Patch"
@@ -206,44 +188,60 @@ export namespace Patch {
     }
 
     // Parse content between markers
-    i = beginIdx + 1
+    const parseHunks = (currentIdx: number, acc: Hunk[]): Hunk[] => {
+      if (currentIdx >= endIdx) return acc
 
-    while (i < endIdx) {
-      const header = parsePatchHeader(lines, i)
-      if (!header) {
-        i++
-        continue
-      }
+      const header = parsePatchHeader(lines, currentIdx)
+      if (!header) return parseHunks(currentIdx + 1, acc)
 
-      if (lines[i].startsWith("*** Add File:")) {
+      const line = lines[currentIdx]
+      if (line.startsWith("*** Add File:")) {
         const { content, nextIdx } = parseAddFileContent(lines, header.nextIdx)
-        hunks.push({
-          type: "add",
-          path: header.filePath,
-          contents: content,
-        })
-        i = nextIdx
-      } else if (lines[i].startsWith("*** Delete File:")) {
-        hunks.push({
-          type: "delete",
-          path: header.filePath,
-        })
-        i = header.nextIdx
-      } else if (lines[i].startsWith("*** Update File:")) {
-        const { chunks, nextIdx } = parseUpdateFileChunks(lines, header.nextIdx)
-        hunks.push({
-          type: "update",
-          path: header.filePath,
-          move_path: header.movePath,
-          chunks,
-        })
-        i = nextIdx
-      } else {
-        i++
+        return parseHunks(nextIdx, [
+          ...acc,
+          {
+            type: "add",
+            path: header.filePath,
+            contents: content,
+          },
+        ])
       }
+
+      if (line.startsWith("*** Delete File:")) {
+        return parseHunks(header.nextIdx, [
+          ...acc,
+          {
+            type: "delete",
+            path: header.filePath,
+          },
+        ])
+      }
+
+      if (line.startsWith("*** Update File:")) {
+        const { chunks, nextIdx } = parseUpdateFileChunks(lines, header.nextIdx)
+        return parseHunks(nextIdx, [
+          ...acc,
+          {
+            type: "update",
+            path: header.filePath,
+            move_path: header.movePath,
+            chunks,
+          },
+        ])
+      }
+
+      return parseHunks(currentIdx + 1, acc)
     }
 
-    return { hunks }
+    return { hunks: parseHunks(beginIdx + 1, []) }
+  }
+
+  export function safeParsePatch(patchText: string): { success: true; data: { hunks: Hunk[] } } | { success: false; error: Error } {
+    try {
+      return { success: true, data: parsePatch(patchText) }
+    } catch (e) {
+      return { success: false, error: e as Error }
+    }
   }
 
   // Apply patch functionality
@@ -309,29 +307,49 @@ export namespace Patch {
     content: string
   }
 
-  export function deriveNewContentsFromChunks(filePath: string, chunks: UpdateFileChunk[]): ApplyPatchFileUpdate {
-    // Read original file content
-    let originalContent: string
-    try {
-      originalContent = readFileSync(filePath, "utf-8")
-    } catch (error) {
-      throw new Error(`Failed to read file ${filePath}: ${error}`)
-    }
+  const normalize = (s: string) =>
+    s
+      .replace(/[\u201c\u201d]/g, '"')
+      .replace(/[\u2018\u2019]/g, "'")
+      .replace(/\u2014/g, "--")
+      .replace(/\u2013/g, "-")
+      .trim()
 
-    let originalLines = originalContent.split("\n")
+  const linesMatch = (a: string, b: string) => {
+    if (a === b) return true
+    return normalize(a) === normalize(b)
+  }
+
+  export async function deriveNewContentsFromChunks(
+    filePath: string,
+    chunks: UpdateFileChunk[],
+    existingContent?: string,
+  ): Promise<ApplyPatchFileUpdate> {
+    // Read original file content
+    const originalContent =
+      existingContent ??
+      (await (async () => {
+        try {
+          return await Bun.file(filePath).text()
+        } catch (error) {
+          throw new Error(`Failed to read file ${filePath}: ${error}`)
+        }
+      })())
+
+    const initialLines = originalContent.split(/\r?\n/)
 
     // Drop trailing empty element for consistent line counting
-    if (originalLines.length > 0 && originalLines[originalLines.length - 1] === "") {
-      originalLines.pop()
-    }
+    const originalLines = (initialLines.length > 0 && initialLines[initialLines.length - 1] === "")
+      ? initialLines.slice(0, -1)
+      : initialLines
 
     const replacements = computeReplacements(originalLines, filePath, chunks)
-    let newLines = applyReplacements(originalLines, replacements)
+    const appliedLines = applyReplacements(originalLines, replacements)
 
     // Ensure trailing newline
-    if (newLines.length === 0 || newLines[newLines.length - 1] !== "") {
-      newLines.push("")
-    }
+    const newLines = (appliedLines.length === 0 || appliedLines[appliedLines.length - 1] !== "")
+      ? [...appliedLines, ""]
+      : appliedLines
 
     const newContent = newLines.join("\n")
 
@@ -349,227 +367,152 @@ export namespace Patch {
     filePath: string,
     chunks: UpdateFileChunk[],
   ): Array<[number, number, string[]]> {
-    const replacements: Array<[number, number, string[]]> = []
-    let lineIndex = 0
+    const { replacements } = chunks.reduce(
+      (acc, chunk) => {
+        // Handle context-based seeking
+        const lineIndexAfterContext = chunk.change_context
+          ? (() => {
+              const contextIdx = seekSequence(originalLines, [chunk.change_context], acc.lineIndex)
+              if (contextIdx === -1) {
+                throw new Error(`Failed to find context '${chunk.change_context}' in ${filePath}`)
+              }
+              return contextIdx + 1
+            })()
+          : acc.lineIndex
 
-    for (const chunk of chunks) {
-      // Handle context-based seeking
-      if (chunk.change_context) {
-        const contextIdx = seekSequence(originalLines, [chunk.change_context], lineIndex)
-        if (contextIdx === -1) {
-          throw new Error(`Failed to find context '${chunk.change_context}' in ${filePath}`)
+        // Handle pure addition (no old lines)
+        if (chunk.old_lines.length === 0) {
+          const insertionIdx =
+            originalLines.length > 0 && originalLines[originalLines.length - 1] === ""
+              ? originalLines.length - 1
+              : originalLines.length
+          return {
+            replacements: [...acc.replacements, [insertionIdx, 0, chunk.new_lines] as [number, number, string[]]],
+            lineIndex: lineIndexAfterContext,
+          }
         }
-        lineIndex = contextIdx + 1
-      }
 
-      // Handle pure addition (no old lines)
-      if (chunk.old_lines.length === 0) {
-        const insertionIdx =
-          originalLines.length > 0 && originalLines[originalLines.length - 1] === ""
-            ? originalLines.length - 1
-            : originalLines.length
-        replacements.push([insertionIdx, 0, chunk.new_lines])
-        continue
-      }
-
-      // Try to match old lines in the file
-      let pattern = chunk.old_lines
-      let newSlice = chunk.new_lines
-      let found = seekSequence(originalLines, pattern, lineIndex, chunk.is_end_of_file)
-
-      // Retry without trailing empty line if not found
-      if (found === -1 && pattern.length > 0 && pattern[pattern.length - 1] === "") {
-        pattern = pattern.slice(0, -1)
-        if (newSlice.length > 0 && newSlice[newSlice.length - 1] === "") {
-          newSlice = newSlice.slice(0, -1)
+        // Try to match old lines in the file
+        const findMatch = (pattern: string[], newSlice: string[]): [number, number, string[]] | null => {
+          const found = seekSequence(originalLines, pattern, lineIndexAfterContext)
+          if (found !== -1) return [found, pattern.length, newSlice]
+          if (pattern.length > 0 && pattern[pattern.length - 1] === "") {
+            return findMatch(pattern.slice(0, -1), newSlice.length > 0 ? newSlice.slice(0, -1) : newSlice)
+          }
+          return null
         }
-        found = seekSequence(originalLines, pattern, lineIndex, chunk.is_end_of_file)
-      }
 
-      if (found !== -1) {
-        replacements.push([found, pattern.length, newSlice])
-        lineIndex = found + pattern.length
-      } else {
-        throw new Error(`Failed to find expected lines in ${filePath}:\n${chunk.old_lines.join("\n")}`)
-      }
-    }
+        const match = findMatch(chunk.old_lines, chunk.new_lines)
+        if (!match) {
+          throw new Error(`Failed to find expected lines in ${filePath}:\n${chunk.old_lines.join("\n")}`)
+        }
+
+        return {
+          replacements: [...acc.replacements, match],
+          lineIndex: match[0] + match[1],
+        }
+      },
+      { replacements: [] as Array<[number, number, string[]]>, lineIndex: 0 },
+    )
 
     // Sort replacements by index to apply in order
-    replacements.sort((a, b) => a[0] - b[0])
-
-    return replacements
+    return [...replacements].sort((a, b) => a[0] - b[0])
   }
 
   function applyReplacements(lines: string[], replacements: Array<[number, number, string[]]>): string[] {
     // Apply replacements in reverse order to avoid index shifting
-    const result = [...lines]
-
-    for (let i = replacements.length - 1; i >= 0; i--) {
-      const [startIdx, oldLen, newSegment] = replacements[i]
-
-      // Remove old lines
-      result.splice(startIdx, oldLen)
-
-      // Insert new lines
-      for (let j = 0; j < newSegment.length; j++) {
-        result.splice(startIdx + j, 0, newSegment[j])
-      }
-    }
-
-    return result
+    return replacements
+      .sort((a, b) => b[0] - a[0])
+      .reduce((acc, [startIdx, oldLen, newSegment]) => [
+        ...acc.slice(0, startIdx),
+        ...newSegment,
+        ...acc.slice(startIdx + oldLen)
+      ], lines)
   }
 
-  // Normalize Unicode punctuation to ASCII equivalents (like Rust's normalize_unicode)
-  function normalizeUnicode(str: string): string {
-    return str
-      .replace(/[\u2018\u2019\u201A\u201B]/g, "'") // single quotes
-      .replace(/[\u201C\u201D\u201E\u201F]/g, '"') // double quotes
-      .replace(/[\u2010\u2011\u2012\u2013\u2014\u2015]/g, "-") // dashes
-      .replace(/\u2026/g, "...") // ellipsis
-      .replace(/\u00A0/g, " ") // non-breaking space
-  }
-
-  type Comparator = (a: string, b: string) => boolean
-
-  function tryMatch(lines: string[], pattern: string[], startIndex: number, compare: Comparator, eof: boolean): number {
-    // If EOF anchor, try matching from end of file first
-    if (eof) {
-      const fromEnd = lines.length - pattern.length
-      if (fromEnd >= startIndex) {
-        let matches = true
-        for (let j = 0; j < pattern.length; j++) {
-          if (!compare(lines[fromEnd + j], pattern[j])) {
-            matches = false
-            break
-          }
-        }
-        if (matches) return fromEnd
-      }
-    }
-
-    // Forward search from startIndex
-    for (let i = startIndex; i <= lines.length - pattern.length; i++) {
-      let matches = true
-      for (let j = 0; j < pattern.length; j++) {
-        if (!compare(lines[i + j], pattern[j])) {
-          matches = false
-          break
-        }
-      }
-      if (matches) return i
-    }
-
-    return -1
-  }
-
-  function seekSequence(lines: string[], pattern: string[], startIndex: number, eof = false): number {
+  function seekSequence(lines: string[], pattern: string[], startIndex: number): number {
     if (pattern.length === 0) return -1
 
-    // Pass 1: exact match
-    const exact = tryMatch(lines, pattern, startIndex, (a, b) => a === b, eof)
-    if (exact !== -1) return exact
+    const checkMatch = (idx: number) => pattern.every((p, j) => linesMatch(lines[idx + j], p))
 
-    // Pass 2: rstrip (trim trailing whitespace)
-    const rstrip = tryMatch(lines, pattern, startIndex, (a, b) => a.trimEnd() === b.trimEnd(), eof)
-    if (rstrip !== -1) return rstrip
+    const findIndex = (i: number): number => {
+      if (i > lines.length - pattern.length) return -1
+      if (checkMatch(i)) return i
+      return findIndex(i + 1)
+    }
 
-    // Pass 3: trim (both ends)
-    const trim = tryMatch(lines, pattern, startIndex, (a, b) => a.trim() === b.trim(), eof)
-    if (trim !== -1) return trim
-
-    // Pass 4: normalized (Unicode punctuation to ASCII)
-    const normalized = tryMatch(
-      lines,
-      pattern,
-      startIndex,
-      (a, b) => normalizeUnicode(a.trim()) === normalizeUnicode(b.trim()),
-      eof,
-    )
-    return normalized
+    return findIndex(startIndex)
   }
 
   function generateUnifiedDiff(oldContent: string, newContent: string): string {
     const oldLines = oldContent.split("\n")
     const newLines = newContent.split("\n")
 
-    // Simple diff generation - in a real implementation you'd use a proper diff algorithm
-    let diff = "@@ -1 +1 @@\n"
-
-    // Find changes (simplified approach)
     const maxLen = Math.max(oldLines.length, newLines.length)
-    let hasChanges = false
-
-    for (let i = 0; i < maxLen; i++) {
+    
+    const diffLinesList = Array.from({ length: maxLen }).reduce((acc: string[], _, i) => {
       const oldLine = oldLines[i] || ""
       const newLine = newLines[i] || ""
 
       if (oldLine !== newLine) {
-        if (oldLine) diff += `-${oldLine}\n`
-        if (newLine) diff += `+${newLine}\n`
-        hasChanges = true
-      } else if (oldLine) {
-        diff += ` ${oldLine}\n`
+        const removed = oldLine ? [`-${oldLine}`] : []
+        const added = newLine ? [`+${newLine}`] : []
+        return [...acc, ...removed, ...added]
       }
-    }
+      
+      if (oldLine) return [...acc, ` ${oldLine}`]
+      return acc
+    }, [])
 
-    return hasChanges ? diff : ""
+    const hasChanges = diffLinesList.some(line => line.startsWith("+") || line.startsWith("-"))
+    return hasChanges ? "@@ -1 +1 @@\n" + diffLinesList.join("\n") + "\n" : ""
   }
 
   // Apply hunks to filesystem
   export async function applyHunksToFiles(hunks: Hunk[]): Promise<AffectedPaths> {
-    if (hunks.length === 0) {
-      throw new Error("No files were modified.")
-    }
+    if (hunks.length === 0) throw new Error("No files were modified.")
 
-    const added: string[] = []
-    const modified: string[] = []
-    const deleted: string[] = []
-
-    for (const hunk of hunks) {
-      switch (hunk.type) {
-        case "add":
-          // Create parent directories
-          const addDir = path.dirname(hunk.path)
-          if (addDir !== "." && addDir !== "/") {
-            await fs.mkdir(addDir, { recursive: true })
-          }
-
+    const results = await Promise.all(
+      hunks.map(async (hunk) => {
+        if (hunk.type === "add") {
+          const dir = path.dirname(hunk.path)
+          if (dir !== "." && dir !== "/") await fs.mkdir(dir, { recursive: true })
           await fs.writeFile(hunk.path, hunk.contents, "utf-8")
-          added.push(hunk.path)
           log.info(`Added file: ${hunk.path}`)
-          break
+          return { type: "added" as const, path: hunk.path }
+        }
 
-        case "delete":
+        if (hunk.type === "delete") {
           await fs.unlink(hunk.path)
-          deleted.push(hunk.path)
           log.info(`Deleted file: ${hunk.path}`)
-          break
+          return { type: "deleted" as const, path: hunk.path }
+        }
 
-        case "update":
-          const fileUpdate = deriveNewContentsFromChunks(hunk.path, hunk.chunks)
+        const update = await deriveNewContentsFromChunks(hunk.path, hunk.chunks)
 
-          if (hunk.move_path) {
-            // Handle file move
-            const moveDir = path.dirname(hunk.move_path)
-            if (moveDir !== "." && moveDir !== "/") {
-              await fs.mkdir(moveDir, { recursive: true })
-            }
+        if (hunk.move_path) {
+          const dir = path.dirname(hunk.move_path)
+          if (dir !== "." && dir !== "/") await fs.mkdir(dir, { recursive: true })
+          await fs.writeFile(hunk.move_path, update.content, "utf-8")
+          await fs.unlink(hunk.path)
+          log.info(`Moved file: ${hunk.path} -> ${hunk.move_path}`)
+          return { type: "modified" as const, path: hunk.move_path }
+        }
 
-            await fs.writeFile(hunk.move_path, fileUpdate.content, "utf-8")
-            await fs.unlink(hunk.path)
-            modified.push(hunk.move_path)
-            log.info(`Moved file: ${hunk.path} -> ${hunk.move_path}`)
-          } else {
-            // Regular update
-            await fs.writeFile(hunk.path, fileUpdate.content, "utf-8")
-            modified.push(hunk.path)
-            log.info(`Updated file: ${hunk.path}`)
-          }
-          break
-      }
-    }
+        await fs.writeFile(hunk.path, update.content, "utf-8")
+        log.info(`Updated file: ${hunk.path}`)
+        return { type: "modified" as const, path: hunk.path }
+      }),
+    )
 
-    return { added, modified, deleted }
+    return results.reduce(
+      (acc, res) => {
+        if (res.type === "added") return { ...acc, added: [...acc.added, res.path] }
+        if (res.type === "modified") return { ...acc, modified: [...acc.modified, res.path] }
+        return { ...acc, deleted: [...acc.deleted, res.path] }
+      },
+      { added: [], modified: [], deleted: [] } as AffectedPaths,
+    )
   }
 
   // Main patch application function
@@ -588,94 +531,98 @@ export namespace Patch {
     | { type: MaybeApplyPatchVerified.NotApplyPatch }
   > {
     // Detect implicit patch invocation (raw patch without apply_patch command)
-    if (argv.length === 1) {
+    const isImplicit = argv.length === 1 && (() => {
       try {
         parsePatch(argv[0])
-        return {
-          type: MaybeApplyPatchVerified.CorrectnessError,
-          error: new Error(ApplyPatchError.ImplicitInvocation),
-        }
+        return true
       } catch {
-        // Not a patch, continue
+        return false
+      }
+    })()
+
+    if (isImplicit) {
+      return {
+        type: MaybeApplyPatchVerified.CorrectnessError,
+        error: new Error(ApplyPatchError.ImplicitInvocation),
       }
     }
 
     const result = maybeParseApplyPatch(argv)
 
-    switch (result.type) {
-      case MaybeApplyPatch.Body:
-        const { args } = result
-        const effectiveCwd = args.workdir ? path.resolve(cwd, args.workdir) : cwd
-        const changes = new Map<string, ApplyPatchFileChange>()
+    if (result.type === MaybeApplyPatch.PatchParseError) {
+      return {
+        type: MaybeApplyPatchVerified.CorrectnessError,
+        error: result.error,
+      }
+    }
 
-        for (const hunk of args.hunks) {
+    if (result.type === MaybeApplyPatch.NotApplyPatch) {
+      return { type: MaybeApplyPatchVerified.NotApplyPatch }
+    }
+
+    const effectiveCwd = result.args.workdir ? path.resolve(cwd, result.args.workdir) : cwd
+
+    try {
+      const changesList = await Promise.all(
+        result.args.hunks.map(async (hunk) => {
           const resolvedPath = path.resolve(
             effectiveCwd,
             hunk.type === "update" && hunk.move_path ? hunk.move_path : hunk.path,
           )
 
-          switch (hunk.type) {
-            case "add":
-              changes.set(resolvedPath, {
-                type: "add",
+          if (hunk.type === "add") {
+            return {
+              path: resolvedPath,
+              change: {
+                type: "add" as const,
                 content: hunk.contents,
-              })
-              break
-
-            case "delete":
-              // For delete, we need to read the current content
-              const deletePath = path.resolve(effectiveCwd, hunk.path)
-              try {
-                const content = await fs.readFile(deletePath, "utf-8")
-                changes.set(resolvedPath, {
-                  type: "delete",
-                  content,
-                })
-              } catch (error) {
-                return {
-                  type: MaybeApplyPatchVerified.CorrectnessError,
-                  error: new Error(`Failed to read file for deletion: ${deletePath}`),
-                }
-              }
-              break
-
-            case "update":
-              const updatePath = path.resolve(effectiveCwd, hunk.path)
-              try {
-                const fileUpdate = deriveNewContentsFromChunks(updatePath, hunk.chunks)
-                changes.set(resolvedPath, {
-                  type: "update",
-                  unified_diff: fileUpdate.unified_diff,
-                  move_path: hunk.move_path ? path.resolve(effectiveCwd, hunk.move_path) : undefined,
-                  new_content: fileUpdate.content,
-                })
-              } catch (error) {
-                return {
-                  type: MaybeApplyPatchVerified.CorrectnessError,
-                  error: error as Error,
-                }
-              }
-              break
+              },
+            }
           }
-        }
 
-        return {
-          type: MaybeApplyPatchVerified.Body,
-          action: {
-            changes,
-            patch: args.patch,
-            cwd: effectiveCwd,
-          },
-        }
+          if (hunk.type === "delete") {
+            const deletePath = path.resolve(effectiveCwd, hunk.path)
+            const content = await fs.readFile(deletePath, "utf-8")
+            return {
+              path: resolvedPath,
+              change: {
+                type: "delete" as const,
+                content,
+              },
+            }
+          }
 
-      case MaybeApplyPatch.PatchParseError:
-        return {
-          type: MaybeApplyPatchVerified.CorrectnessError,
-          error: result.error,
-        }
+          if (hunk.type === "update") {
+            const updatePath = path.resolve(effectiveCwd, hunk.path)
+            const fileUpdate = await deriveNewContentsFromChunks(updatePath, hunk.chunks)
+            return {
+              path: resolvedPath,
+              change: {
+                type: "update" as const,
+                unified_diff: fileUpdate.unified_diff,
+                move_path: hunk.move_path ? path.resolve(effectiveCwd, hunk.move_path) : undefined,
+                new_content: fileUpdate.content,
+              },
+            }
+          }
 
-      case MaybeApplyPatch.NotApplyPatch:
-        return { type: MaybeApplyPatchVerified.NotApplyPatch }
+          return null as never
+        }),
+      )
+
+      return {
+        type: MaybeApplyPatchVerified.Body,
+        action: {
+          changes: new Map(changesList.map((c) => [c.path, c.change])),
+          patch: result.args.patch,
+          cwd: effectiveCwd,
+        },
+      }
+    } catch (error) {
+      return {
+        type: MaybeApplyPatchVerified.CorrectnessError,
+        error: error as Error,
+      }
     }
   }
 }

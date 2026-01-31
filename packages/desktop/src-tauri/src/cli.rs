@@ -141,6 +141,11 @@ pub fn sync_cli(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 
+#[cfg(not(target_os = "windows"))]
+fn get_user_shell() -> String {
+    std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string())
+}
+
 pub fn create_command(app: &tauri::AppHandle, args: &str) -> Command {
     let state_dir = app
         .path()
@@ -154,27 +159,33 @@ pub fn create_command(app: &tauri::AppHandle, args: &str) -> Command {
         .unwrap()
         .args(args.split_whitespace())
         .env("OPENCODE_EXPERIMENTAL_ICON_DISCOVERY", "true")
+        .env("OPENCODE_EXPERIMENTAL_FILEWATCHER", "true")
         .env("OPENCODE_CLIENT", "desktop")
         .env("XDG_STATE_HOME", &state_dir);
 
     #[cfg(not(target_os = "windows"))]
     return {
         let sidecar = get_sidecar_path(app);
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+        let shell = get_user_shell();
 
-        // Enhanced shell wrapping with Nu shell detection and proper escaping
         let cmd = if shell.ends_with("/nu") {
-            // Nu shell requires escaping for proper argument handling
             format!("^\"{}\" {}", sidecar.display(), args)
         } else {
             format!("\"{}\" {}", sidecar.display(), args)
         };
 
+        let shell_args = if shell.ends_with("/sh") || shell.ends_with("/dash") {
+            vec!["-c", &cmd]
+        } else {
+            vec!["-il", "-c", &cmd]
+        };
+
         app.shell()
             .command(&shell)
             .env("OPENCODE_EXPERIMENTAL_ICON_DISCOVERY", "true")
+            .env("OPENCODE_EXPERIMENTAL_FILEWATCHER", "true")
             .env("OPENCODE_CLIENT", "desktop")
             .env("XDG_STATE_HOME", &state_dir)
-            .args(["-il", "-c", &cmd])
+            .args(shell_args)
     };
 }

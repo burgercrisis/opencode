@@ -1,6 +1,4 @@
 import type { Hooks, PluginInput, Plugin as PluginInstance } from "@opencode-ai/plugin"
-import { pathToFileURL } from "node:url"
-import * as path from "node:path"
 import { Config } from "../config/config"
 import { Bus } from "../bus"
 import { Log } from "../util/log"
@@ -17,7 +15,7 @@ import { CopilotAuthPlugin } from "./copilot"
 export namespace Plugin {
   const log = Log.create({ service: "plugin" })
 
-  const BUILTIN = ["opencode-anthropic-auth@0.0.9", "@gitlab/opencode-gitlab-auth@1.3.2"]
+  const BUILTIN = ["opencode-anthropic-auth@0.0.13", "@gitlab/opencode-gitlab-auth@1.3.2"]
 
   // Built-in plugins that are directly imported (not installed from npm)
   const INTERNAL_PLUGINS: PluginInstance[] = [CodexAuthPlugin, CopilotAuthPlugin]
@@ -29,7 +27,6 @@ export namespace Plugin {
       fetch: async (...args) => Server.App().fetch(...args),
     })
     const config = await Config.get()
-    const hooks: Hooks[] = []
     const input: PluginInput = {
       client,
       project: Instance.project,
@@ -39,29 +36,38 @@ export namespace Plugin {
       $: Bun.$,
     }
 
-    for (const plugin of INTERNAL_PLUGINS) {
-      log.info("loading internal plugin", { name: plugin.name })
-      const init = await plugin(input)
-      hooks.push(init)
-    }
+    const internalHooks = await Promise.all(
+      INTERNAL_PLUGINS.map(async (plugin) => {
+        log.info("loading internal plugin", { name: plugin.name })
+        return await plugin(input)
+      }),
+    )
 
-    const plugins = [...(config.plugin ?? [])]
-    if (!Flag.OPENCODE_DISABLE_DEFAULT_PLUGINS) {
-      plugins.push(...BUILTIN)
-    }
+    const initialPlugins = [...(config.plugin ?? [])]
+    const pluginList = Flag.OPENCODE_DISABLE_DEFAULT_PLUGINS
+      ? initialPlugins
+      : [...initialPlugins, ...BUILTIN]
 
-    for (let plugin of plugins) {
+    const externalHooks = await pluginList.reduce(async (accPromise, rawPlugin) => {
+      const acc = await accPromise
+
       // ignore old codex plugin since it is supported first party now
-      if (plugin.includes("opencode-openai-codex-auth") || plugin.includes("opencode-copilot-auth")) continue
-      log.info("loading plugin", { path: plugin })
-      let pluginUrl: string
-      if (!plugin.startsWith("file://")) {
-        const lastAtIndex = plugin.lastIndexOf("@")
-        const pkg = lastAtIndex > 0 ? plugin.substring(0, lastAtIndex) : plugin
-        const version = lastAtIndex > 0 ? plugin.substring(lastAtIndex + 1) : "latest"
+      const isDeprecated =
+        rawPlugin.includes("opencode-openai-codex-auth") ||
+        rawPlugin.includes("opencode-copilot-auth")
+      if (isDeprecated) return acc
 
+      log.info("loading plugin", { path: rawPlugin })
+
+      const plugin = await (async () => {
+        if (rawPlugin.startsWith("file://")) return rawPlugin
+
+        const lastAtIndex = rawPlugin.lastIndexOf("@")
+        const pkg = lastAtIndex > 0 ? rawPlugin.substring(0, lastAtIndex) : rawPlugin
+        const version = lastAtIndex > 0 ? rawPlugin.substring(lastAtIndex + 1) : "latest"
         const builtin = BUILTIN.some((x) => x.startsWith(pkg + "@"))
-        plugin = await BunProc.install(pkg, version).catch((err) => {
+
+        return await BunProc.install(pkg, version).catch((err) => {
           if (!builtin) throw err
 
           const message = err instanceof Error ? err.message : String(err)
@@ -78,74 +84,51 @@ export namespace Plugin {
 
           return ""
         })
-        if (!plugin) continue
+      })()
 
-        pluginUrl = pathToFileURL(plugin).href
-      } else {
-        // Resolve relative file:// paths against the working directory
-        const filePath = plugin.substring("file://".length)
-        if (!path.isAbsolute(filePath)) {
-          pluginUrl = pathToFileURL(path.resolve(Instance.directory, filePath)).href
-        } else {
-          pluginUrl = pathToFileURL(filePath).href
-        }
-      }
-      try {
-        // Use dynamic import() with absolute file:// URLs for ES module compatibility
-        // pathToFileURL ensures proper URL encoding regardless of import.meta.url context
-        const mod = await import(pluginUrl)
-        // Prevent duplicate initialization when plugins export the same function
-        // as both a named export and default export (e.g., `export const X` and `export default X`).
-        // Object.entries(mod) would return both entries pointing to the same function reference.
-        const seen = new Set<PluginInstance>()
-        for (const [_name, fn] of Object.entries<PluginInstance>(mod)) {
-          if (seen.has(fn)) continue
-          seen.add(fn)
-          const init = await fn(input)
-          hooks.push(init)
-        }
-      } catch (e) {
-        const err = e as Error
-        // Check for module resolution issues
-        if (err.message?.includes("Cannot find module")) {
-          log.error("failed to load plugin", {
-            plugin,
-            error: err.message,
-            hint:
-              process.platform === "win32"
-                ? "This plugin may use subpath exports which have known issues on Windows."
-                : "Check that the plugin is installed correctly.",
-          })
-        } else {
-          log.error("failed to load plugin", {
-            plugin,
-            error: err.message,
-          })
-        }
-        throw e
-      }
-    }
+      return !plugin
+        ? acc
+        : await (async () => {
+            const mod = await import(plugin)
+            // Prevent duplicate initialization when plugins export the same function
+            // as both a named export and default export (e.g., `export const X` and `export default X`).
+            const pluginInits = await Object.entries<PluginInstance>(mod).reduce(
+              async (innerAccPromise, [_name, fn]) => {
+                const innerAcc = await innerAccPromise
+                return innerAcc.seen.has(fn)
+                  ? innerAcc
+                  : {
+                      seen: new Set([...innerAcc.seen, fn]),
+                      hooks: [...innerAcc.hooks, await fn(input)],
+                    }
+              },
+              Promise.resolve({ seen: new Set<PluginInstance>(), hooks: [] as Hooks[] }),
+            )
+            return [...acc, ...pluginInits.hooks]
+          })()
+    }, Promise.resolve([] as Hooks[]))
 
     return {
-      hooks,
+      hooks: [...internalHooks, ...externalHooks],
       input,
     }
   })
 
   export async function trigger<
-    Name extends Exclude<keyof Required<Hooks>, "auth" | "event" | "tool" | "plugin.command">,
+    Name extends Exclude<keyof Required<Hooks>, "auth" | "event" | "tool">,
     Input = Parameters<Required<Hooks>[Name]>[0],
     Output = Parameters<Required<Hooks>[Name]>[1],
   >(name: Name, input: Input, output: Output): Promise<Output> {
     if (!name) return output
-    for (const hook of await state().then((x) => x.hooks)) {
+    const hooks = await state().then((x) => x.hooks)
+
+    await hooks.reduce(async (promise, hook) => {
+      await promise
       const fn = hook[name]
-      if (!fn) continue
-      // @ts-expect-error if you feel adventurous, please fix the typing, make sure to bump the try-counter if you
-      // give up.
-      // try-counter: 2
-      await fn(input, output)
-    }
+      if (!fn) return
+      await (fn as any)(input, output)
+    }, Promise.resolve())
+
     return output
   }
 
@@ -153,23 +136,22 @@ export namespace Plugin {
     return state().then((x) => x.hooks)
   }
 
-  export async function client() {
-    return state().then((x) => x.input.client)
-  }
-
   export async function init() {
     const hooks = await state().then((x) => x.hooks)
     const config = await Config.get()
-    for (const hook of hooks) {
-      await hook.config?.(config)
-    }
+
+    await hooks.reduce(async (promise, hook) => {
+      await promise
+      await (hook.config as any)?.(config)
+    }, Promise.resolve())
+
     Bus.subscribeAll(async (input) => {
       const hooks = await state().then((x) => x.hooks)
-      for (const hook of hooks) {
+      hooks.forEach((hook) => {
         hook["event"]?.({
           event: input,
         })
-      }
+      })
     })
   }
 }

@@ -1,4 +1,3 @@
-import os from "os"
 import { Installation } from "@/installation"
 import { Provider } from "@/provider/provider"
 import { Log } from "@/util/log"
@@ -6,11 +5,9 @@ import {
   streamText,
   wrapLanguageModel,
   type ModelMessage,
-  type StopCondition,
   type StreamTextResult,
   type Tool,
   type ToolSet,
-  extractReasoningMiddleware,
   tool,
   jsonSchema,
 } from "ai"
@@ -23,8 +20,6 @@ import type { MessageV2 } from "./message-v2"
 import { Plugin } from "@/plugin"
 import { SystemPrompt } from "./system"
 import { Flag } from "@/flag/flag"
-import { Wildcard } from "@/util/wildcard"
-import { SessionToolOverrides } from "./tool-overrides"
 import { PermissionNext } from "@/permission/next"
 import { Auth } from "@/auth"
 import { LLMConcurrencyMachine } from "./llm-concurrency-machine"
@@ -45,7 +40,6 @@ export namespace LLM {
     small?: boolean
     tools: Record<string, Tool>
     retries?: number
-    stopWhen?: StopCondition<ToolSet> | StopCondition<ToolSet>[]
   }
 
   export type StreamOutput = StreamTextResult<ToolSet, unknown>
@@ -63,20 +57,16 @@ export namespace LLM {
       modelID: input.model.id,
       providerID: input.model.providerID,
     })
-
     const [language, cfg, provider, auth] = await Promise.all([
       Provider.getLanguage(input.model),
       Config.get(),
       Provider.getProvider(input.model.providerID),
       Auth.get(input.model.providerID),
     ])
+    const limits = LLMConcurrencyMachine.limits(cfg)
     const isCodex = provider.id === "openai" && auth?.type === "oauth"
 
-    const [language, cfg] = await Promise.all([Provider.getLanguage(input.model), Config.get()])
-    const limits = LLMConcurrencyMachine.limits(cfg)
-
-
-    const system = SystemPrompt.header(input.model.providerID)
+    const system = []
     system.push(
       [
         // use agent prompt otherwise provider prompt
@@ -93,7 +83,11 @@ export namespace LLM {
 
     const header = system[0]
     const original = clone(system)
-    await Plugin.trigger("experimental.chat.system.transform", { sessionID: input.sessionID }, { system })
+    await Plugin.trigger(
+      "experimental.chat.system.transform",
+      { sessionID: input.sessionID, model: input.model },
+      { system },
+    )
     if (system.length === 0) {
       system.push(...original)
     }
@@ -103,14 +97,6 @@ export namespace LLM {
       system.length = 0
       system.push(header, rest.join("\n"))
     }
-
-
-
-    const provider = await Provider.getProvider(input.model.providerID)
-    const auth = await Auth.get(input.model.providerID)
-    const isCodex = provider.id === "openai" && auth?.type === "oauth"
-    const sess = input.sessionID.replace(/^ses_/, "sess_")
-
 
     const variant =
       !input.small && input.model.variants && input.user.variant ? input.model.variants[input.user.variant] : {}
@@ -175,7 +161,6 @@ export namespace LLM {
 
     const tools = await resolveTools(input)
 
-
     // LiteLLM and some Anthropic proxies require the tools parameter to be present
     // when message history contains tool calls, even if no tools are being used.
     // Add a dummy tool that is never called to satisfy this validation.
@@ -196,17 +181,8 @@ export namespace LLM {
       })
     }
 
-    return streamText({
-      onError(error) {
-        l.error("stream error", {
-          error,
-        })
-      },
-      async experimental_repairToolCall(failed) {
-
     const args = {
       async experimental_repairToolCall(failed: any) {
-
         const lower = failed.toolCall.toolName.toLowerCase()
         if (lower !== failed.toolCall.toolName && tools[lower]) {
           l.info("repairing tool call", {
@@ -236,23 +212,6 @@ export namespace LLM {
       maxOutputTokens,
       abortSignal: input.abort,
       headers: {
-        // OpenAI-specific session headers
-        ...(input.model.api.npm === "@ai-sdk/openai"
-          ? {
-              "x-session-id": sess,
-              session_id: sess,
-            }
-          : undefined),
-        // Codex-specific headers
-        ...(isCodex
-          ? {
-              originator: "opencode",
-              "User-Agent": `opencode/${Installation.VERSION} (${os.platform()} ${os.release()}; ${os.arch()})`,
-              session_id: sess,
-              "x-session-id": sess,
-            }
-          : undefined),
-        // OpenCode project headers for custom providers
         ...(input.model.providerID.startsWith("opencode")
           ? {
               "x-opencode-project": Instance.project.id,
@@ -266,9 +225,9 @@ export namespace LLM {
               }
             : undefined),
         ...input.model.headers,
+        ...headers,
       },
       maxRetries: input.retries ?? 0,
-      stopWhen: input.stopWhen,
       messages: [
         ...(isCodex
           ? [
@@ -297,10 +256,15 @@ export namespace LLM {
               return args.params
             },
           },
-          extractReasoningMiddleware({ tagName: "think", startWithReasoning: false }),
         ],
       }),
-      experimental_telemetry: { isEnabled: cfg.experimental?.openTelemetry },
+      experimental_telemetry: {
+        isEnabled: cfg.experimental?.openTelemetry,
+        metadata: {
+          userId: cfg.username ?? "unknown",
+          sessionId: input.sessionID,
+        },
+      },
     }
 
     if (!limits) {
@@ -312,6 +276,29 @@ export namespace LLM {
         },
         ...args,
       })
+    }
+
+    const key = LLMConcurrencyMachine.bucketKey({
+      providerID: input.model.providerID,
+      modelName: input.model.api.id,
+    })
+
+    let snapshot = await LLMConcurrencyMachine.snapshot(limits)
+    const request = LLMConcurrencyMachine.request(limits, [key])
+    let blocks = LLMConcurrencyMachine.blocked(limits, snapshot, request)
+
+    const start = Date.now()
+    const timeout = 60_000 // 60 seconds
+    while (blocks.length > 0) {
+      if (Date.now() - start > timeout) {
+        l.warn("concurrency wait timed out, proceeding anyway", { blocks })
+        break
+      }
+      l.info("concurrency limit reached, waiting...", { blocks })
+      await new Promise((resolve) => setTimeout(resolve, 5000))
+      if (input.abort.aborted) throw new Error("aborted while waiting for concurrency lease")
+      snapshot = await LLMConcurrencyMachine.snapshot(limits)
+      blocks = LLMConcurrencyMachine.blocked(limits, snapshot, request)
     }
 
     const lease = await LLMConcurrencyMachine.enter({
@@ -365,24 +352,13 @@ export namespace LLM {
     }
   }
 
-  async function resolveTools(input: Pick<StreamInput, "tools" | "agent" | "user" | "sessionID">) {
-    const overrides = await SessionToolOverrides.get(input.sessionID)
-    const denied = PermissionNext.disabled(Object.keys(input.tools), input.agent.permission)
-
+  async function resolveTools(input: Pick<StreamInput, "tools" | "agent" | "user">) {
+    const disabled = PermissionNext.disabled(Object.keys(input.tools), input.agent.permission)
     for (const tool of Object.keys(input.tools)) {
-      if (tool === "invalid") continue
-      if (denied.has(tool)) {
+      if (input.user.tools?.[tool] === false || disabled.has(tool)) {
         delete input.tools[tool]
-        continue
       }
-
-      const override = Wildcard.all(tool, overrides)
-      const allowed = input.user.tools ? Wildcard.all(tool, input.user.tools) !== false : true
-      if (allowed) continue
-      if (override === true) continue
-      delete input.tools[tool]
     }
-
     return input.tools
   }
 

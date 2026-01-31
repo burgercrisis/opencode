@@ -5,7 +5,6 @@ import DESCRIPTION from "./glob.txt"
 import { Ripgrep } from "../file/ripgrep"
 import { Instance } from "../project/instance"
 import { assertExternalDirectory } from "./external-directory"
-import { Filesystem } from "../util/filesystem"
 
 export const GlobTool = Tool.define("glob", {
   description: DESCRIPTION,
@@ -29,22 +28,24 @@ export const GlobTool = Tool.define("glob", {
       },
     })
 
-    let search = params.path ? Filesystem.nativePath(params.path) : Instance.directory
-    search = path.isAbsolute(search) ? search : Filesystem.resolvePath(Instance.directory, search)
+    const search = params.path
+      ? (path.isAbsolute(params.path) ? params.path : path.resolve(Instance.directory, params.path))
+      : Instance.directory
     await assertExternalDirectory(ctx, search, { kind: "directory" })
 
     const limit = 100
-    const files = []
+    const files: { path: string; mtime: number }[] = []
     let truncated = false
     for await (const file of Ripgrep.files({
       cwd: search,
       glob: [params.pattern],
+      signal: ctx.abort,
     })) {
       if (files.length >= limit) {
         truncated = true
         break
       }
-      const full = Filesystem.resolvePath(search, file)
+      const full = path.resolve(search, file)
       const stats = await Bun.file(full)
         .stat()
         .then((x) => x.mtime.getTime())
@@ -56,23 +57,20 @@ export const GlobTool = Tool.define("glob", {
     }
     files.sort((a, b) => b.mtime - a.mtime)
 
-    const output = []
-    if (files.length === 0) output.push("No files found")
-    if (files.length > 0) {
-      output.push(...files.map((f) => f.path))
-      if (truncated) {
-        output.push("")
-        output.push("(Results are truncated. Consider using a more specific path or pattern.)")
-      }
-    }
+    const output = files.length === 0
+      ? "No files found"
+      : [
+          ...files.map((f) => f.path),
+          ...(truncated ? ["", "(Results are truncated. Consider using a more specific path or pattern.)"] : []),
+        ].join("\n")
 
     return {
-      title: Filesystem.relativePath(Instance.worktree, search),
+      title: path.relative(Instance.worktree, search),
       metadata: {
         count: files.length,
         truncated,
       },
-      output: output.join("\n"),
+      output,
     }
   },
 })

@@ -6,6 +6,7 @@ import { createTwoFilesPatch } from "diff"
 import DESCRIPTION from "./write.txt"
 import { Bus } from "../bus"
 import { File } from "../file"
+import { FileWatcher } from "../file/watcher"
 import { FileTime } from "../file/time"
 import { Filesystem } from "../util/filesystem"
 import { Instance } from "../project/instance"
@@ -15,20 +16,6 @@ import { assertExternalDirectory } from "./external-directory"
 const MAX_DIAGNOSTICS_PER_FILE = 20
 const MAX_PROJECT_DIAGNOSTICS_FILES = 5
 
-type Diagnostic = Parameters<typeof LSP.Diagnostic.pretty>[0]
-
-function selectDiagnostics(issues: Diagnostic[], limit: number) {
-  const errors = issues.filter((item) => (item.severity ?? 1) === 1)
-  const warnings = issues.filter((item) => item.severity === 2)
-  const selected = [...errors, ...warnings].slice(0, limit)
-  const remaining = errors.length + warnings.length - selected.length
-  return {
-    selected,
-    remaining,
-    hasErrors: errors.length > 0,
-  }
-}
-
 export const WriteTool = Tool.define("write", {
   description: DESCRIPTION,
   parameters: z.object({
@@ -36,94 +23,69 @@ export const WriteTool = Tool.define("write", {
     filePath: z.string().describe("The absolute path to the file to write (must be absolute, not relative)"),
   }),
   async execute(params, ctx) {
-    const nativePath = Filesystem.nativePath(params.filePath)
-    const filepath = path.isAbsolute(nativePath) ? nativePath : Filesystem.resolvePath(Instance.directory, nativePath)
+    const filepath = Filesystem.normalizeNativePath(path.isAbsolute(params.filePath) ? params.filePath : path.join(Instance.directory, params.filePath))
     await assertExternalDirectory(ctx, filepath)
 
-    const result = await FileTime.withLock(filepath, async () => {
-      const file = Bun.file(filepath)
-      const exists = await file.exists()
-      const contentOld = exists ? await file.text() : ""
-      if (exists) await FileTime.assert(ctx.sessionID, filepath)
+    const file = Bun.file(filepath)
+    const exists = await file.exists()
+    const contentOld = exists ? await file.text() : ""
+    exists && await FileTime.assert(ctx.sessionID, filepath)
 
-      const diff = trimDiff(createTwoFilesPatch(filepath, filepath, contentOld, params.content))
-
-      // Resolve permission for this specific file
-      const resolvedPermission = Agent.resolveFilePermission({
-        permission: agent.permission.edit,
-        filePath: filepath,
-        baseDir: Instance.directory,
-      })
-
-      // Check for deny first
-      if (resolvedPermission === "deny") {
-        throw new Permission.RejectedError(
-          ctx.sessionID,
-          "write",
-          ctx.callID,
-          { filepath },
-          `Writing to file ${filepath} is denied by permission configuration`,
-        )
-      }
-
-      if (resolvedPermission === "ask")
-        await Permission.ask({
-          type: "write",
-          sessionID: ctx.sessionID,
-          messageID: ctx.messageID,
-          callID: ctx.callID,
-          title: exists ? "Overwrite this file: " + filepath : "Create new file: " + filepath,
-          metadata: {
-            filepath,
-            diff,
-          },
-        })
-
-      await Bun.write(filepath, params.content)
-      await Bus.publish(File.Event.Edited, {
-        file: filepath,
-      })
-
-      const fileAfter = Bun.file(filepath)
-      const statsAfter = await fileAfter.stat()
-      const contentAfter = await fileAfter.text()
-      FileTime.read(ctx.sessionID, filepath, FileTime.stamp(statsAfter.mtime, contentAfter))
-
-      return {
-        exists,
-      }
+    const diff = trimDiff(createTwoFilesPatch(filepath, filepath, contentOld, params.content))
+    await ctx.ask({
+      permission: "edit",
+      patterns: [path.relative(Instance.worktree, filepath)],
+      always: ["*"],
+      metadata: {
+        filepath,
+        diff,
+      },
     })
 
-    let output = "Wrote file successfully."
-    const savedDiagnostics: Record<string, Diagnostic[]> = {}
-    await LSP.touchFile(filepath, true)
-    const diagnostics = await LSP.diagnostics()
-    const normalizedFilepath = Filesystem.normalizePath(filepath)
-    let projectDiagnosticsCount = 0
-    for (const [file, issues] of Object.entries(diagnostics)) {
-      const selected = selectDiagnostics(issues, MAX_DIAGNOSTICS_PER_FILE)
-      if (file === normalizedFilepath) {
-        if (selected.selected.length === 0) continue
-        savedDiagnostics[file] = selected.selected
-        const suffix = selected.remaining > 0 ? `\n... and ${selected.remaining} more` : ""
-        output += `\n\nLSP diagnostics detected in this file:\n<diagnostics file="${filepath}">\n${selected.selected.map(LSP.Diagnostic.pretty).join("\n")}${suffix}\n</diagnostics>`
-        continue
-      }
+    await Bun.write(filepath, params.content)
+    await Bus.publish(File.Event.Edited, {
+      file: filepath,
+    })
+    await Bus.publish(FileWatcher.Event.Updated, {
+      file: filepath,
+      event: exists ? "change" : "add",
+    })
+    FileTime.read(ctx.sessionID, filepath)
 
-      if (!selected.hasErrors) continue
-      if (projectDiagnosticsCount >= MAX_PROJECT_DIAGNOSTICS_FILES) continue
-      projectDiagnosticsCount++
-      savedDiagnostics[file] = selected.selected
-      const suffix = selected.remaining > 0 ? `\n... and ${selected.remaining} more` : ""
-      output += `\n\nLSP errors detected in other files:\n<diagnostics file="${file}">\n${selected.selected.map(LSP.Diagnostic.pretty).join("\n")}${suffix}\n</diagnostics>`
-    }
+    const diagnostics = await LSP.touchFile(filepath, true).then(() => LSP.diagnostics())
+    const normalizedFilepath = Filesystem.normalizePath(filepath)
+    const diagnosticOutput = Object.entries(diagnostics).reduce(
+      (acc, [file, issues]) => {
+        const errors = issues.filter((item) => item.severity === 1)
+        const limited = errors.slice(0, MAX_DIAGNOSTICS_PER_FILE)
+        const suffix = errors.length > MAX_DIAGNOSTICS_PER_FILE ? `\n... and ${errors.length - MAX_DIAGNOSTICS_PER_FILE} more` : ""
+        const formatted = `<diagnostics file="${file}">\n${limited.map(LSP.Diagnostic.pretty).join("\n")}${suffix}\n</diagnostics>`
+
+        return errors.length === 0 ? acc : (
+          file === normalizedFilepath ? { ...acc, current: formatted } : (
+            acc.count >= MAX_PROJECT_DIAGNOSTICS_FILES ? acc : {
+              ...acc,
+              others: [...acc.others, formatted],
+              count: acc.count + 1,
+            }
+          )
+        )
+      },
+      { current: "", others: [] as string[], count: 0 }
+    )
+
+    const output = [
+      "Wrote file successfully.",
+      diagnosticOutput.current ? `\n\nLSP errors detected in this file, please fix:\n${diagnosticOutput.current}` : "",
+      diagnosticOutput.others.length > 0 ? `\n\nLSP errors detected in other files:\n${diagnosticOutput.others.join("\n\n")}` : "",
+    ].filter(Boolean).join("")
 
     return {
-      title: Filesystem.relativePath(Instance.worktree, filepath),
+      title: path.relative(Instance.worktree, filepath),
       metadata: {
-        diagnostics: savedDiagnostics,
+        diagnostics,
         filepath,
-        exists: result.exists,
+        exists: exists,
       },
       output,
     }

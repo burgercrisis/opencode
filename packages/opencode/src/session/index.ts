@@ -16,13 +16,13 @@ import { MessageV2 } from "./message-v2"
 import { Instance } from "../project/instance"
 import { SessionPrompt } from "./prompt"
 import { fn } from "@/util/fn"
+import { iife } from "@/util/iife"
 import { Command } from "../command"
 import { Snapshot } from "@/snapshot"
 
 import type { Provider } from "@/provider/provider"
 import { PermissionNext } from "@/permission/next"
 import { Global } from "@/global"
-import { Filesystem } from "@/util/filesystem"
 
 export namespace Session {
   const log = Log.create({ service: "session" })
@@ -40,10 +40,20 @@ export namespace Session {
     ).test(title)
   }
 
+  function getForkedTitle(title: string): string {
+    const match = title.match(/^(.+) \(fork #(\d+)\)$/)
+    if (match) {
+      const base = match[1]
+      const num = parseInt(match[2], 10)
+      return `${base} (fork #${num + 1})`
+    }
+    return `${title} (fork #1)`
+  }
+
   export const Info = z
     .object({
       id: Identifier.schema("session"),
-      slug: z.string(),
+      slug: z.string().optional(),
       projectID: z.string(),
       directory: z.string(),
       parentID: Identifier.schema("session").optional(),
@@ -152,18 +162,28 @@ export namespace Session {
       messageID: Identifier.schema("message").optional(),
     }),
     async (input) => {
+      const original = await get(input.sessionID)
+      if (!original) throw new Error("session not found")
+      const title = getForkedTitle(original.title)
       const session = await createNext({
         directory: Instance.directory,
+        title,
       })
       const msgs = await messages({ sessionID: input.sessionID })
-      const idMap = new Map<string, string>()
 
-      for (const msg of msgs) {
-        if (input.messageID && msg.info.id >= input.messageID) break
+      const processMessages = async (
+        remaining: MessageV2.WithParts[],
+        idMap: Map<string, string>,
+      ): Promise<void> => {
+        const msg = remaining[0]
+        if (!msg || (input.messageID && msg.info.id >= input.messageID)) return
+
         const newID = Identifier.ascending("message")
-        idMap.set(msg.info.id, newID)
+        const nextIdMap = new Map(idMap).set(msg.info.id, newID)
 
-        const parentID = msg.info.role === "assistant" && msg.info.parentID ? idMap.get(msg.info.parentID) : undefined
+        const parentID =
+          msg.info.role === "assistant" && msg.info.parentID ? nextIdMap.get(msg.info.parentID) : undefined
+
         const cloned = await updateMessage({
           ...msg.info,
           sessionID: session.id,
@@ -171,15 +191,21 @@ export namespace Session {
           ...(parentID && { parentID }),
         })
 
-        for (const part of msg.parts) {
-          await updatePart({
-            ...part,
-            id: Identifier.ascending("part"),
-            messageID: cloned.id,
-            sessionID: session.id,
-          })
-        }
+        await Promise.all(
+          msg.parts.map((part) =>
+            updatePart({
+              ...part,
+              id: Identifier.ascending("part"),
+              messageID: cloned.id,
+              sessionID: session.id,
+            }),
+          ),
+        )
+
+        return processMessages(remaining.slice(1), nextIdMap)
       }
+
+      await processMessages(msgs, new Map())
       return session
     },
   )
@@ -237,12 +263,16 @@ export namespace Session {
     const base = Instance.project.vcs
       ? path.join(Instance.worktree, ".opencode", "plans")
       : path.join(Global.Path.data, "plans")
-    return Filesystem.nativePath(path.join(base, [input.time.created, input.slug].join("-") + ".md"))
+    return path.join(base, [input.time.created, input.slug].join("-") + ".md")
   }
 
   export const get = fn(Identifier.schema("session"), async (id) => {
     const read = await Storage.read<Info>(["session", Instance.project.id, id])
-    return read as Info
+    // Backwards compatibility: ensure slug exists
+    if (!read.slug) {
+      read.slug = Slug.create()
+    }
+    return read
   })
 
   export const getShare = fn(Identifier.schema("session"), async (id) => {
@@ -269,7 +299,7 @@ export namespace Session {
   })
 
   export const unshare = fn(Identifier.schema("session"), async (id) => {
-    // Use ShareNext for unsharing (same as share() function)
+    // Use ShareNext to remove the share (same as share function uses ShareNext to create)
     const { ShareNext } = await import("@/share/share-next")
     await ShareNext.remove(id)
     await update(
@@ -279,13 +309,6 @@ export namespace Session {
       },
       { touch: false },
     )
-    // Also clean up legacy share if it exists
-    const share = await getShare(id)
-    if (share) {
-      await Storage.remove(["share", id])
-      const { Share } = await import("../share/share")
-      await Share.remove(id, share.secret)
-    }
   })
 
   export async function update(id: string, editor: (session: Info) => void, options?: { touch?: boolean }) {
@@ -293,7 +316,7 @@ export namespace Session {
     const result = await Storage.update<Info>(["session", project.id, id], (draft) => {
       editor(draft)
       if (options?.touch !== false) {
-        draft.time.updated = Date.now()
+        draft.time.updated = Math.max(draft.time.updated, Date.now())
       }
     })
     Bus.publish(Event.Updated, {
@@ -313,48 +336,76 @@ export namespace Session {
       limit: z.number().optional(),
     }),
     async (input) => {
-      const result = [] as MessageV2.WithParts[]
-      for await (const msg of MessageV2.stream(input.sessionID)) {
-        if (input.limit && result.length >= input.limit) break
-        result.push(msg)
+      const stream = MessageV2.stream(input.sessionID)
+      const processStream = async (acc: MessageV2.WithParts[]): Promise<MessageV2.WithParts[]> => {
+        const next = await stream.next()
+        if (next.done || (input.limit && acc.length >= input.limit)) return acc
+        return processStream([...acc, next.value])
       }
-      result.reverse()
-      return result
+      const result = await processStream([])
+      return result.reverse()
     },
   )
 
   export async function* list() {
     const project = Instance.project
-    for (const item of await Storage.list(["session", project.id])) {
+    const items = await Storage.list(["session", project.id])
+    const process = async function* (remaining: string[][]): AsyncGenerator<Info> {
+      const item = remaining[0]
+      if (!item) return
       yield Storage.read<Info>(item)
+      yield* process(remaining.slice(1))
     }
+    yield* process(items)
   }
 
   export const children = fn(Identifier.schema("session"), async (parentID) => {
     const project = Instance.project
-    const result = [] as Session.Info[]
-    for (const item of await Storage.list(["session", project.id])) {
+    const items = await Storage.list(["session", project.id])
+    const process = async (remaining: string[][], acc: Session.Info[]): Promise<Session.Info[]> => {
+      const item = remaining[0]
+      if (!item) return acc
       const session = await Storage.read<Info>(item)
-      if (session.parentID !== parentID) continue
-      result.push(session)
+      return process(remaining.slice(1), session.parentID === parentID ? [...acc, session] : acc)
     }
-    return result
+    return process(items, [])
   })
 
   export const remove = fn(Identifier.schema("session"), async (sessionID) => {
     const project = Instance.project
     try {
       const session = await get(sessionID)
-      for (const child of await children(sessionID)) {
+      const childs = await children(sessionID)
+
+      const removeChildren = async (remaining: Session.Info[]): Promise<void> => {
+        const child = remaining[0]
+        if (!child) return
         await remove(child.id)
+        return removeChildren(remaining.slice(1))
       }
-      await unshare(sessionID).catch(() => {})
-      for (const msg of await Storage.list(["message", sessionID])) {
-        for (const part of await Storage.list(["part", msg.at(-1)!])) {
-          await Storage.remove(part)
+
+      const removeMessages = async (messages: string[][]): Promise<void> => {
+        const msgKey = messages[0]
+        if (!msgKey) return
+        const msgID = msgKey[msgKey.length - 1]
+        const parts = await Storage.list(["part", msgID])
+
+        const removeParts = async (remainingParts: string[][]): Promise<void> => {
+          const partKey = remainingParts[0]
+          if (!partKey) return
+          await Storage.remove(partKey)
+          return removeParts(remainingParts.slice(1))
         }
-        await Storage.remove(msg)
+
+        await removeParts(parts)
+        await Storage.remove(msgKey)
+        return removeMessages(messages.slice(1))
       }
+
+      await removeChildren(childs)
+      await unshare(sessionID).catch(() => {})
+      const msgs = await Storage.list(["message", sessionID])
+      await removeMessages(msgs)
       await Storage.remove(["session", project.id, sessionID])
       Bus.publish(Event.Deleted, {
         info: session,
@@ -419,12 +470,37 @@ export namespace Session {
   export const updatePart = fn(UpdatePartInput, async (input) => {
     const part = "delta" in input ? input.part : input
     const delta = "delta" in input ? input.delta : undefined
-    await Storage.write(["part", part.messageID, part.id], part)
+
+    const validatedPart =
+      part.type === "tool"
+        ? await iife(async () => {
+            const key = ["part", part.messageID, part.id]
+            const existing = await Storage.read<MessageV2.Part>(key).catch(() => undefined)
+
+            const isDowngrade =
+              existing?.type === "tool" &&
+              (existing.state.status === "completed" || existing.state.status === "error") &&
+              part.state.status === "running"
+
+            if (isDowngrade) {
+              log.warn("updatePart: preventing status downgrade", {
+                from: (existing as any).state.status,
+                to: part.state.status,
+                tool: part.tool,
+                callID: part.callID,
+              })
+              return existing
+            }
+            return part
+          })
+        : part
+
+    await Storage.write(["part", validatedPart.messageID, validatedPart.id], validatedPart)
     Bus.publish(MessageV2.Event.PartUpdated, {
-      part,
+      part: validatedPart,
       delta,
     })
-    return part
+    return validatedPart
   })
 
   export const getUsage = fn(
@@ -434,11 +510,18 @@ export namespace Session {
       metadata: z.custom<ProviderMetadata>().optional(),
     }),
     (input) => {
-      const cachedInputTokens = input.usage.cachedInputTokens ?? 0
+      const cacheReadInputTokens = input.usage.cachedInputTokens ?? 0
+      const cacheWriteInputTokens = (input.metadata?.["anthropic"]?.["cacheCreationInputTokens"] ??
+        // @ts-expect-error
+        input.metadata?.["bedrock"]?.["usage"]?.["cacheWriteInputTokens"] ??
+        // @ts-expect-error
+        input.metadata?.["venice"]?.["usage"]?.["cacheCreationInputTokens"] ??
+        0) as number
+
       const excludesCachedTokens = !!(input.metadata?.["anthropic"] || input.metadata?.["bedrock"])
       const adjustedInputTokens = excludesCachedTokens
         ? (input.usage.inputTokens ?? 0)
-        : (input.usage.inputTokens ?? 0) - cachedInputTokens
+        : (input.usage.inputTokens ?? 0) - cacheReadInputTokens - cacheWriteInputTokens
       const safe = (value: number) => {
         if (!Number.isFinite(value)) return 0
         return value
@@ -448,14 +531,10 @@ export namespace Session {
         input: safe(adjustedInputTokens),
         output: safe(input.usage.outputTokens ?? 0),
         reasoning: safe(input.usage?.reasoningTokens ?? 0),
+        sent: 0,
         cache: {
-          write: safe(
-            (input.metadata?.["anthropic"]?.["cacheCreationInputTokens"] ??
-              // @ts-expect-error
-              input.metadata?.["bedrock"]?.["usage"]?.["cacheWriteInputTokens"] ??
-              0) as number,
-          ),
-          read: safe(cachedInputTokens),
+          write: safe(cacheWriteInputTokens),
+          read: safe(cacheReadInputTokens),
         },
       }
 

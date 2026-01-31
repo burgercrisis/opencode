@@ -1,27 +1,20 @@
 import { useSync } from "@tui/context/sync"
-import { createMemo, For, Show, Switch, Match, createSignal, onCleanup } from "solid-js"
+import { createMemo, For, Show, Switch, Match } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useTheme } from "../../context/theme"
-import { useRoute } from "../../context/route"
 import { Locale } from "@/util/locale"
-import { truncateMiddle, cols } from "@tui/lib/cols"
-import { useRenderer } from "@opentui/solid"
 import path from "path"
-import type { AssistantMessage, ToolPart } from "@opencode-ai/sdk/v2"
+import type { AssistantMessage } from "@opencode-ai/sdk/v2"
 import { Global } from "@/global"
 import { Installation } from "@/installation"
+import { useKeybind } from "../../context/keybind"
 import { useDirectory } from "../../context/directory"
 import { useKV } from "../../context/kv"
 import { TodoItem } from "../../component/todo-item"
-import { computeCacheStats, updateCacheStatsState, type CacheStatsState } from "../../lib/cache-stats"
-import "opentui-spinner/solid"
 
 export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
   const sync = useSync()
-  const route = useRoute()
   const { theme } = useTheme()
-  const { navigate } = useRoute()
-  const renderer = useRenderer()
   const session = createMemo(() => sync.session.get(props.sessionID)!)
   const diff = createMemo(() => sync.data.session_diff[props.sessionID] ?? [])
   const todo = createMemo(() => sync.data.todo[props.sessionID] ?? [])
@@ -32,17 +25,7 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
     diff: true,
     todo: true,
     lsp: true,
-    subagents: true,
   })
-
-  // Animated spinner
-  const spinnerFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-  const [spinnerIndex, setSpinnerIndex] = createSignal(0)
-
-  const intervalId = setInterval(() => {
-    setSpinnerIndex((prev) => (prev + 1) % spinnerFrames.length)
-  }, 100)
-  onCleanup(() => clearInterval(intervalId))
 
   // Sort MCP servers alphabetically for consistent display order
   const mcpEntries = createMemo(() => Object.entries(sync.data.mcp).sort(([a], [b]) => a.localeCompare(b)))
@@ -57,28 +40,6 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
       ).length,
   )
 
-  const taskToolParts = createMemo(() => {
-    const parts: ToolPart[] = []
-    for (const message of messages()) {
-      for (const part of sync.data.part[message.id] ?? []) {
-        if (part.type === "tool" && part.tool === "task") parts.push(part)
-      }
-    }
-    return parts
-  })
-
-  const subagentGroups = createMemo(() => {
-    const groups = new Map<string, ToolPart[]>()
-    for (const part of taskToolParts()) {
-      const input = part.state.input as Record<string, unknown>
-      const agentName = input?.subagent_type as string
-      if (!agentName) continue
-      if (!groups.has(agentName)) groups.set(agentName, [])
-      groups.get(agentName)!.push(part)
-    }
-    return Array.from(groups.entries())
-  })
-
   const cost = createMemo(() => {
     const total = messages().reduce((sum, x) => sum + (x.role === "assistant" ? x.cost : 0), 0)
     return new Intl.NumberFormat("en-US", {
@@ -87,20 +48,8 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
     }).format(total)
   })
 
-  const cache = createMemo<CacheStatsState | undefined>((prev) => updateCacheStatsState(prev, messages()), undefined)
-
-  const lastAssistant = createMemo(
-    () => messages().findLast((x) => x.role === "assistant" && x.tokens.output > 0) as AssistantMessage | undefined,
-  )
-
-  const lastCache = createMemo(() => {
-    const last = lastAssistant()
-    if (!last) return
-    return computeCacheStats([last])
-  })
-
   const context = createMemo(() => {
-    const last = lastAssistant()
+    const last = messages().findLast((x) => x.role === "assistant" && x.tokens.output > 0) as AssistantMessage
     if (!last) return
     const total =
       last.tokens.input + last.tokens.output + last.tokens.reasoning + last.tokens.cache.read + last.tokens.cache.write
@@ -147,12 +96,6 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
               </text>
               <text fg={theme.textMuted}>{context()?.tokens ?? 0} tokens</text>
               <text fg={theme.textMuted}>{context()?.percentage ?? 0}% used</text>
-              <text fg={theme.textMuted}>
-                {`Session cache: ${cache()?.stats.hitPercentage ?? 0}% r${Locale.number(cache()?.stats.readTokens ?? 0)} w${Locale.number(cache()?.stats.writeTokens ?? 0)}`}
-              </text>
-              <text fg={theme.textMuted}>
-                {`Last step cache: ${lastCache()?.hitPercentage ?? 0}% r${Locale.number(lastCache()?.readTokens ?? 0)} w${Locale.number(lastCache()?.writeTokens ?? 0)}`}
-              </text>
               <text fg={theme.textMuted}>{cost()} spent</text>
             </box>
             <Show when={mcpEntries().length > 0}>
@@ -212,77 +155,6 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
                         </text>
                       </box>
                     )}
-                  </For>
-                </Show>
-              </box>
-            </Show>
-            <Show when={subagentGroups().length > 0}>
-              <box>
-                <box
-                  flexDirection="row"
-                  gap={1}
-                  onMouseUp={(e) => {
-                    if (e.button === 0 && subagentGroups().length > 2) {
-                      setExpanded("subagents", !expanded.subagents)
-                    }
-                  }}
-                >
-                  <Show when={subagentGroups().length > 2}>
-                    <text fg={theme.text}>{expanded.subagents ? "▼" : "▶"}</text>
-                  </Show>
-                  <text fg={theme.text}>
-                    <b>Subagents</b>
-                  </text>
-                </box>
-                <Show when={subagentGroups().length <= 2 || expanded.subagents}>
-                  <For each={subagentGroups()}>
-                    {([agentName, parts]) => {
-                      const hasActive = () =>
-                        parts.some((p) => p.state.status === "running" || p.state.status === "pending")
-                      return (
-                        <box>
-                          <box flexDirection="row" gap={1}>
-                            <text flexShrink={0} style={{ fg: hasActive() ? theme.success : theme.text }}>
-                              •
-                            </text>
-                            <text fg={theme.text} wrapMode="word">
-                              {agentName}
-                            </text>
-                          </box>
-                          <For each={parts}>
-                            {(part) => {
-                              const isActive = () => part.state.status === "running" || part.state.status === "pending"
-                              const isError = () => part.state.status === "error"
-                              const input = part.state.input as Record<string, unknown>
-                              const description = (input?.description as string) ?? ""
-                              const stateMetadata = (part.state as { metadata?: Record<string, unknown> }).metadata
-                              const sessionId = (part.metadata?.sessionId ?? stateMetadata?.sessionId) as
-                                | string
-                                | undefined
-                              return (
-                                <box
-                                  flexDirection="row"
-                                  gap={1}
-                                  paddingLeft={2}
-                                  onMouseUp={(e) => {
-                                    if (e.button === 0 && sessionId) {
-                                      route.navigate({ type: "session", sessionID: sessionId })
-                                    }
-                                  }}
-                                >
-                                  <text flexShrink={0} fg={isActive() ? theme.success : theme.textMuted}>
-                                    {isActive() ? spinnerFrames[spinnerIndex()] : isError() ? "✗" : "✓"}
-                                  </text>
-                                  <text fg={isActive() ? theme.text : theme.textMuted} wrapMode="word">
-                                    {description}
-                                  </text>
-                                </box>
-                              )
-                            }}
-                          </For>
-                        </box>
-                      )
-                    }}
                   </For>
                 </Show>
               </box>
@@ -366,21 +238,10 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
                 <Show when={diff().length <= 2 || expanded.diff}>
                   <For each={diff() || []}>
                     {(item) => {
-                      const file = createMemo(() => {
-                        const splits = item.file.split(path.sep).filter(Boolean)
-                        const last = splits.at(-1)!
-                        const rest = splits.slice(0, -1).join(path.sep)
-                        if (!rest) return last
-                        const tail = "/" + last
-                        const tailw = cols(renderer.widthMethod, tail)
-                        const restMax = Math.max(0, 30 - tailw)
-                        const head = truncateMiddle({ method: renderer.widthMethod, text: rest, max: restMax })
-                        return head + tail
-                      })
                       return (
                         <box flexDirection="row" gap={1} justifyContent="space-between">
                           <text fg={theme.textMuted} wrapMode="none">
-                            {file()}
+                            {item.file}
                           </text>
                           <box flexDirection="row" gap={1} flexShrink={0}>
                             <Show when={item.additions}>

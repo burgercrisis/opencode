@@ -5,13 +5,11 @@ import { useParams } from "@solidjs/router"
 import { useLayout } from "@/context/layout"
 import { useCommand } from "@/context/command"
 import { useLanguage } from "@/context/language"
-// import { useServer } from "@/context/server"
-// import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { usePlatform } from "@/context/platform"
 import { useSync } from "@/context/sync"
 import { useGlobalSDK } from "@/context/global-sdk"
 import { getFilename } from "@opencode-ai/util/path"
-import { base64Decode } from "@opencode-ai/util/encode"
+import { decode64 } from "@/utils/base64"
 
 import { Icon } from "@opencode-ai/ui/icon"
 import { IconButton } from "@opencode-ai/ui/icon-button"
@@ -20,19 +18,18 @@ import { Tooltip, TooltipKeybind } from "@opencode-ai/ui/tooltip"
 import { Popover } from "@opencode-ai/ui/popover"
 import { TextField } from "@opencode-ai/ui/text-field"
 import { Keybind } from "@opencode-ai/ui/keybind"
+import { StatusPopover } from "../status-popover"
 
 export function SessionHeader() {
   const globalSDK = useGlobalSDK()
   const layout = useLayout()
   const params = useParams()
   const command = useCommand()
-  // const server = useServer()
-  // const dialog = useDialog()
   const sync = useSync()
   const platform = usePlatform()
   const language = useLanguage()
 
-  const projectDirectory = createMemo(() => base64Decode(params.dir ?? ""))
+  const projectDirectory = createMemo(() => decode64(params.dir) ?? "")
   const project = createMemo(() => {
     const directory = projectDirectory()
     if (!directory) return
@@ -48,9 +45,8 @@ export function SessionHeader() {
   const currentSession = createMemo(() => sync.data.session.find((s) => s.id === params.id))
   const shareEnabled = createMemo(() => sync.data.config.share !== "disabled")
   const showShare = createMemo(() => shareEnabled() && !!currentSession())
-  const showReview = createMemo(() => !!currentSession())
   const sessionKey = createMemo(() => `${params.dir}${params.id ? "/" + params.id : ""}`)
-  const view = createMemo(() => layout.view(sessionKey()))
+  const view = createMemo(() => layout.view(sessionKey))
 
   const [state, setState] = createStore({
     share: false,
@@ -134,7 +130,7 @@ export function SessionHeader() {
           <Portal mount={mount()}>
             <button
               type="button"
-              class="hidden md:flex w-[320px] p-1 pl-1.5 items-center gap-2 justify-between rounded-md border border-border-weak-base bg-surface-raised-base transition-colors cursor-default hover:bg-surface-raised-base-hover focus:bg-surface-raised-base-hover active:bg-surface-raised-base-active"
+              class="hidden md:flex w-[320px] max-w-full min-w-0 p-1 pl-1.5 items-center gap-2 justify-between rounded-md border border-border-weak-base bg-surface-raised-base transition-colors cursor-default hover:bg-surface-raised-base-hover focus-visible:bg-surface-raised-base-hover active:bg-surface-raised-base-active"
               onClick={() => command.trigger("file.open")}
               aria-label={language.t("session.header.searchFiles")}
             >
@@ -154,96 +150,7 @@ export function SessionHeader() {
         {(mount) => (
           <Portal mount={mount()}>
             <div class="flex items-center gap-3">
-              {/* <div class="hidden md:flex items-center gap-1"> */}
-              {/*   <Button */}
-              {/*     size="small" */}
-              {/*     variant="ghost" */}
-              {/*     onClick={() => { */}
-              {/*       dialog.show(() => <DialogSelectServer />) */}
-              {/*     }} */}
-              {/*   > */}
-              {/*     <div */}
-              {/*       classList={{ */}
-              {/*         "size-1.5 rounded-full": true, */}
-              {/*         "bg-icon-success-base": server.healthy() === true, */}
-              {/*         "bg-icon-critical-base": server.healthy() === false, */}
-              {/*         "bg-border-weak-base": server.healthy() === undefined, */}
-              {/*       }} */}
-              {/*     /> */}
-              {/*     <Icon name="server" size="small" class="text-icon-weak" /> */}
-              {/*     <span class="text-12-regular text-text-weak truncate max-w-[200px]">{server.name}</span> */}
-              {/*   </Button> */}
-              {/*   <SessionLspIndicator /> */}
-              {/*   <SessionMcpIndicator /> */}
-              {/* </div> */}
-              <div class="flex items-center gap-1">
-                <div class="hidden md:block shrink-0">
-                  <TooltipKeybind
-                    title={language.t("command.review.toggle")}
-                    keybind={command.keybind("review.toggle")}
-                  >
-                    <Button
-                      variant="ghost"
-                      class="group/review-toggle size-6 p-0"
-                      onClick={() => view().reviewPanel.toggle()}
-                      aria-label={language.t("command.review.toggle")}
-                      aria-expanded={view().reviewPanel.opened()}
-                      aria-controls="review-panel"
-                      tabIndex={showReview() ? 0 : -1}
-                    >
-                      <div class="relative flex items-center justify-center size-4 [&>*]:absolute [&>*]:inset-0">
-                        <Icon
-                          size="small"
-                          name={view().reviewPanel.opened() ? "layout-right-full" : "layout-right"}
-                          class="group-hover/review-toggle:hidden"
-                        />
-                        <Icon
-                          size="small"
-                          name="layout-right-partial"
-                          class="hidden group-hover/review-toggle:inline-block"
-                        />
-                        <Icon
-                          size="small"
-                          name={view().reviewPanel.opened() ? "layout-right" : "layout-right-full"}
-                          class="hidden group-active/review-toggle:inline-block"
-                        />
-                      </div>
-                    </Button>
-                  </TooltipKeybind>
-                </div>
-                <TooltipKeybind
-                  class="hidden md:block shrink-0"
-                  title={language.t("command.terminal.toggle")}
-                  keybind={command.keybind("terminal.toggle")}
-                >
-                  <Button
-                    variant="ghost"
-                    class="group/terminal-toggle size-6 p-0"
-                    onClick={() => view().terminal.toggle()}
-                    aria-label={language.t("command.terminal.toggle")}
-                    aria-expanded={view().terminal.opened()}
-                    aria-controls="terminal-panel"
-                  >
-                    <div class="relative flex items-center justify-center size-4 [&>*]:absolute [&>*]:inset-0">
-                      <Icon
-                        size="small"
-                        name={view().terminal.opened() ? "layout-bottom-full" : "layout-bottom"}
-                        class="group-hover/terminal-toggle:hidden"
-                      />
-                      <Icon
-                        size="small"
-                        name="layout-bottom-partial"
-                        class="hidden group-hover/terminal-toggle:inline-block"
-                      />
-                      <Icon
-                        size="small"
-                        name={view().terminal.opened() ? "layout-bottom" : "layout-bottom-full"}
-                        class="hidden group-active/terminal-toggle:inline-block"
-                      />
-                    </div>
-                  </Button>
-                </TooltipKeybind>
-              </div>
+              <StatusPopover />
               <Show when={showShare()}>
                 <div class="flex items-center">
                   <Popover
@@ -253,9 +160,14 @@ export function SessionHeader() {
                         ? language.t("session.share.popover.description.shared")
                         : language.t("session.share.popover.description.unshared")
                     }
+                    gutter={6}
+                    placement="bottom-end"
+                    shift={-64}
+                    class="rounded-xl [&_[data-slot=popover-close-button]]:hidden"
                     triggerAs={Button}
                     triggerProps={{
                       variant: "secondary",
+                      class: "rounded-sm w-[60px] h-[24px]",
                       classList: { "rounded-r-none": shareUrl() !== undefined },
                       style: { scale: 1 },
                     }}
@@ -280,8 +192,8 @@ export function SessionHeader() {
                           </div>
                         }
                       >
-                        <div class="flex flex-col gap-2 w-72">
-                          <TextField value={shareUrl() ?? ""} readOnly copyable class="w-full" />
+                        <div class="flex flex-col gap-2">
+                          <TextField value={shareUrl() ?? ""} readOnly copyable tabIndex={-1} class="w-full" />
                           <div class="grid grid-cols-2 gap-2">
                             <Button
                               size="large"
@@ -308,7 +220,7 @@ export function SessionHeader() {
                       </Show>
                     </div>
                   </Popover>
-                  <Show when={shareUrl()} fallback={<div class="size-6" aria-hidden="true" />}>
+                  <Show when={shareUrl()} fallback={<div aria-hidden="true" />}>
                     <Tooltip
                       value={
                         state.copied
@@ -319,7 +231,7 @@ export function SessionHeader() {
                       gutter={8}
                     >
                       <IconButton
-                        icon={state.copied ? "check" : "copy"}
+                        icon={state.copied ? "check" : "link"}
                         variant="secondary"
                         class="rounded-l-none"
                         onClick={copyLink}

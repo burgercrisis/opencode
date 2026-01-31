@@ -10,13 +10,10 @@ import { Flag } from "../flag/flag"
 declare global {
   const OPENCODE_VERSION: string
   const OPENCODE_CHANNEL: string
-  const OPENCODE_BASE_VERSION: string
 }
 
 export namespace Installation {
   const log = Log.create({ service: "installation" })
-
-  const PACKAGE_NAME = "opencode-ai"
 
   export type Method = Awaited<ReturnType<typeof method>>
 
@@ -61,13 +58,11 @@ export namespace Installation {
   }
 
   export async function method() {
+    if (process.execPath.includes(path.join(".opencode", "bin"))) return "curl"
+    if (process.execPath.includes(path.join(".local", "bin"))) return "curl"
     const exec = process.execPath.toLowerCase()
 
     const checks = [
-      {
-        name: "bun" as const,
-        command: () => $`bun pm ls -g`.throws(false).quiet().text(),
-      },
       {
         name: "npm" as const,
         command: () => $`npm list -g --depth=0`.throws(false).quiet().text(),
@@ -79,6 +74,10 @@ export namespace Installation {
       {
         name: "pnpm" as const,
         command: () => $`pnpm list -g --depth=0`.throws(false).quiet().text(),
+      },
+      {
+        name: "bun" as const,
+        command: () => $`bun pm ls -g`.throws(false).quiet().text(),
       },
       {
         name: "brew" as const,
@@ -130,19 +129,22 @@ export namespace Installation {
   }
 
   export async function upgrade(method: Method, target: string) {
-    let cmd: ReturnType<typeof $>
+    let cmd
     switch (method) {
-      case "bun":
-        cmd = $`bun install -g ${PACKAGE_NAME}@${target}`
+      case "curl":
+        cmd = $`curl -fsSL https://opencode.ai/install | bash`.env({
+          ...process.env,
+          VERSION: target,
+        })
         break
       case "npm":
-        cmd = $`npm install -g ${PACKAGE_NAME}@${target}`
+        cmd = $`npm install -g opencode-ai@${target}`
         break
       case "pnpm":
-        cmd = $`pnpm install -g ${PACKAGE_NAME}@${target}`
+        cmd = $`pnpm install -g opencode-ai@${target}`
         break
-      case "yarn":
-        cmd = $`yarn global add ${PACKAGE_NAME}@${target}`
+      case "bun":
+        cmd = $`bun install -g opencode-ai@${target}`
         break
       case "brew": {
         const formula = await getBrewFormula()
@@ -159,7 +161,7 @@ export namespace Installation {
         cmd = $`scoop install opencode@${target}`
         break
       default:
-        throw new Error(`Unknown or unsupported upgrade method: ${method}. Use: bun, npm, pnpm, or yarn`)
+        throw new Error(`Unknown method: ${method}`)
     }
     const result = await cmd.quiet().throws(false)
     if (result.exitCode !== 0) {
@@ -177,18 +179,9 @@ export namespace Installation {
     await $`${process.execPath} --version`.nothrow().quiet().text()
   }
 
-  export const VERSION =
-    typeof OPENCODE_VERSION === "string" ? OPENCODE_VERSION : process.env.OPENCODE_VERSION || "local"
-  export const CHANNEL =
-    typeof OPENCODE_CHANNEL === "string" ? OPENCODE_CHANNEL : process.env.OPENCODE_CHANNEL || "local"
-  export const BASE_VERSION = typeof OPENCODE_BASE_VERSION === "string" ? OPENCODE_BASE_VERSION : VERSION
+  export const VERSION = typeof OPENCODE_VERSION === "string" ? OPENCODE_VERSION : "local"
+  export const CHANNEL = typeof OPENCODE_CHANNEL === "string" ? OPENCODE_CHANNEL : "local"
   export const USER_AGENT = `opencode/${CHANNEL}/${VERSION}/${Flag.OPENCODE_CLIENT}`
-
-  export function displayVersion() {
-    if (!isPreview()) return VERSION
-    if (BASE_VERSION === VERSION) return VERSION
-    return `${BASE_VERSION} (${VERSION})`
-  }
 
   export async function latest(installMethod?: Method) {
     const detectedMethod = installMethod || (await method())

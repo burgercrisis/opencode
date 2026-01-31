@@ -3,14 +3,13 @@ import { useTheme, selectedForeground } from "@tui/context/theme"
 import { entries, filter, flatMap, groupBy, pipe, take } from "remeda"
 import { batch, createEffect, createMemo, For, Show, type JSX, on } from "solid-js"
 import { createStore } from "solid-js/store"
-import { useKeyboard, useTerminalDimensions, useRenderer } from "@opentui/solid"
+import { useKeyboard, useTerminalDimensions } from "@opentui/solid"
 import * as fuzzysort from "fuzzysort"
 import { isDeepEqual } from "remeda"
 import { useDialog, type DialogContext } from "@tui/ui/dialog"
 import { useKeybind } from "@tui/context/keybind"
 import { Keybind } from "@/util/keybind"
 import { Locale } from "@/util/locale"
-import { truncateEnd } from "@tui/lib/cols"
 
 export interface DialogSelectProps<T> {
   title: string
@@ -73,15 +72,24 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
   let input: InputRenderable
 
   const filtered = createMemo(() => {
-    if (props.skipFilter) {
-      return props.options.filter((x) => x.disabled !== true)
-    }
+    if (props.skipFilter) return props.options.filter((x) => x.disabled !== true)
     const needle = store.filter.toLowerCase()
-    return pipe(
+    const options = pipe(
       props.options,
       filter((x) => x.disabled !== true),
-      (x) => (!needle ? x : fuzzysort.go(needle, x, { keys: ["title", "category"] }).map((x) => x.obj)),
     )
+    if (!needle) return options
+
+    // prioritize title matches (weight: 2) over category matches (weight: 1).
+    // users typically search by the item name, and not its category.
+    const result = fuzzysort
+      .go(needle, options, {
+        keys: ["title", "category"],
+        scoreFn: (r) => r[0].score * 2 + r[1].score,
+      })
+      .map((x) => x.obj)
+
+    return result
   })
 
   // When the filter changes due to how TUI works, the mousemove might still be triggered
@@ -92,13 +100,15 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
     setStore("input", "keyboard")
   })
 
-  const grouped = createMemo(() =>
-    pipe(
+  const grouped = createMemo(() => {
+    const result = pipe(
       filtered(),
       groupBy((x) => x.category ?? ""),
+      // mapValues((x) => x.sort((a, b) => a.title.localeCompare(b.title))),
       entries(),
-    ),
-  )
+    )
+    return result
+  })
 
   const flat = createMemo(() => {
     return pipe(
@@ -134,12 +144,13 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
     let next = store.selected + direction
     if (next < 0) next = flat().length - 1
     if (next >= flat().length) next = 0
-    moveTo(next)
+    moveTo(next, true)
   }
 
   function moveTo(next: number, center = false) {
     setStore("selected", next)
-    props.onMove?.(selected()!)
+    const option = selected()
+    if (option) props.onMove?.(option)
     if (!scroll) return
     const target = scroll.getChildren().find((child) => {
       return child.id === JSON.stringify(selected()?.value)
@@ -230,7 +241,11 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
             focusedTextColor={theme.textMuted}
             ref={(r) => {
               input = r
-              setTimeout(() => input.focus(), 1)
+              setTimeout(() => {
+                if (!input) return
+                if (input.isDestroyed) return
+                input.focus()
+              }, 1)
             }}
             placeholder={props.placeholder ?? "Search"}
           />
@@ -359,10 +374,7 @@ function Option(props: {
         wrapMode="none"
         paddingLeft={3}
       >
-        {(() => {
-          const renderer = useRenderer()
-          return truncateEnd({ method: renderer.widthMethod, text: props.title, max: 61 })
-        })()}
+        {Locale.truncate(props.title, 61)}
         <Show when={props.description}>
           <span style={{ fg: props.active ? fg : theme.textMuted }}> {props.description}</span>
         </Show>

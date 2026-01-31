@@ -120,6 +120,9 @@ export type UserMessage = {
     [key: string]: boolean
   }
   variant?: string
+  tokens?: {
+    sent?: number
+  }
 }
 
 export type ProviderAuthError = {
@@ -191,15 +194,12 @@ export type AssistantMessage = {
     input: number
     output: number
     reasoning: number
+    sent?: number
     cache: {
       read: number
       write: number
     }
   }
-  outputEstimate?: number
-  reasoningEstimate?: number
-  contextEstimate?: number
-  sentEstimate?: number
   finish?: string
 }
 
@@ -237,13 +237,27 @@ export type TextPart = {
   }
 }
 
+export type SubtaskPart = {
+  id: string
+  sessionID: string
+  messageID: string
+  type: "subtask"
+  prompt: string
+  description: string
+  agent: string
+  model?: {
+    providerID: string
+    modelID: string
+  }
+  command?: string
+}
+
 export type ReasoningPart = {
   id: string
   sessionID: string
   messageID: string
   type: "reasoning"
   text: string
-  ignored?: boolean
   metadata?: {
     [key: string]: unknown
   }
@@ -395,6 +409,7 @@ export type StepFinishPart = {
     input: number
     output: number
     reasoning: number
+    sent?: number
     cache: {
       read: number
       write: number
@@ -452,54 +467,9 @@ export type CompactionPart = {
   auto: boolean
 }
 
-export type MessagePart = {
-  id: string
-  sessionID: string
-  messageID: string
-  type: "message"
-  direction: "outgoing" | "incoming"
-  peer: string
-  peerType: "human" | "agent" | "system"
-  text: string
-  timeout?: number
-  timeoutOccurred?: boolean
-  time: {
-    created: number
-  }
-}
-
-export type WaitPart = {
-  id: string
-  sessionID: string
-  messageID: string
-  type: "wait"
-  sources: Array<string>
-  timeout: number
-  mode: "all" | "any"
-  status: "waiting" | "resolved" | "timedOut"
-  respondedSources?: Array<string>
-  time: {
-    created: number
-    resolved?: number
-  }
-}
-
 export type Part =
   | TextPart
-  | {
-      id: string
-      sessionID: string
-      messageID: string
-      type: "subtask"
-      prompt: string
-      description: string
-      agent: string
-      model?: {
-        providerID: string
-        modelID: string
-      }
-      command?: string
-    }
+  | SubtaskPart
   | ReasoningPart
   | FilePart
   | ToolPart
@@ -510,8 +480,6 @@ export type Part =
   | AgentPart
   | RetryPart
   | CompactionPart
-  | MessagePart
-  | WaitPart
 
 export type EventMessagePartUpdated = {
   type: "message.part.updated"
@@ -527,21 +495,6 @@ export type EventMessagePartRemoved = {
     sessionID: string
     messageID: string
     partID: string
-  }
-}
-
-export type EventSessionMessageDelivered = {
-  type: "session.message.delivered"
-  properties: {
-    message: {
-      id: string
-      seq: number
-      from: string
-      to: string
-      text: string
-      time: number
-      messageType?: "normal" | "timeout" | "error" | "wait_result"
-    }
   }
 }
 
@@ -586,16 +539,6 @@ export type SessionStatus =
     }
   | {
       type: "busy"
-    }
-  | {
-      type: "waiting"
-      sources: Array<string>
-      timeout: number
-      mode: "all" | "any"
-      time: {
-        created: number
-        deadline?: number
-      }
     }
 
 export type EventSessionStatus = {
@@ -691,6 +634,14 @@ export type EventSessionCompacted = {
   }
 }
 
+export type EventFileWatcherUpdated = {
+  type: "file.watcher.updated"
+  properties: {
+    file: string
+    event: "add" | "change" | "unlink"
+  }
+}
+
 export type Todo = {
   /**
    * Brief description of the task
@@ -715,14 +666,6 @@ export type EventTodoUpdated = {
   properties: {
     sessionID: string
     todos: Array<Todo>
-  }
-}
-
-export type EventFileWatcherUpdated = {
-  type: "file.watcher.updated"
-  properties: {
-    file: string
-    event: "add" | "change" | "unlink"
   }
 }
 
@@ -780,40 +723,6 @@ export type EventTuiSessionSelect = {
   }
 }
 
-export type EventFileEdited = {
-  type: "file.edited"
-  properties: {
-    file: string
-  }
-}
-
-export type Todo = {
-  /**
-   * Brief description of the task
-   */
-  content: string
-  /**
-   * Current status of the task: pending, in_progress, completed, cancelled
-   */
-  status: string
-  /**
-   * Priority level of the task: high, medium, low
-   */
-  priority: string
-  /**
-   * Unique identifier for the todo item
-   */
-  id: string
-}
-
-export type EventTodoUpdated = {
-  type: "todo.updated"
-  properties: {
-    sessionID: string
-    todos: Array<Todo>
-  }
-}
-
 export type EventMcpToolsChanged = {
   type: "mcp.tools.changed"
   properties: {
@@ -851,14 +760,10 @@ export type PermissionRuleset = Array<PermissionRule>
 
 export type Session = {
   id: string
-  slug: string
+  slug?: string
   projectID: string
   directory: string
   parentID?: string
-  sessionType?: "primary" | "subagent"
-  agentName?: string
-  subagentPrompt?: string
-  childrenIDs?: Array<string>
   summary?: {
     additions: number
     deletions: number
@@ -968,6 +873,21 @@ export type EventPtyDeleted = {
   }
 }
 
+export type EventWorktreeReady = {
+  type: "worktree.ready"
+  properties: {
+    name: string
+    branch: string
+  }
+}
+
+export type EventWorktreeFailed = {
+  type: "worktree.failed"
+  properties: {
+    message: string
+  }
+}
+
 export type Event =
   | EventInstallationUpdated
   | EventInstallationUpdateAvailable
@@ -982,7 +902,6 @@ export type Event =
   | EventMessageRemoved
   | EventMessagePartUpdated
   | EventMessagePartRemoved
-  | EventSessionMessageDelivered
   | EventPermissionAsked
   | EventPermissionReplied
   | EventSessionStatus
@@ -991,14 +910,12 @@ export type Event =
   | EventQuestionReplied
   | EventQuestionRejected
   | EventSessionCompacted
-  | EventTodoUpdated
   | EventFileWatcherUpdated
+  | EventTodoUpdated
   | EventTuiPromptAppend
   | EventTuiCommandExecute
   | EventTuiToastShow
   | EventTuiSessionSelect
-  | EventFileEdited
-  | EventTodoUpdated
   | EventMcpToolsChanged
   | EventMcpBrowserOpenFailed
   | EventCommandExecuted
@@ -1012,51 +929,12 @@ export type Event =
   | EventPtyUpdated
   | EventPtyExited
   | EventPtyDeleted
+  | EventWorktreeReady
+  | EventWorktreeFailed
 
 export type GlobalEvent = {
   directory: string
   payload: Event
-}
-
-export type StorageInvalidKeyError = {
-  name: "StorageInvalidKeyError"
-  data: {
-    key: Array<string>
-    reason: string
-  }
-}
-
-export type PartMismatchError = {
-  name: "PartMismatchError"
-  data: {
-    expected: {
-      sessionID: string
-      messageID: string
-      partID: string
-    }
-    received: {
-      sessionID: string
-      messageID: string
-      partID: string
-    }
-  }
-}
-
-export type BadRequestError = {
-  data: unknown
-  errors: Array<{
-    [key: string]: unknown
-  }>
-  success: false
-}
-
-export type BadRequest = StorageInvalidKeyError | PartMismatchError | BadRequestError
-
-export type NotFoundError = {
-  name: "NotFoundError"
-  data: {
-    message: string
-  }
 }
 
 /**
@@ -1087,10 +965,6 @@ export type KeybindsConfig = {
    * Toggle session scrollbar
    */
   scrollbar_toggle?: string
-  /**
-   * Toggle session header visibility
-   */
-  header_toggle?: string
   /**
    * Toggle username visibility
    */
@@ -1155,10 +1029,6 @@ export type KeybindsConfig = {
    * Compact the session
    */
   session_compact?: string
-  /**
-   * Search in session messages
-   */
-  session_search?: string
   /**
    * Scroll messages up by one page
    */
@@ -1420,10 +1290,6 @@ export type KeybindsConfig = {
    */
   history_next?: string
   /**
-   * List child/subagent sessions
-   */
-  session_child_list?: string
-  /**
    * Next child session
    */
   session_child_cycle?: string
@@ -1431,10 +1297,6 @@ export type KeybindsConfig = {
    * Previous child session
    */
   session_child_cycle_reverse?: string
-  /**
-   * Go to parent session
-   */
-  session_parent?: string
   /**
    * Go to parent session
    */
@@ -1482,21 +1344,35 @@ export type ServerConfig = {
 
 export type PermissionActionConfig = "ask" | "allow" | "deny"
 
+export type PermissionObjectConfig = {
+  [key: string]: PermissionActionConfig
+}
+
+export type PermissionRuleConfig = PermissionActionConfig | PermissionObjectConfig
+
 export type PermissionConfig =
+  | {
+      __originalKeys?: Array<string>
+      read?: PermissionRuleConfig
+      edit?: PermissionRuleConfig
+      glob?: PermissionRuleConfig
+      grep?: PermissionRuleConfig
+      list?: PermissionRuleConfig
+      bash?: PermissionRuleConfig
+      task?: PermissionRuleConfig
+      external_directory?: PermissionRuleConfig
+      todowrite?: PermissionActionConfig
+      todoread?: PermissionActionConfig
+      question?: PermissionActionConfig
+      webfetch?: PermissionActionConfig
+      websearch?: PermissionActionConfig
+      codesearch?: PermissionActionConfig
+      lsp?: PermissionRuleConfig
+      doom_loop?: PermissionActionConfig
+      skill?: PermissionRuleConfig
+      [key: string]: PermissionRuleConfig | Array<string> | PermissionActionConfig | undefined
+    }
   | PermissionActionConfig
-  | Array<
-      [
-        string,
-        (
-          | "ask"
-          | "allow"
-          | "deny"
-          | {
-              [key: string]: "ask" | "allow" | "deny"
-            }
-        ),
-      ]
-    >
 
 export type AgentConfig = {
   model?: string
@@ -1515,6 +1391,10 @@ export type AgentConfig = {
    */
   description?: string
   mode?: "subagent" | "primary" | "all"
+  /**
+   * Hide this subagent from the @ autocomplete menu (default: false, only applies to mode: subagent)
+   */
+  hidden?: boolean
   options?: {
     [key: string]: unknown
   }
@@ -1585,9 +1465,9 @@ export type ProviderConfig = {
         }
       }
       limit?: {
-        context: number
+        context?: number
         input?: number
-        output: number
+        output?: number
       }
       modalities?: {
         input: Array<"text" | "audio" | "image" | "video" | "pdf">
@@ -1602,7 +1482,8 @@ export type ProviderConfig = {
         [key: string]: string
       }
       provider?: {
-        npm: string
+        npm?: string
+        api?: string
       }
       /**
        * Variant-specific configuration
@@ -1719,6 +1600,10 @@ export type Config = {
    */
   $schema?: string
   /**
+   * Shell to use for command execution (e.g., bash, zsh, fish, pwsh)
+   */
+  shell?: string
+  /**
    * Theme name to use for the interface
    */
   theme?: string
@@ -1758,6 +1643,15 @@ export type Config = {
       model?: string
       subtask?: boolean
     }
+  }
+  /**
+   * Additional skill folder paths
+   */
+  skills?: {
+    /**
+     * Additional paths to skill folders
+     */
+    paths?: Array<string>
   }
   watcher?: {
     ignore?: Array<string>
@@ -1838,6 +1732,22 @@ export type Config = {
           enabled: boolean
         }
   }
+  llm?: {
+    concurrency?: {
+      /**
+       * Maximum number of concurrent LLM requests globally
+       */
+      global?: number
+      /**
+       * Maximum number of concurrent LLM requests per model
+       */
+      model?: number
+      /**
+       * Timeout in ms after which a lease is considered stale
+       */
+      staleMs?: number
+    }
+  }
   formatter?:
     | false
     | {
@@ -1886,9 +1796,9 @@ export type Config = {
   }
   compaction?: {
     /**
-     * Automatic compaction policy when context is full: allow|deny|ask (or true/false). Defaults to allow.
+     * Enable automatic compaction when context is full (default: true)
      */
-    auto?: PermissionActionConfig | boolean
+    auto?: boolean
     /**
      * Enable pruning of old tool outputs (default: true)
      */
@@ -1925,26 +1835,6 @@ export type Config = {
      */
     openTelemetry?: boolean
     /**
-     * Optional concurrency limits for LLM streaming.
-     */
-    llmConcurrency?: {
-      /**
-       * Global (machine-wide) concurrency limits for LLM streaming.
-       */
-      global?: {
-        /**
-         * Global (machine-wide) max concurrent LLM streams using pattern keys. Keys match providerID/model.api.id (e.g. openai/gpt-5) and may be globs (openai*) or regex prefixed with re:.
-         */
-        limits: {
-          [key: string]: number
-        }
-        /**
-         * Lease expiry for crash-recovery in milliseconds (min 1000). Used to prune stale global concurrency leases.
-         */
-        staleMs?: number
-      }
-    }
-    /**
      * Tools that should only be available to primary agents.
      */
     primary_tools?: Array<string>
@@ -1953,13 +1843,46 @@ export type Config = {
      */
     continue_loop_on_deny?: boolean
     /**
-     * Allow @file references to paths outside the worktree (e.g., ~/foo or /abs/path). Default is false for security.
-     */
-    allowFileRefsOutsideWorktree?: boolean
-    /**
      * Timeout in milliseconds for model context protocol (MCP) requests
      */
     mcp_timeout?: number
+  }
+}
+
+export type BadRequestError = {
+  data: unknown
+  errors: Array<{
+    [key: string]: unknown
+  }>
+  success: false
+}
+
+export type OAuth = {
+  type: "oauth"
+  refresh: string
+  access: string
+  expires: number
+  accountId?: string
+  enterpriseUrl?: string
+}
+
+export type ApiAuth = {
+  type: "api"
+  key: string
+}
+
+export type WellKnownAuth = {
+  type: "wellknown"
+  key: string
+  token: string
+}
+
+export type Auth = OAuth | ApiAuth | WellKnownAuth
+
+export type NotFoundError = {
+  name: "NotFoundError"
+  data: {
+    message: string
   }
 }
 
@@ -2279,43 +2202,12 @@ export type FormatterStatus = {
   enabled: boolean
 }
 
-export type OAuth = {
-  type: "oauth"
-  refresh: string
-  access: string
-  expires: number
-  accountId?: string
-  enterpriseUrl?: string
-}
-
-export type ApiAuth = {
-  type: "api"
-  key: string
-}
-
-export type WellKnownAuth = {
-  type: "wellknown"
-  key: string
-  token: string
-}
-
-export type Auth = OAuth | ApiAuth | WellKnownAuth
-
 export type GlobalHealthData = {
   body?: never
   path?: never
   query?: never
   url: "/global/health"
 }
-
-export type GlobalHealthErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type GlobalHealthError = GlobalHealthErrors[keyof GlobalHealthErrors]
 
 export type GlobalHealthResponses = {
   /**
@@ -2332,24 +2224,9 @@ export type GlobalHealthResponse = GlobalHealthResponses[keyof GlobalHealthRespo
 export type GlobalEventData = {
   body?: never
   path?: never
-  query?: {
-    directory?: string
-  }
+  query?: never
   url: "/global/event"
 }
-
-export type GlobalEventErrors = {
-  /**
-   * Bad request
-   */
-  400: BadRequest
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type GlobalEventError = GlobalEventErrors[keyof GlobalEventErrors]
 
 export type GlobalEventResponses = {
   /**
@@ -2360,21 +2237,53 @@ export type GlobalEventResponses = {
 
 export type GlobalEventResponse = GlobalEventResponses[keyof GlobalEventResponses]
 
+export type GlobalConfigGetData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/global/config"
+}
+
+export type GlobalConfigGetResponses = {
+  /**
+   * Get global config info
+   */
+  200: Config
+}
+
+export type GlobalConfigGetResponse = GlobalConfigGetResponses[keyof GlobalConfigGetResponses]
+
+export type GlobalConfigUpdateData = {
+  body?: Config
+  path?: never
+  query?: never
+  url: "/global/config"
+}
+
+export type GlobalConfigUpdateErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type GlobalConfigUpdateError = GlobalConfigUpdateErrors[keyof GlobalConfigUpdateErrors]
+
+export type GlobalConfigUpdateResponses = {
+  /**
+   * Successfully updated global config
+   */
+  200: Config
+}
+
+export type GlobalConfigUpdateResponse = GlobalConfigUpdateResponses[keyof GlobalConfigUpdateResponses]
+
 export type GlobalDisposeData = {
   body?: never
   path?: never
   query?: never
   url: "/global/dispose"
 }
-
-export type GlobalDisposeErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type GlobalDisposeError = GlobalDisposeErrors[keyof GlobalDisposeErrors]
 
 export type GlobalDisposeResponses = {
   /**
@@ -2385,6 +2294,60 @@ export type GlobalDisposeResponses = {
 
 export type GlobalDisposeResponse = GlobalDisposeResponses[keyof GlobalDisposeResponses]
 
+export type AuthRemoveData = {
+  body?: never
+  path: {
+    providerID: string
+  }
+  query?: never
+  url: "/auth/{providerID}"
+}
+
+export type AuthRemoveErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type AuthRemoveError = AuthRemoveErrors[keyof AuthRemoveErrors]
+
+export type AuthRemoveResponses = {
+  /**
+   * Successfully removed authentication credentials
+   */
+  200: boolean
+}
+
+export type AuthRemoveResponse = AuthRemoveResponses[keyof AuthRemoveResponses]
+
+export type AuthSetData = {
+  body?: Auth
+  path: {
+    providerID: string
+  }
+  query?: never
+  url: "/auth/{providerID}"
+}
+
+export type AuthSetErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type AuthSetError = AuthSetErrors[keyof AuthSetErrors]
+
+export type AuthSetResponses = {
+  /**
+   * Successfully set authentication credentials
+   */
+  200: boolean
+}
+
+export type AuthSetResponse = AuthSetResponses[keyof AuthSetResponses]
+
 export type ProjectListData = {
   body?: never
   path?: never
@@ -2393,15 +2356,6 @@ export type ProjectListData = {
   }
   url: "/project"
 }
-
-export type ProjectListErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type ProjectListError = ProjectListErrors[keyof ProjectListErrors]
 
 export type ProjectListResponses = {
   /**
@@ -2420,15 +2374,6 @@ export type ProjectCurrentData = {
   }
   url: "/project/current"
 }
-
-export type ProjectCurrentErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type ProjectCurrentError = ProjectCurrentErrors[keyof ProjectCurrentErrors]
 
 export type ProjectCurrentResponses = {
   /**
@@ -2467,15 +2412,11 @@ export type ProjectUpdateErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
   404: NotFoundError
-  /**
-   * Internal server error
-   */
-  500: UnknownError
 }
 
 export type ProjectUpdateError = ProjectUpdateErrors[keyof ProjectUpdateErrors]
@@ -2489,112 +2430,6 @@ export type ProjectUpdateResponses = {
 
 export type ProjectUpdateResponse = ProjectUpdateResponses[keyof ProjectUpdateResponses]
 
-export type QuestionListData = {
-  body?: never
-  path?: never
-  query?: {
-    directory?: string
-  }
-  url: "/question"
-}
-
-export type QuestionListErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type QuestionListError = QuestionListErrors[keyof QuestionListErrors]
-
-export type QuestionListResponses = {
-  /**
-   * List of pending questions
-   */
-  200: Array<QuestionRequest>
-}
-
-export type QuestionListResponse = QuestionListResponses[keyof QuestionListResponses]
-
-export type QuestionReplyData = {
-  body?: {
-    /**
-     * User answers in order of questions (each answer is an array of selected labels)
-     */
-    answers: Array<QuestionAnswer>
-  }
-  path: {
-    requestID: string
-  }
-  query?: {
-    directory?: string
-  }
-  url: "/question/{requestID}/reply"
-}
-
-export type QuestionReplyErrors = {
-  /**
-   * Bad request
-   */
-  400: BadRequest
-  /**
-   * Not found
-   */
-  404: NotFoundError
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type QuestionReplyError = QuestionReplyErrors[keyof QuestionReplyErrors]
-
-export type QuestionReplyResponses = {
-  /**
-   * Question answered successfully
-   */
-  200: boolean
-}
-
-export type QuestionReplyResponse = QuestionReplyResponses[keyof QuestionReplyResponses]
-
-export type QuestionRejectData = {
-  body?: never
-  path: {
-    requestID: string
-  }
-  query?: {
-    directory?: string
-  }
-  url: "/question/{requestID}/reject"
-}
-
-export type QuestionRejectErrors = {
-  /**
-   * Bad request
-   */
-  400: BadRequest
-  /**
-   * Not found
-   */
-  404: NotFoundError
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type QuestionRejectError = QuestionRejectErrors[keyof QuestionRejectErrors]
-
-export type QuestionRejectResponses = {
-  /**
-   * Question rejected successfully
-   */
-  200: boolean
-}
-
-export type QuestionRejectResponse = QuestionRejectResponses[keyof QuestionRejectResponses]
-
 export type PtyListData = {
   body?: never
   path?: never
@@ -2603,15 +2438,6 @@ export type PtyListData = {
   }
   url: "/pty"
 }
-
-export type PtyListErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type PtyListError = PtyListErrors[keyof PtyListErrors]
 
 export type PtyListResponses = {
   /**
@@ -2643,11 +2469,7 @@ export type PtyCreateErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
-  /**
-   * Internal server error
-   */
-  500: UnknownError
+  400: BadRequestError
 }
 
 export type PtyCreateError = PtyCreateErrors[keyof PtyCreateErrors]
@@ -2677,10 +2499,6 @@ export type PtyRemoveErrors = {
    * Not found
    */
   404: NotFoundError
-  /**
-   * Internal server error
-   */
-  500: UnknownError
 }
 
 export type PtyRemoveError = PtyRemoveErrors[keyof PtyRemoveErrors]
@@ -2710,10 +2528,6 @@ export type PtyGetErrors = {
    * Not found
    */
   404: NotFoundError
-  /**
-   * Internal server error
-   */
-  500: UnknownError
 }
 
 export type PtyGetError = PtyGetErrors[keyof PtyGetErrors]
@@ -2748,15 +2562,7 @@ export type PtyUpdateErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
-  /**
-   * Not found
-   */
-  404: NotFoundError
-  /**
-   * Internal server error
-   */
-  500: UnknownError
+  400: BadRequestError
 }
 
 export type PtyUpdateError = PtyUpdateErrors[keyof PtyUpdateErrors]
@@ -2786,13 +2592,18 @@ export type PtyConnectErrors = {
    * Not found
    */
   404: NotFoundError
-  /**
-   * Internal server error
-   */
-  500: UnknownError
 }
 
 export type PtyConnectError = PtyConnectErrors[keyof PtyConnectErrors]
+
+export type PtyConnectResponses = {
+  /**
+   * Connected session
+   */
+  200: boolean
+}
+
+export type PtyConnectResponse = PtyConnectResponses[keyof PtyConnectResponses]
 
 export type ConfigGetData = {
   body?: never
@@ -2802,15 +2613,6 @@ export type ConfigGetData = {
   }
   url: "/config"
 }
-
-export type ConfigGetErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type ConfigGetError = ConfigGetErrors[keyof ConfigGetErrors]
 
 export type ConfigGetResponses = {
   /**
@@ -2834,11 +2636,7 @@ export type ConfigUpdateErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
-  /**
-   * Internal server error
-   */
-  500: UnknownError
+  400: BadRequestError
 }
 
 export type ConfigUpdateError = ConfigUpdateErrors[keyof ConfigUpdateErrors]
@@ -2888,11 +2686,7 @@ export type ToolIdsErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
-  /**
-   * Internal server error
-   */
-  500: UnknownError
+  400: BadRequestError
 }
 
 export type ToolIdsError = ToolIdsErrors[keyof ToolIdsErrors]
@@ -2921,11 +2715,7 @@ export type ToolListErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
-  /**
-   * Internal server error
-   */
-  500: UnknownError
+  400: BadRequestError
 }
 
 export type ToolListError = ToolListErrors[keyof ToolListErrors]
@@ -2948,14 +2738,14 @@ export type WorktreeRemoveData = {
   url: "/experimental/worktree"
 }
 
-export type InstanceDisposeResponses = {
+export type WorktreeRemoveErrors = {
   /**
-   * Instance disposed
+   * Bad request
    */
-  200: boolean
+  400: BadRequestError
 }
 
-export type InstanceDisposeResponse = InstanceDisposeResponses[keyof InstanceDisposeResponses]
+export type WorktreeRemoveError = WorktreeRemoveErrors[keyof WorktreeRemoveErrors]
 
 export type WorktreeRemoveResponses = {
   /**
@@ -2974,15 +2764,6 @@ export type WorktreeListData = {
   }
   url: "/experimental/worktree"
 }
-
-export type WorktreeListErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type WorktreeListError = WorktreeListErrors[keyof WorktreeListErrors]
 
 export type WorktreeListResponses = {
   /**
@@ -3006,11 +2787,7 @@ export type WorktreeCreateErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
-  /**
-   * Internal server error
-   */
-  500: UnknownError
+  400: BadRequestError
 }
 
 export type WorktreeCreateError = WorktreeCreateErrors[keyof WorktreeCreateErrors]
@@ -3060,7 +2837,7 @@ export type ExperimentalResourceListData = {
   url: "/experimental/resource"
 }
 
-export type VcsGetResponses = {
+export type ExperimentalResourceListResponses = {
   /**
    * MCP resources
    */
@@ -3100,15 +2877,6 @@ export type SessionListData = {
   url: "/session"
 }
 
-export type SessionListErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type SessionListError = SessionListErrors[keyof SessionListErrors]
-
 export type SessionListResponses = {
   /**
    * List of sessions
@@ -3135,11 +2903,7 @@ export type SessionCreateErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
-  /**
-   * Internal server error
-   */
-  500: UnknownError
+  400: BadRequestError
 }
 
 export type SessionCreateError = SessionCreateErrors[keyof SessionCreateErrors]
@@ -3166,11 +2930,7 @@ export type SessionStatusErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
-  /**
-   * Internal server error
-   */
-  500: UnknownError
+  400: BadRequestError
 }
 
 export type SessionStatusError = SessionStatusErrors[keyof SessionStatusErrors]
@@ -3201,15 +2961,11 @@ export type SessionDeleteErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
   404: NotFoundError
-  /**
-   * Internal server error
-   */
-  500: UnknownError
 }
 
 export type SessionDeleteError = SessionDeleteErrors[keyof SessionDeleteErrors]
@@ -3226,9 +2982,6 @@ export type SessionDeleteResponse = SessionDeleteResponses[keyof SessionDeleteRe
 export type SessionGetData = {
   body?: never
   path: {
-    /**
-     * Session ID
-     */
     sessionID: string
   }
   query?: {
@@ -3241,15 +2994,11 @@ export type SessionGetErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
   404: NotFoundError
-  /**
-   * Internal server error
-   */
-  500: UnknownError
 }
 
 export type SessionGetError = SessionGetErrors[keyof SessionGetErrors]
@@ -3271,9 +3020,6 @@ export type SessionUpdateData = {
     }
   }
   path: {
-    /**
-     * Session ID
-     */
     sessionID: string
   }
   query?: {
@@ -3286,15 +3032,11 @@ export type SessionUpdateErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
   404: NotFoundError
-  /**
-   * Internal server error
-   */
-  500: UnknownError
 }
 
 export type SessionUpdateError = SessionUpdateErrors[keyof SessionUpdateErrors]
@@ -3323,15 +3065,11 @@ export type SessionChildrenErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
   404: NotFoundError
-  /**
-   * Internal server error
-   */
-  500: UnknownError
 }
 
 export type SessionChildrenError = SessionChildrenErrors[keyof SessionChildrenErrors]
@@ -3363,11 +3101,11 @@ export type SessionTodoErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
-   * Internal server error
+   * Not found
    */
-  500: UnknownError
+  404: NotFoundError
 }
 
 export type SessionTodoError = SessionTodoErrors[keyof SessionTodoErrors]
@@ -3403,15 +3141,11 @@ export type SessionInitErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
   404: NotFoundError
-  /**
-   * Internal server error
-   */
-  500: UnknownError
 }
 
 export type SessionInitError = SessionInitErrors[keyof SessionInitErrors]
@@ -3438,15 +3172,6 @@ export type SessionForkData = {
   url: "/session/{sessionID}/fork"
 }
 
-export type SessionForkErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type SessionForkError = SessionForkErrors[keyof SessionForkErrors]
-
 export type SessionForkResponses = {
   /**
    * 200
@@ -3459,9 +3184,6 @@ export type SessionForkResponse = SessionForkResponses[keyof SessionForkResponse
 export type SessionAbortData = {
   body?: never
   path: {
-    /**
-     * Session ID
-     */
     sessionID: string
   }
   query?: {
@@ -3474,11 +3196,11 @@ export type SessionAbortErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
-   * Internal server error
+   * Not found
    */
-  500: UnknownError
+  404: NotFoundError
 }
 
 export type SessionAbortError = SessionAbortErrors[keyof SessionAbortErrors]
@@ -3507,15 +3229,11 @@ export type SessionUnshareErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
   404: NotFoundError
-  /**
-   * Internal server error
-   */
-  500: UnknownError
 }
 
 export type SessionUnshareError = SessionUnshareErrors[keyof SessionUnshareErrors]
@@ -3532,9 +3250,6 @@ export type SessionUnshareResponse = SessionUnshareResponses[keyof SessionUnshar
 export type SessionShareData = {
   body?: never
   path: {
-    /**
-     * Session ID
-     */
     sessionID: string
   }
   query?: {
@@ -3547,15 +3262,11 @@ export type SessionShareErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
   404: NotFoundError
-  /**
-   * Internal server error
-   */
-  500: UnknownError
 }
 
 export type SessionShareError = SessionShareErrors[keyof SessionShareErrors]
@@ -3612,15 +3323,11 @@ export type SessionSummarizeErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
   404: NotFoundError
-  /**
-   * Internal server error
-   */
-  500: UnknownError
 }
 
 export type SessionSummarizeError = SessionSummarizeErrors[keyof SessionSummarizeErrors]
@@ -3653,11 +3360,11 @@ export type SessionMessagesErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
-   * Internal server error
+   * Not found
    */
-  500: UnknownError
+  404: NotFoundError
 }
 
 export type SessionMessagesError = SessionMessagesErrors[keyof SessionMessagesErrors]
@@ -3709,15 +3416,11 @@ export type SessionPromptErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
   404: NotFoundError
-  /**
-   * Internal server error
-   */
-  500: UnknownError
 }
 
 export type SessionPromptError = SessionPromptErrors[keyof SessionPromptErrors]
@@ -3733,42 +3436,6 @@ export type SessionPromptResponses = {
 }
 
 export type SessionPromptResponse = SessionPromptResponses[keyof SessionPromptResponses]
-
-export type SessionDiffData = {
-  body?: never
-  path: {
-    /**
-     * Session ID
-     */
-    sessionID: string
-  }
-  query?: {
-    directory?: string
-  }
-  url: "/session/{sessionID}/diff"
-}
-
-export type SessionDiffErrors = {
-  /**
-   * Bad request
-   */
-  400: BadRequest
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type SessionDiffError = SessionDiffErrors[keyof SessionDiffErrors]
-
-export type SessionDiffResponses = {
-  /**
-   * List of diffs
-   */
-  200: Array<FileDiff>
-}
-
-export type SessionDiffResponse = SessionDiffResponses[keyof SessionDiffResponses]
 
 export type SessionMessageData = {
   body?: never
@@ -3792,15 +3459,11 @@ export type SessionMessageErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
   404: NotFoundError
-  /**
-   * Internal server error
-   */
-  500: UnknownError
 }
 
 export type SessionMessageError = SessionMessageErrors[keyof SessionMessageErrors]
@@ -3843,19 +3506,11 @@ export type PartDeleteErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
   404: NotFoundError
-  /**
-   * Conflict
-   */
-  409: SessionBusyError
-  /**
-   * Internal server error
-   */
-  500: UnknownError
 }
 
 export type PartDeleteError = PartDeleteErrors[keyof PartDeleteErrors]
@@ -3895,19 +3550,11 @@ export type PartUpdateErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
   404: NotFoundError
-  /**
-   * Conflict
-   */
-  409: SessionBusyError
-  /**
-   * Internal server error
-   */
-  500: UnknownError
 }
 
 export type PartUpdateError = PartUpdateErrors[keyof PartUpdateErrors]
@@ -3956,15 +3603,11 @@ export type SessionPromptAsyncErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
   404: NotFoundError
-  /**
-   * Internal server error
-   */
-  500: UnknownError
 }
 
 export type SessionPromptAsyncError = SessionPromptAsyncErrors[keyof SessionPromptAsyncErrors]
@@ -3986,6 +3629,14 @@ export type SessionCommandData = {
     arguments: string
     command: string
     variant?: string
+    parts?: Array<{
+      id?: string
+      type: "file"
+      mime: string
+      filename?: string
+      url: string
+      source?: FilePartSource
+    }>
   }
   path: {
     /**
@@ -4003,15 +3654,11 @@ export type SessionCommandErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
   404: NotFoundError
-  /**
-   * Internal server error
-   */
-  500: UnknownError
 }
 
 export type SessionCommandError = SessionCommandErrors[keyof SessionCommandErrors]
@@ -4053,19 +3700,11 @@ export type SessionShellErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
   404: NotFoundError
-  /**
-   * Conflict
-   */
-  409: SessionBusyError
-  /**
-   * Internal server error
-   */
-  500: UnknownError
 }
 
 export type SessionShellError = SessionShellErrors[keyof SessionShellErrors]
@@ -4085,9 +3724,6 @@ export type SessionRevertData = {
     partID?: string
   }
   path: {
-    /**
-     * Session ID
-     */
     sessionID: string
   }
   query?: {
@@ -4100,19 +3736,11 @@ export type SessionRevertErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
   404: NotFoundError
-  /**
-   * Conflict
-   */
-  409: SessionBusyError
-  /**
-   * Internal server error
-   */
-  500: UnknownError
 }
 
 export type SessionRevertError = SessionRevertErrors[keyof SessionRevertErrors]
@@ -4129,9 +3757,6 @@ export type SessionRevertResponse = SessionRevertResponses[keyof SessionRevertRe
 export type SessionUnrevertData = {
   body?: never
   path: {
-    /**
-     * Session ID
-     */
     sessionID: string
   }
   query?: {
@@ -4144,19 +3769,11 @@ export type SessionUnrevertErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
   404: NotFoundError
-  /**
-   * Conflict
-   */
-  409: SessionBusyError
-  /**
-   * Internal server error
-   */
-  500: UnknownError
 }
 
 export type SessionUnrevertError = SessionUnrevertErrors[keyof SessionUnrevertErrors]
@@ -4175,9 +3792,6 @@ export type PermissionRespondData = {
     response: "once" | "always" | "reject"
   }
   path: {
-    /**
-     * Session ID
-     */
     sessionID: string
     permissionID: string
   }
@@ -4191,15 +3805,11 @@ export type PermissionRespondErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
   404: NotFoundError
-  /**
-   * Internal server error
-   */
-  500: UnknownError
 }
 
 export type PermissionRespondError = PermissionRespondErrors[keyof PermissionRespondErrors]
@@ -4231,15 +3841,11 @@ export type PermissionReplyErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
   404: NotFoundError
-  /**
-   * Internal server error
-   */
-  500: UnknownError
 }
 
 export type PermissionReplyError = PermissionReplyErrors[keyof PermissionReplyErrors]
@@ -4262,15 +3868,6 @@ export type PermissionListData = {
   url: "/permission"
 }
 
-export type PermissionListErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type PermissionListError = PermissionListErrors[keyof PermissionListErrors]
-
 export type PermissionListResponses = {
   /**
    * List of pending permissions
@@ -4280,20 +3877,58 @@ export type PermissionListResponses = {
 
 export type PermissionListResponse = PermissionListResponses[keyof PermissionListResponses]
 
-export type CommandListData = {
+export type QuestionListData = {
   body?: never
   path?: never
   query?: {
     directory?: string
   }
-  url: "/command"
+  url: "/question"
 }
 
-export type CommandListErrors = {
+export type QuestionListResponses = {
   /**
-   * Internal server error
+   * List of pending questions
    */
-  500: UnknownError
+  200: Array<QuestionRequest>
+}
+
+export type QuestionListResponse = QuestionListResponses[keyof QuestionListResponses]
+
+export type QuestionReplyData = {
+  body?: {
+    /**
+     * User answers in order of questions (each answer is an array of selected labels)
+     */
+    answers: Array<QuestionAnswer>
+  }
+  path: {
+    requestID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/question/{requestID}/reply"
+}
+
+export type QuestionReplyErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type QuestionReplyError = QuestionReplyErrors[keyof QuestionReplyErrors]
+
+export type QuestionReplyResponses = {
+  /**
+   * Question answered successfully
+   */
+  200: boolean
 }
 
 export type QuestionReplyResponse = QuestionReplyResponses[keyof QuestionReplyResponses]
@@ -4339,15 +3974,6 @@ export type ProviderListData = {
   }
   url: "/provider"
 }
-
-export type ProviderListErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type ProviderListError = ProviderListErrors[keyof ProviderListErrors]
 
 export type ProviderListResponses = {
   /**
@@ -4405,7 +4031,8 @@ export type ProviderListResponses = {
             [key: string]: string
           }
           provider?: {
-            npm: string
+            npm?: string
+            api?: string
           }
           variants?: {
             [key: string]: {
@@ -4432,15 +4059,6 @@ export type ProviderAuthData = {
   }
   url: "/provider/auth"
 }
-
-export type ProviderAuthErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type ProviderAuthError2 = ProviderAuthErrors[keyof ProviderAuthErrors]
 
 export type ProviderAuthResponses = {
   /**
@@ -4476,11 +4094,7 @@ export type ProviderOauthAuthorizeErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
-  /**
-   * Internal server error
-   */
-  500: UnknownError
+  400: BadRequestError
 }
 
 export type ProviderOauthAuthorizeError = ProviderOauthAuthorizeErrors[keyof ProviderOauthAuthorizeErrors]
@@ -4521,11 +4135,7 @@ export type ProviderOauthCallbackErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
-  /**
-   * Internal server error
-   */
-  500: UnknownError
+  400: BadRequestError
 }
 
 export type ProviderOauthCallbackError = ProviderOauthCallbackErrors[keyof ProviderOauthCallbackErrors]
@@ -4548,15 +4158,6 @@ export type FindTextData = {
   }
   url: "/find"
 }
-
-export type FindTextErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type FindTextError = FindTextErrors[keyof FindTextErrors]
 
 export type FindTextResponses = {
   /**
@@ -4596,15 +4197,6 @@ export type FindFilesData = {
   url: "/find/file"
 }
 
-export type FindFilesErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type FindFilesError = FindFilesErrors[keyof FindFilesErrors]
-
 export type FindFilesResponses = {
   /**
    * File paths
@@ -4623,15 +4215,6 @@ export type FindSymbolsData = {
   }
   url: "/find/symbol"
 }
-
-export type FindSymbolsErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type FindSymbolsError = FindSymbolsErrors[keyof FindSymbolsErrors]
 
 export type FindSymbolsResponses = {
   /**
@@ -4652,15 +4235,6 @@ export type FileListData = {
   url: "/file"
 }
 
-export type FileListErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type FileListError = FileListErrors[keyof FileListErrors]
-
 export type FileListResponses = {
   /**
    * Files and directories
@@ -4680,15 +4254,6 @@ export type FileReadData = {
   url: "/file/content"
 }
 
-export type FileReadErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type FileReadError = FileReadErrors[keyof FileReadErrors]
-
 export type FileReadResponses = {
   /**
    * File content
@@ -4707,15 +4272,6 @@ export type FileStatusData = {
   url: "/file/status"
 }
 
-export type FileStatusErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type FileStatusError = FileStatusErrors[keyof FileStatusErrors]
-
 export type FileStatusResponses = {
   /**
    * File status
@@ -4733,15 +4289,6 @@ export type McpStatusData = {
   }
   url: "/mcp"
 }
-
-export type McpStatusErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type McpStatusError = McpStatusErrors[keyof McpStatusErrors]
 
 export type McpStatusResponses = {
   /**
@@ -4770,11 +4317,7 @@ export type McpAddErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
-  /**
-   * Internal server error
-   */
-  500: UnknownError
+  400: BadRequestError
 }
 
 export type McpAddError = McpAddErrors[keyof McpAddErrors]
@@ -4806,10 +4349,6 @@ export type McpAuthRemoveErrors = {
    * Not found
    */
   404: NotFoundError
-  /**
-   * Internal server error
-   */
-  500: UnknownError
 }
 
 export type McpAuthRemoveError = McpAuthRemoveErrors[keyof McpAuthRemoveErrors]
@@ -4840,15 +4379,11 @@ export type McpAuthStartErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
   404: NotFoundError
-  /**
-   * Internal server error
-   */
-  500: UnknownError
 }
 
 export type McpAuthStartError = McpAuthStartErrors[keyof McpAuthStartErrors]
@@ -4887,15 +4422,11 @@ export type McpAuthCallbackErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
   404: NotFoundError
-  /**
-   * Internal server error
-   */
-  500: UnknownError
 }
 
 export type McpAuthCallbackError = McpAuthCallbackErrors[keyof McpAuthCallbackErrors]
@@ -4924,15 +4455,11 @@ export type McpAuthAuthenticateErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
   404: NotFoundError
-  /**
-   * Internal server error
-   */
-  500: UnknownError
 }
 
 export type McpAuthAuthenticateError = McpAuthAuthenticateErrors[keyof McpAuthAuthenticateErrors]
@@ -4957,15 +4484,6 @@ export type McpConnectData = {
   url: "/mcp/{name}/connect"
 }
 
-export type McpConnectErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type McpConnectError = McpConnectErrors[keyof McpConnectErrors]
-
 export type McpConnectResponses = {
   /**
    * MCP server connected successfully
@@ -4985,15 +4503,6 @@ export type McpDisconnectData = {
   }
   url: "/mcp/{name}/disconnect"
 }
-
-export type McpDisconnectErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type McpDisconnectError = McpDisconnectErrors[keyof McpDisconnectErrors]
 
 export type McpDisconnectResponses = {
   /**
@@ -5019,11 +4528,7 @@ export type TuiAppendPromptErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
-  /**
-   * Internal server error
-   */
-  500: UnknownError
+  400: BadRequestError
 }
 
 export type TuiAppendPromptError = TuiAppendPromptErrors[keyof TuiAppendPromptErrors]
@@ -5046,15 +4551,6 @@ export type TuiOpenHelpData = {
   url: "/tui/open-help"
 }
 
-export type TuiOpenHelpErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type TuiOpenHelpError = TuiOpenHelpErrors[keyof TuiOpenHelpErrors]
-
 export type TuiOpenHelpResponses = {
   /**
    * Help dialog opened successfully
@@ -5072,15 +4568,6 @@ export type TuiOpenSessionsData = {
   }
   url: "/tui/open-sessions"
 }
-
-export type TuiOpenSessionsErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type TuiOpenSessionsError = TuiOpenSessionsErrors[keyof TuiOpenSessionsErrors]
 
 export type TuiOpenSessionsResponses = {
   /**
@@ -5100,15 +4587,6 @@ export type TuiOpenThemesData = {
   url: "/tui/open-themes"
 }
 
-export type TuiOpenThemesErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type TuiOpenThemesError = TuiOpenThemesErrors[keyof TuiOpenThemesErrors]
-
 export type TuiOpenThemesResponses = {
   /**
    * Theme dialog opened successfully
@@ -5126,15 +4604,6 @@ export type TuiOpenModelsData = {
   }
   url: "/tui/open-models"
 }
-
-export type TuiOpenModelsErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type TuiOpenModelsError = TuiOpenModelsErrors[keyof TuiOpenModelsErrors]
 
 export type TuiOpenModelsResponses = {
   /**
@@ -5154,15 +4623,6 @@ export type TuiSubmitPromptData = {
   url: "/tui/submit-prompt"
 }
 
-export type TuiSubmitPromptErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type TuiSubmitPromptError = TuiSubmitPromptErrors[keyof TuiSubmitPromptErrors]
-
 export type TuiSubmitPromptResponses = {
   /**
    * Prompt submitted successfully
@@ -5180,15 +4640,6 @@ export type TuiClearPromptData = {
   }
   url: "/tui/clear-prompt"
 }
-
-export type TuiClearPromptErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type TuiClearPromptError = TuiClearPromptErrors[keyof TuiClearPromptErrors]
 
 export type TuiClearPromptResponses = {
   /**
@@ -5214,11 +4665,7 @@ export type TuiExecuteCommandErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
-  /**
-   * Internal server error
-   */
-  500: UnknownError
+  400: BadRequestError
 }
 
 export type TuiExecuteCommandError = TuiExecuteCommandErrors[keyof TuiExecuteCommandErrors]
@@ -5249,15 +4696,6 @@ export type TuiShowToastData = {
   url: "/tui/show-toast"
 }
 
-export type TuiShowToastErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type TuiShowToastError = TuiShowToastErrors[keyof TuiShowToastErrors]
-
 export type TuiShowToastResponses = {
   /**
    * Toast notification shown successfully
@@ -5280,11 +4718,7 @@ export type TuiPublishErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
-  /**
-   * Internal server error
-   */
-  500: UnknownError
+  400: BadRequestError
 }
 
 export type TuiPublishError = TuiPublishErrors[keyof TuiPublishErrors]
@@ -5316,15 +4750,11 @@ export type TuiSelectSessionErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
   404: NotFoundError
-  /**
-   * Internal server error
-   */
-  500: UnknownError
 }
 
 export type TuiSelectSessionError = TuiSelectSessionErrors[keyof TuiSelectSessionErrors]
@@ -5571,39 +5001,6 @@ export type FormatterStatusResponses = {
 
 export type FormatterStatusResponse = FormatterStatusResponses[keyof FormatterStatusResponses]
 
-export type AuthSetData = {
-  body?: Auth
-  path: {
-    providerID: string
-  }
-  query?: {
-    directory?: string
-  }
-  url: "/auth/{providerID}"
-}
-
-export type AuthSetErrors = {
-  /**
-   * Bad request
-   */
-  400: BadRequest
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type AuthSetError = AuthSetErrors[keyof AuthSetErrors]
-
-export type AuthSetResponses = {
-  /**
-   * Successfully set authentication credentials
-   */
-  200: boolean
-}
-
-export type AuthSetResponse = AuthSetResponses[keyof AuthSetResponses]
-
 export type EventSubscribeData = {
   body?: never
   path?: never
@@ -5612,15 +5009,6 @@ export type EventSubscribeData = {
   }
   url: "/event"
 }
-
-export type EventSubscribeErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type EventSubscribeError = EventSubscribeErrors[keyof EventSubscribeErrors]
 
 export type EventSubscribeResponses = {
   /**

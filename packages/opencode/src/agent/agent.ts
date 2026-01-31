@@ -7,9 +7,6 @@ import { Instance } from "../project/instance"
 import { Truncate } from "../tool/truncation"
 import { Auth } from "../auth"
 import { ProviderTransform } from "../provider/transform"
-import { mergeDeep } from "remeda"
-import { minimatch } from "minimatch"
-import * as path from "node:path"
 
 import PROMPT_GENERATE from "./generate.txt"
 import PROMPT_COMPACTION from "./prompt/compaction.txt"
@@ -19,7 +16,8 @@ import PROMPT_TITLE from "./prompt/title.txt"
 import { PermissionNext } from "@/permission/next"
 import { mergeDeep, pipe, sortBy, values } from "remeda"
 import { Global } from "@/global"
-import { Filesystem } from "@/util/filesystem"
+import path from "path"
+import { Plugin } from "@/plugin"
 
 export namespace Agent {
   export const Info = z
@@ -62,6 +60,7 @@ export namespace Agent {
       question: "deny",
       plan_enter: "deny",
       plan_exit: "deny",
+      // mirrors github.com/github/gitignore Node.gitignore pattern for .env files
       read: {
         "*": "allow",
         "*.env": "ask",
@@ -74,6 +73,7 @@ export namespace Agent {
     const result: Record<string, Info> = {
       build: {
         name: "build",
+        description: "The default agent. Executes tools based on configured permissions.",
         options: {},
         permission: PermissionNext.merge(
           defaults,
@@ -88,6 +88,7 @@ export namespace Agent {
       },
       plan: {
         name: "plan",
+        description: "Plan mode. Disallows all edit tools.",
         options: {},
         permission: PermissionNext.merge(
           defaults,
@@ -95,12 +96,12 @@ export namespace Agent {
             question: "allow",
             plan_exit: "allow",
             external_directory: {
-              [Filesystem.join(Global.Path.data, "plans", "*")]: "allow",
+              [path.join(Global.Path.data, "plans", "*")]: "allow",
             },
             edit: {
               "*": "deny",
-              [Filesystem.join(".opencode", "plans", "*.md")]: "allow",
-              [Filesystem.relativePath(Instance.worktree, Filesystem.join(Global.Path.data, Filesystem.join("plans", "*.md")))]: "allow",
+              [path.join(".opencode", "plans", "*.md")]: "allow",
+              [path.relative(Instance.worktree, path.join(Global.Path.data, path.join("plans", "*.md")))]: "allow",
             },
           }),
           user,
@@ -198,7 +199,7 @@ export namespace Agent {
       },
     }
 
-    for (const [key, value] of Object.entries(cfg.agent ?? {})) {
+    for (const [key, value] of Object.entries((cfg.agent ?? {}) as Record<string, any>)) {
       if (value.disable) {
         delete result[key]
         continue
@@ -226,6 +227,7 @@ export namespace Agent {
       item.permission = PermissionNext.merge(item.permission, PermissionNext.fromConfig(value.permission ?? {}))
     }
 
+    // Ensure Truncate.DIR is allowed unless explicitly configured
     for (const name in result) {
       const agent = result[name]
       const explicit = agent.permission.some((r) => {
@@ -280,8 +282,8 @@ export namespace Agent {
     const model = await Provider.getModel(defaultModel.providerID, defaultModel.modelID)
     const language = await Provider.getLanguage(model)
 
-    const system = SystemPrompt.header(defaultModel.providerID)
-    system.push(PROMPT_GENERATE)
+    const system = [PROMPT_GENERATE]
+    await Plugin.trigger("experimental.chat.system.transform", { model }, { system })
     const existing = await list()
 
     const params = {
@@ -329,56 +331,5 @@ export namespace Agent {
 
     const result = await generateObject(params)
     return result.object
-  }
-
-  export function resolveFilePermission(input: {
-    permission: Config.Permission | Record<string, Config.Permission>
-    filePath: string
-    baseDir: string
-  }): Config.Permission {
-    const { permission, filePath, baseDir } = input
-
-    if (typeof permission === "string") {
-      return permission
-    }
-
-    const resolved = path.resolve(filePath)
-    const relative = path.relative(baseDir, resolved)
-
-    const posixPath = relative.replace(/\\/g, "/")
-
-    const isCaseInsensitive = process.platform === "darwin" || process.platform === "win32"
-
-    type Match = { pattern: string; permission: Config.Permission; score: number }
-    const matches: Match[] = []
-
-    for (const [pattern, perm] of Object.entries(permission)) {
-      if (pattern === "*") continue
-
-      const matched = minimatch(posixPath, pattern, {
-        nocase: isCaseInsensitive,
-        dot: true,
-      })
-
-      if (matched) {
-        const isExact = pattern === posixPath || pattern === relative
-        const segments = pattern.split("/").filter((s) => s && s !== "**").length
-        const score = isExact ? 10000 : segments * 100 + pattern.length
-
-        matches.push({ pattern, permission: perm, score })
-      }
-    }
-
-    matches.sort((a, b) => b.score - a.score)
-
-    if (matches.length > 0) {
-      return matches[0].permission
-    }
-
-    if (permission["*"]) {
-      return permission["*"]
-    }
-
-    return "allow"
   }
 }

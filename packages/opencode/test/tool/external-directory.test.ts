@@ -4,7 +4,6 @@ import type { Tool } from "../../src/tool/tool"
 import { Instance } from "../../src/project/instance"
 import { assertExternalDirectory } from "../../src/tool/external-directory"
 import type { PermissionNext } from "../../src/permission/next"
-import { Filesystem } from "@/util/filesystem"
 
 const baseCtx: Omit<Tool.Context, "ask"> = {
   sessionID: "test",
@@ -12,6 +11,7 @@ const baseCtx: Omit<Tool.Context, "ask"> = {
   callID: "",
   agent: "build",
   abort: AbortSignal.any([]),
+  messages: [],
   metadata: () => {},
 }
 
@@ -47,7 +47,7 @@ describe("tool.assertExternalDirectory", () => {
     await Instance.provide({
       directory: "/tmp/project",
       fn: async () => {
-        await assertExternalDirectory(ctx, Filesystem.join("/tmp/project", "file.txt"))
+        await assertExternalDirectory(ctx, path.join("/tmp/project", "file.txt"))
       },
     })
 
@@ -65,7 +65,7 @@ describe("tool.assertExternalDirectory", () => {
 
     const directory = "/tmp/project"
     const target = "/tmp/outside/file.txt"
-    const expected = Filesystem.join(Filesystem.dirname(target), "*")
+    const expected = path.join(path.dirname(target), "*")
 
     await Instance.provide({
       directory,
@@ -91,7 +91,7 @@ describe("tool.assertExternalDirectory", () => {
 
     const directory = "/tmp/project"
     const target = "/tmp/outside"
-    const expected = Filesystem.join(target, "*")
+    const expected = path.join(target, "*")
 
     await Instance.provide({
       directory,

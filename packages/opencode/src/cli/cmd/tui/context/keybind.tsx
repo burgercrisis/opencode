@@ -34,9 +34,8 @@ export const { use: useKeybind, provider: KeybindProvider } = createSimpleContex
         timeout = setTimeout(() => {
           if (!store.leader) return
           leader(false)
-          if (focus) {
-            focus.focus()
-          }
+          if (!focus || focus.isDestroyed) return
+          focus.focus()
         }, 2000)
         return
       }
@@ -73,10 +72,9 @@ export const { use: useKeybind, provider: KeybindProvider } = createSimpleContex
         return store.leader
       },
       parse(evt: ParsedKey): Keybind.Info {
-        // Handle special case for Ctrl+/ (represented as \x1F in terminals)
-        // \x1F is the Unit Separator control character sent by Ctrl+/
+        // Handle special case for Ctrl+Underscore (represented as \x1F)
         if (evt.name === "\x1F") {
-          return Keybind.fromParsedKey({ ...evt, name: "/", ctrl: true }, store.leader)
+          return Keybind.fromParsedKey({ ...evt, name: "_", ctrl: true }, store.leader)
         }
         return Keybind.fromParsedKey(evt, store.leader)
       },

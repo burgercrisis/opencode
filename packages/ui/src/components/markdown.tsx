@@ -1,6 +1,7 @@
 import { useMarked } from "../context/marked"
 import { useI18n } from "../context/i18n"
 import DOMPurify from "dompurify"
+import morphdom from "morphdom"
 import { checksum } from "@opencode-ai/util/encode"
 import { ComponentProps, createEffect, createResource, createSignal, onCleanup, splitProps } from "solid-js"
 import { isServer } from "solid-js/web"
@@ -8,6 +9,7 @@ import { isServer } from "solid-js/web"
 type Entry = {
   hash: string
   html: string
+  enhanced: boolean
 }
 
 const max = 200
@@ -128,23 +130,19 @@ function setupCodeCopy(root: HTMLDivElement, labels: CopyLabels) {
   }
 
   const blocks = Array.from(root.querySelectorAll("pre"))
-  for (const block of blocks) {
-    ensureWrapper(block)
-  }
+  blocks.forEach(ensureWrapper)
 
   const buttons = Array.from(root.querySelectorAll('[data-slot="markdown-copy-button"]'))
-  for (const button of buttons) {
+  buttons.forEach((button) => {
     if (button instanceof HTMLButtonElement) updateLabel(button)
-  }
+  })
 
   root.addEventListener("click", handleClick)
 
   return () => {
     root.removeEventListener("click", handleClick)
-    for (const timeout of timeouts.values()) {
-      clearTimeout(timeout)
-    }
-  }
+  Array.from(timeouts.values()).forEach(clearTimeout)
+}
 }
 
 function touch(key: string, value: Entry) {
@@ -170,7 +168,7 @@ export function Markdown(
   const marked = useMarked()
   const i18n = useI18n()
   const [root, setRoot] = createSignal<HTMLDivElement>()
-  const [html] = createResource(
+  const [html, { mutate }] = createResource(
     () => local.text,
     async (markdown) => {
       if (isServer) return ""
@@ -182,29 +180,95 @@ export function Markdown(
         const cached = cache.get(key)
         if (cached && cached.hash === hash) {
           touch(key, cached)
+          if (cached.enhanced || !marked.enhance) {
+            return cached.html
+          }
+          // If cached but not enhanced, return cached and trigger enhancement
+          marked.enhance(cached.html).then((enhanced) => {
+            const safeEnhanced = sanitize(enhanced)
+            touch(key, { hash, html: safeEnhanced, enhanced: true })
+            mutate(safeEnhanced)
+          })
           return cached.html
         }
       }
 
+      if (marked.fastParse && marked.enhance) {
+        const fast = await marked.fastParse(markdown)
+        const safeFast = sanitize(fast)
+
+        // Trigger enhancement in the background
+        marked.enhance(fast).then((enhanced) => {
+          const safeEnhanced = sanitize(enhanced)
+          if (key && hash) touch(key, { hash, html: safeEnhanced, enhanced: true })
+          mutate(safeEnhanced)
+        })
+
+        return safeFast
+      }
+
       const next = await marked.parse(markdown)
-      const safe = sanitize(next)
-      if (key && hash) touch(key, { hash, html: safe })
-      return safe
+      const finalHtml = sanitize(next)
+
+      if (key && hash) touch(key, { hash, html: finalHtml, enhanced: false })
+      return finalHtml
     },
     { initialValue: "" },
   )
+
+  let copySetupTimer: ReturnType<typeof setTimeout> | undefined
+  let copyCleanup: (() => void) | undefined
 
   createEffect(() => {
     const container = root()
     const content = html()
     if (!container) return
-    if (!content) return
     if (isServer) return
-    const cleanup = setupCodeCopy(container, {
-      copy: i18n.t("ui.message.copy"),
-      copied: i18n.t("ui.message.copied"),
+
+    if (!content) {
+      container.innerHTML = ""
+      return
+    }
+
+    const temp = document.createElement("div")
+    temp.innerHTML = content
+
+    morphdom(container, temp, {
+      childrenOnly: true,
+      onBeforeElUpdated: (fromEl, toEl) => {
+        if (fromEl.isEqualNode(toEl)) return false
+        if (fromEl.getAttribute("data-component") === "markdown-code") {
+          const fromPre = fromEl.querySelector("pre")
+          const toPre = toEl.querySelector("pre")
+          if (fromPre && toPre && !fromPre.isEqualNode(toPre)) {
+            morphdom(fromPre, toPre)
+          }
+          return false
+        }
+        return true
+      },
+      onBeforeNodeDiscarded: (node) => {
+        if (node instanceof Element) {
+          if (node.getAttribute("data-slot") === "markdown-copy-button") return false
+          if (node.getAttribute("data-component") === "markdown-code") return false
+        }
+        return true
+      },
     })
-    onCleanup(cleanup)
+
+    if (copySetupTimer) clearTimeout(copySetupTimer)
+    copySetupTimer = setTimeout(() => {
+      if (copyCleanup) copyCleanup()
+      copyCleanup = setupCodeCopy(container, {
+        copy: i18n.t("ui.message.copy"),
+        copied: i18n.t("ui.message.copied"),
+      })
+    }, 150)
+  })
+
+  onCleanup(() => {
+    if (copySetupTimer) clearTimeout(copySetupTimer)
+    if (copyCleanup) copyCleanup()
   })
   return (
     <div
@@ -213,7 +277,6 @@ export function Markdown(
         ...(local.classList ?? {}),
         [local.class ?? ""]: !!local.class,
       }}
-      innerHTML={html.latest}
       ref={setRoot}
       {...others}
     />

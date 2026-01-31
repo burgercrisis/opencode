@@ -9,13 +9,17 @@ import { Provider } from "../provider/provider"
 import { Instance } from "../project/instance"
 import EXIT_DESCRIPTION from "./plan-exit.txt"
 import ENTER_DESCRIPTION from "./plan-enter.txt"
-import { Filesystem } from "@/util/filesystem"
 
 async function getLastModel(sessionID: string) {
-  for await (const item of MessageV2.stream(sessionID)) {
-    if (item.info.role === "user" && item.info.model) return item.info.model
+  const findFirstModel = async (iterator: AsyncIterator<MessageV2.WithParts>): Promise<any> => {
+    const { done, value } = await iterator.next()
+    return done
+      ? Provider.defaultModel()
+      : (value.info.role === "user" && value.info.model)
+        ? value.info.model
+        : findFirstModel(iterator)
   }
-  return Provider.defaultModel()
+  return findFirstModel(MessageV2.stream(sessionID)[Symbol.asyncIterator]())
 }
 
 export const PlanExitTool = Tool.define("plan_exit", {
@@ -23,7 +27,7 @@ export const PlanExitTool = Tool.define("plan_exit", {
   parameters: z.object({}),
   async execute(_params, ctx) {
     const session = await Session.get(ctx.sessionID)
-    const plan = Filesystem.relativePath(Instance.worktree, Session.plan(session))
+    const plan = path.relative(Instance.worktree, Session.plan(session as any))
     const answers = await Question.ask({
       sessionID: ctx.sessionID,
       questions: [
@@ -40,36 +44,34 @@ export const PlanExitTool = Tool.define("plan_exit", {
       tool: ctx.callID ? { messageID: ctx.messageID, callID: ctx.callID } : undefined,
     })
 
-    const answer = answers[0]?.[0]
-    if (answer === "No") throw new Question.RejectedError()
+    return answers[0]?.[0] === "No"
+      ? (() => { throw new Question.RejectedError() })()
+      : (async () => {
+          const model = await getLastModel(ctx.sessionID)
+          const userMsg: MessageV2.User = {
+            id: Identifier.ascending("message"),
+            sessionID: ctx.sessionID,
+            role: "user",
+            time: { created: Date.now() },
+            agent: "build",
+            model: model as any,
+          }
+          await Session.updateMessage(userMsg)
+          await Session.updatePart({
+            id: Identifier.ascending("part"),
+            messageID: userMsg.id,
+            sessionID: ctx.sessionID,
+            type: "text",
+            text: `The plan at ${plan} has been approved, you can now edit files. Execute the plan`,
+            synthetic: true,
+          } satisfies MessageV2.TextPart)
 
-    const model = await getLastModel(ctx.sessionID)
-
-    const userMsg: MessageV2.User = {
-      id: Identifier.ascending("message"),
-      sessionID: ctx.sessionID,
-      role: "user",
-      time: {
-        created: Date.now(),
-      },
-      agent: "build",
-      model,
-    }
-    await Session.updateMessage(userMsg)
-    await Session.updatePart({
-      id: Identifier.ascending("part"),
-      messageID: userMsg.id,
-      sessionID: ctx.sessionID,
-      type: "text",
-      text: `The plan at ${plan} has been approved, you can now edit files. Execute the plan`,
-      synthetic: true,
-    } satisfies MessageV2.TextPart)
-
-    return {
-      title: "Switching to build agent",
-      output: "User approved switching to build agent. Wait for further instructions.",
-      metadata: {},
-    }
+          return {
+            title: "Switching to build agent",
+            output: "User approved switching to build agent. Wait for further instructions.",
+            metadata: {},
+          }
+        })()
   },
 })
 
@@ -78,7 +80,7 @@ export const PlanEnterTool = Tool.define("plan_enter", {
   parameters: z.object({}),
   async execute(_params, ctx) {
     const session = await Session.get(ctx.sessionID)
-    const plan = Filesystem.relativePath(Instance.worktree, Session.plan(session))
+    const plan = path.relative(Instance.worktree, Session.plan(session as any))
 
     const answers = await Question.ask({
       sessionID: ctx.sessionID,
@@ -96,36 +98,33 @@ export const PlanEnterTool = Tool.define("plan_enter", {
       tool: ctx.callID ? { messageID: ctx.messageID, callID: ctx.callID } : undefined,
     })
 
-    const answer = answers[0]?.[0]
+    return answers[0]?.[0] === "No"
+      ? (() => { throw new Question.RejectedError() })()
+      : (async () => {
+          const model = await getLastModel(ctx.sessionID)
+          const userMsg: MessageV2.User = {
+            id: Identifier.ascending("message"),
+            sessionID: ctx.sessionID,
+            role: "user",
+            time: { created: Date.now() },
+            agent: "plan",
+            model: model as any,
+          }
+          await Session.updateMessage(userMsg)
+          await Session.updatePart({
+            id: Identifier.ascending("part"),
+            messageID: userMsg.id,
+            sessionID: ctx.sessionID,
+            type: "text",
+            text: "User has requested to enter plan mode. Switch to plan mode and begin planning.",
+            synthetic: true,
+          } satisfies MessageV2.TextPart)
 
-    if (answer === "No") throw new Question.RejectedError()
-
-    const model = await getLastModel(ctx.sessionID)
-
-    const userMsg: MessageV2.User = {
-      id: Identifier.ascending("message"),
-      sessionID: ctx.sessionID,
-      role: "user",
-      time: {
-        created: Date.now(),
-      },
-      agent: "plan",
-      model,
-    }
-    await Session.updateMessage(userMsg)
-    await Session.updatePart({
-      id: Identifier.ascending("part"),
-      messageID: userMsg.id,
-      sessionID: ctx.sessionID,
-      type: "text",
-      text: "User has requested to enter plan mode. Switch to plan mode and begin planning.",
-      synthetic: true,
-    } satisfies MessageV2.TextPart)
-
-    return {
-      title: "Switching to plan agent",
-      output: `User confirmed to switch to plan mode. A new message has been created to switch you to plan mode. The plan file will be at ${plan}. Begin planning.`,
-      metadata: {},
-    }
+          return {
+            title: "Switching to plan agent",
+            output: `User confirmed to switch to plan mode. A new message has been created to switch you to plan mode. The plan file will be at ${plan}. Begin planning.`,
+            metadata: {},
+          }
+        })()
   },
 })

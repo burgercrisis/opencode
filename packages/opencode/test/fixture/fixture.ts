@@ -3,7 +3,6 @@ import * as fs from "fs/promises"
 import os from "os"
 import path from "path"
 import type { Config } from "../../src/config/config"
-import { Filesystem } from "../../src/util/filesystem"
 
 // Strip null bytes from paths (defensive fix for CI environment issues)
 function sanitizePath(p: string): string {
@@ -21,8 +20,6 @@ export async function tmpdir<T>(options?: TmpDirOptions<T>) {
   await fs.mkdir(dirpath, { recursive: true })
   if (options?.git) {
     await $`git init`.cwd(dirpath).quiet()
-    await $`git config user.email "test@example.com"`.cwd(dirpath).quiet()
-    await $`git config user.name "OpenCode Tests"`.cwd(dirpath).quiet()
     await $`git commit --allow-empty -m "root commit ${dirpath}"`.cwd(dirpath).quiet()
   }
   if (options?.config) {
@@ -35,7 +32,7 @@ export async function tmpdir<T>(options?: TmpDirOptions<T>) {
     )
   }
   const extra = await options?.init?.(dirpath)
-  const realpath = Filesystem.nativePath(sanitizePath(await fs.realpath(dirpath)))
+  const realpath = sanitizePath(await fs.realpath(dirpath))
   const result = {
     [Symbol.asyncDispose]: async () => {
       await options?.dispose?.(dirpath)

@@ -8,22 +8,23 @@ import { useServer } from "./server"
 export const { use: useGlobalSDK, provider: GlobalSDKProvider } = createSimpleContext({
   name: "GlobalSDK",
   init: () => {
-    const platform = usePlatform()
     const server = useServer()
+    const platform = usePlatform()
+    const abort = new AbortController()
 
+    const eventSdk = createOpencodeClient({
+      baseUrl: server.url,
+      signal: abort.signal,
+      fetch: platform.fetch,
+    })
     const emitter = createGlobalEmitter<{
       [key: string]: Event
     }>()
 
     type Queued = { directory: string; payload: Event }
 
-    const eventSdk = createOpencodeClient({
-      baseUrl: server.url,
-      fetch: platform.fetch,
-      throwOnError: true,
-    })
-
     let queue: Array<Queued | undefined> = []
+    let buffer: Array<Queued | undefined> = []
     const coalesced = new Map<string, number>()
     let timer: ReturnType<typeof setTimeout> | undefined
     let last = 0
@@ -41,10 +42,13 @@ export const { use: useGlobalSDK, provider: GlobalSDKProvider } = createSimpleCo
       if (timer) clearTimeout(timer)
       timer = undefined
 
+      if (queue.length === 0) return
+
       const events = queue
-      queue = []
+      queue = buffer
+      buffer = events
+      queue.length = 0
       coalesced.clear()
-      if (events.length === 0) return
 
       last = Date.now()
       batch(() => {
@@ -53,6 +57,8 @@ export const { use: useGlobalSDK, provider: GlobalSDKProvider } = createSimpleCo
           emitter.emit(event.directory, event.payload)
         }
       })
+
+      buffer.length = 0
     }
 
     const schedule = () => {
@@ -61,53 +67,34 @@ export const { use: useGlobalSDK, provider: GlobalSDKProvider } = createSimpleCo
       timer = setTimeout(flush, Math.max(0, 16 - elapsed))
     }
 
-    const stop = () => {
-      flush()
-    }
-
-    const streams = new Map<string, AbortController>()
-    const subscribe = (directory: string) => {
-      if (!directory) return
-      if (streams.has(directory)) return
-
-      const abort = new AbortController()
-      streams.set(directory, abort)
-
-      eventSdk.global
-        .event({ directory }, { signal: abort.signal })
-        .then(async (events) => {
-          let yielded = Date.now()
-          for await (const event of events.stream) {
-            const dir = event.directory ?? "global"
-            const payload = event.payload
-            const k = key(dir, payload)
-            if (k) {
-              const i = coalesced.get(k)
-              if (i !== undefined) {
-                queue[i] = undefined
-              }
-              coalesced.set(k, queue.length)
-            }
-            queue.push({ directory: dir, payload })
-            schedule()
-
-            if (Date.now() - yielded < 8) continue
-            yielded = Date.now()
-            await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    void (async () => {
+      const events = await eventSdk.global.event()
+      let yielded = Date.now()
+      for await (const event of events.stream) {
+        const directory = event.directory ?? "global"
+        const payload = event.payload
+        const k = key(directory, payload)
+        if (k) {
+          const i = coalesced.get(k)
+          if (i !== undefined) {
+            queue[i] = undefined
           }
-        })
-        .catch(() => {})
-        .finally(() => {
-          streams.delete(directory)
-        })
-    }
+          coalesced.set(k, queue.length)
+        }
+        queue.push({ directory, payload })
+        schedule()
+
+        if (Date.now() - yielded < 8) continue
+        yielded = Date.now()
+        await new Promise<void>((resolve) => setTimeout(resolve, 0))
+      }
+    })()
+      .finally(flush)
+      .catch(() => undefined)
 
     onCleanup(() => {
-      for (const ctrl of streams.values()) {
-        ctrl.abort()
-      }
-      streams.clear()
-      stop()
+      abort.abort()
+      flush()
     })
 
     const sdk = createOpencodeClient({
@@ -116,6 +103,6 @@ export const { use: useGlobalSDK, provider: GlobalSDKProvider } = createSimpleCo
       throwOnError: true,
     })
 
-    return { url: server.url, client: sdk, event: emitter, subscribe }
+    return { url: server.url, client: sdk, event: emitter }
   },
 })

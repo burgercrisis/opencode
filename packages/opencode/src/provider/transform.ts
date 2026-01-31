@@ -1,5 +1,5 @@
-import type { APICallError, ModelMessage, ToolCallPart, ToolResultPart } from "ai"
-import { unique } from "remeda"
+import type { APICallError, ModelMessage } from "ai"
+import { mergeDeep, unique } from "remeda"
 import type { JSONSchema } from "zod/v4/core"
 import type { Provider } from "./provider"
 import type { ModelsDev } from "./models"
@@ -26,6 +26,7 @@ export namespace ProviderTransform {
       case "@ai-sdk/amazon-bedrock":
         return "bedrock"
       case "@ai-sdk/anthropic":
+      case "@ai-sdk/google-vertex/anthropic":
         return "anthropic"
       case "@ai-sdk/google-vertex":
       case "@ai-sdk/google":
@@ -161,83 +162,6 @@ export namespace ProviderTransform {
     return msgs
   }
 
-  function isToolCallPart(part: unknown): part is ToolCallPart {
-    if (!part || typeof part !== "object") return false
-    const obj = part as Record<string, unknown>
-    if (obj["type"] !== "tool-call") return false
-    if (typeof obj["toolCallId"] !== "string") return false
-    if (typeof obj["toolName"] !== "string") return false
-    return true
-  }
-
-  function isToolResultPart(part: unknown): part is ToolResultPart {
-    if (!part || typeof part !== "object") return false
-    const obj = part as Record<string, unknown>
-    if (obj["type"] !== "tool-result") return false
-    if (typeof obj["toolCallId"] !== "string") return false
-    if (typeof obj["toolName"] !== "string") return false
-    return true
-  }
-
-  function ensureToolResults(msgs: ModelMessage[]): ModelMessage[] {
-    const out: ModelMessage[] = []
-    const output: ToolResultPart["output"] = {
-      type: "error-text",
-      value:
-        "Tool result missing. The previous tool call did not complete (session may have been interrupted). Please retry.",
-    }
-
-    for (let i = 0; i < msgs.length; i++) {
-      const msg = msgs[i]
-      out.push(msg)
-
-      if (msg.role !== "assistant") continue
-      if (!Array.isArray(msg.content)) continue
-
-      const calls = msg.content.filter((part): part is ToolCallPart => {
-        if (!isToolCallPart(part)) return false
-        return part.providerExecuted !== true
-      })
-      if (calls.length === 0) continue
-
-      const next = msgs[i + 1]
-      if (next && next.role === "tool" && Array.isArray(next.content)) {
-        const existing = new Set(
-          next.content.filter((part): part is ToolResultPart => isToolResultPart(part)).map((part) => part.toolCallId),
-        )
-        const missing = calls.filter((call) => !existing.has(call.toolCallId))
-        if (missing.length === 0) continue
-
-        out.push({
-          ...next,
-          content: [
-            ...next.content,
-            ...missing.map((call) => ({
-              type: "tool-result" as const,
-              toolCallId: call.toolCallId,
-              toolName: call.toolName,
-              output,
-            })),
-          ],
-        })
-        i++
-        continue
-      }
-
-      out.push({
-        role: "tool",
-        content: calls.map((call) => ({
-          type: "tool-result" as const,
-          toolCallId: call.toolCallId,
-          toolName: call.toolName,
-          output,
-        })),
-      } as ModelMessage)
-    }
-
-    return out
-  }
-
   function applyCaching(msgs: ModelMessage[], providerID: string): ModelMessage[] {
     const system = msgs.filter((msg) => msg.role === "system").slice(0, 2)
     const final = msgs.filter((msg) => msg.role !== "system").slice(-2)
@@ -263,18 +187,12 @@ export namespace ProviderTransform {
       if (shouldUseContentOptions) {
         const lastContent = msg.content[msg.content.length - 1]
         if (lastContent && typeof lastContent === "object") {
-          lastContent.providerOptions = {
-            ...lastContent.providerOptions,
-            ...providerOptions,
-          }
+          lastContent.providerOptions = mergeDeep(lastContent.providerOptions ?? {}, providerOptions)
           continue
         }
       }
 
-      msg.providerOptions = {
-        ...msg.providerOptions,
-        ...providerOptions,
-      }
+      msg.providerOptions = mergeDeep(msg.providerOptions ?? {}, providerOptions)
     }
 
     return msgs
@@ -318,64 +236,9 @@ export namespace ProviderTransform {
     })
   }
 
-  function sanitizeOpenAIOrphanReasoning(msgs: ModelMessage[], model: Provider.Model): ModelMessage[] {
-    const isOpenAI = model.api.npm === "@ai-sdk/openai"
-    const isOpenAICompatibleGPT5 = model.api.npm === "@ai-sdk/openai-compatible" && model.api.id.includes("gpt-5")
-    if (!isOpenAI && !isOpenAICompatibleGPT5) return msgs
-
-    const out: ModelMessage[] = []
-
-    for (const msg of msgs) {
-      if (msg.role !== "assistant") {
-        out.push(msg)
-        continue
-      }
-
-      if (!Array.isArray(msg.content)) {
-        out.push(msg)
-        continue
-      }
-
-      const reasoning = msg.content.filter((part) => part.type === "reasoning")
-      if (reasoning.length === 0) {
-        out.push(msg)
-        continue
-      }
-
-      const nonReasoning = msg.content.filter((part) => part.type !== "reasoning")
-      if (nonReasoning.length > 0) {
-        out.push(msg)
-        continue
-      }
-
-      const summary = reasoning
-        .map((part) => (part as { text?: unknown }).text)
-        .filter((t): t is string => typeof t === "string")
-        .join("")
-        .trim()
-
-      const text = summary
-        ? `[Recovery note] Previous generation was interrupted after emitting a reasoning summary, but no final output/tool call was produced. The original reasoning item cannot be replayed safely. Partial summary (for context only):\n\n${summary}`
-        : "[Recovery note] Previous generation was interrupted during reasoning. No usable summary was captured."
-
-      out.push({
-        ...msg,
-        content: [
-          {
-            type: "text",
-            text,
-          },
-        ],
-      })
-    }
-
-    return out
-  }
-
-  export function message(msgs: ModelMessage[], model: Provider.Model) {
+  export function message(msgs: ModelMessage[], model: Provider.Model, options: Record<string, unknown>) {
     msgs = unsupportedParts(msgs, model)
-    msgs = normalizeMessages(msgs, model)
-    msgs = sanitizeOpenAIOrphanReasoning(msgs, model)
+    msgs = normalizeMessages(msgs, model, options)
     if (
       model.providerID === "anthropic" ||
       model.api.id.includes("anthropic") ||
@@ -384,7 +247,6 @@ export namespace ProviderTransform {
       model.id.includes("claude") ||
       model.api.npm === "@ai-sdk/anthropic"
     ) {
-      msgs = ensureToolResults(msgs)
       msgs = applyCaching(msgs, model.providerID)
     }
 
@@ -422,7 +284,10 @@ export namespace ProviderTransform {
     if (id.includes("glm-4.7")) return 1.0
     if (id.includes("minimax-m2")) return 1.0
     if (id.includes("kimi-k2")) {
-      if (id.includes("thinking")) return 1.0
+      // kimi-k2-thinking & kimi-k2.5 && kimi-k2p5
+      if (id.includes("thinking") || id.includes("k2.") || id.includes("k2p")) {
+        return 1.0
+      }
       return 0.6
     }
     return undefined
@@ -431,10 +296,9 @@ export namespace ProviderTransform {
   export function topP(model: Provider.Model) {
     const id = model.id.toLowerCase()
     if (id.includes("qwen")) return 1
-    if (id.includes("minimax-m2")) {
+    if (id.includes("minimax-m2") || id.includes("kimi-k2.5") || id.includes("kimi-k2p5") || id.includes("gemini")) {
       return 0.95
     }
-    if (id.includes("gemini")) return 0.95
     return undefined
   }
 
@@ -455,7 +319,14 @@ export namespace ProviderTransform {
     if (!model.capabilities.reasoning) return {}
 
     const id = model.id.toLowerCase()
-    if (id.includes("deepseek") || id.includes("minimax") || id.includes("glm") || id.includes("mistral")) return {}
+    if (
+      id.includes("deepseek") ||
+      id.includes("minimax") ||
+      id.includes("glm") ||
+      id.includes("mistral") ||
+      id.includes("kimi")
+    )
+      return {}
 
     // see: https://docs.x.ai/docs/guides/reasoning#control-how-hard-the-model-thinks
     if (id.includes("grok") && id.includes("grok-3-mini")) {
@@ -482,8 +353,12 @@ export namespace ProviderTransform {
         return Object.fromEntries(OPENAI_EFFORTS.map((effort) => [effort, { reasoningEffort: effort }]))
 
       case "@ai-sdk/github-copilot":
+        const copilotEfforts = iife(() => {
+          if (id.includes("5.1-codex-max") || id.includes("5.2")) return [...WIDELY_SUPPORTED_EFFORTS, "xhigh"]
+          return WIDELY_SUPPORTED_EFFORTS
+        })
         return Object.fromEntries(
-          WIDELY_SUPPORTED_EFFORTS.map((effort) => [
+          copilotEfforts.map((effort) => [
             effort,
             {
               reasoningEffort: effort,
@@ -553,18 +428,20 @@ export namespace ProviderTransform {
         )
 
       case "@ai-sdk/anthropic":
-        // https://v5.ai-sdk.dev/providers/ai-sdk-providers/anthropic
+      // https://v5.ai-sdk.dev/providers/ai-sdk-providers/anthropic
+      case "@ai-sdk/google-vertex/anthropic":
+        // https://v5.ai-sdk.dev/providers/ai-sdk-providers/google-vertex#anthropic-provider
         return {
           high: {
             thinking: {
               type: "enabled",
-              budgetTokens: 16000,
+              budgetTokens: Math.min(16_000, Math.floor(model.limit.output / 2 - 1)),
             },
           },
           max: {
             thinking: {
               type: "enabled",
-              budgetTokens: 31999,
+              budgetTokens: Math.min(31_999, model.limit.output - 1),
             },
           },
         }
@@ -660,11 +537,7 @@ export namespace ProviderTransform {
     return {}
   }
 
-  export function options({
-    model,
-    sessionID,
-    providerOptions,
-  }: {
+  export function options(input: {
     model: Provider.Model
     sessionID: string
     providerOptions?: Record<string, any>
@@ -703,8 +576,8 @@ export namespace ProviderTransform {
       }
     }
 
-    if (model.providerID === "openai" || providerOptions?.setCacheKey) {
-      result["promptCacheKey"] = sessionID.replace(/^ses_/, "sess_")
+    if (input.model.providerID === "openai" || input.providerOptions?.setCacheKey) {
+      result["promptCacheKey"] = input.sessionID
     }
 
     if (input.model.api.npm === "@ai-sdk/google" || input.model.api.npm === "@ai-sdk/google-vertex") {
@@ -729,13 +602,8 @@ export namespace ProviderTransform {
         result["textVerbosity"] = "low"
       }
 
-
       if (input.model.providerID.startsWith("opencode")) {
         result["promptCacheKey"] = input.sessionID
-
-      if (model.providerID.startsWith("opencode")) {
-        result["promptCacheKey"] = sessionID.replace(/^ses_/, "sess_")
-
         result["include"] = ["reasoning.encrypted_content"]
         result["reasoningSummary"] = "auto"
       }
@@ -785,7 +653,7 @@ export namespace ProviderTransform {
     const modelCap = modelLimit || globalLimit
     const standardLimit = Math.min(modelCap, globalLimit)
 
-    if (npm === "@ai-sdk/anthropic") {
+    if (npm === "@ai-sdk/anthropic" || npm === "@ai-sdk/google-vertex/anthropic") {
       const thinking = options?.["thinking"]
       const budgetTokens = typeof thinking?.["budgetTokens"] === "number" ? thinking["budgetTokens"] : 0
       const enabled = thinking?.["type"] === "enabled"

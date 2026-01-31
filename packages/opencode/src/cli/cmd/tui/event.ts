@@ -1,6 +1,6 @@
 import { BusEvent } from "@/bus/bus-event"
+import { Bus } from "@/bus"
 import z from "zod"
-import { Question } from "@/question"
 
 export const TuiEvent = {
   PromptAppend: BusEvent.define("tui.prompt.append", z.object({ text: z.string() })),

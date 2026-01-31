@@ -65,30 +65,21 @@ export const { use: useSDK, provider: SDKProvider } = createSimpleContext({
       // Fall back to SSE
       while (true) {
         if (abort.signal.aborted) break
+        const events = await sdk.event.subscribe(
+          {},
+          {
+            signal: abort.signal,
+          },
+        )
 
-        try {
-          const events = await sdk.event.subscribe(
-            {},
-            {
-              signal: abort.signal,
-            },
-          )
+        for await (const event of events.stream) {
+          handleEvent(event)
+        }
 
-          for await (const event of events.stream) {
-            handleEvent(event)
-          }
-
-          if (abort.signal.aborted) break
-
-          if (timer) {
-            clearTimeout(timer)
-            timer = undefined
-          }
+        // Flush any remaining events
+        if (timer) clearTimeout(timer)
+        if (queue.length > 0) {
           flush()
-          await new Promise((resolve) => setTimeout(resolve, 250))
-        } catch {
-          // Retry on transient disconnects / server restarts.
-          await new Promise((resolve) => setTimeout(resolve, 250))
         }
       }
     })
@@ -98,6 +89,6 @@ export const { use: useSDK, provider: SDKProvider } = createSimpleContext({
       if (timer) clearTimeout(timer)
     })
 
-    return { client: sdk, event: emitter, url: props.url, signal: abort.signal }
+    return { client: sdk, event: emitter, url: props.url }
   },
 })

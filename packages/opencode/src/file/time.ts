@@ -4,21 +4,14 @@ import { Flag } from "../flag/flag"
 
 export namespace FileTime {
   const log = Log.create({ service: "file.time" })
-
-  export type Stamp = {
-    mtimeMs: number
-    size: number
-    hash: bigint
-  }
-
-  // Per-session read stamps plus per-file write locks.
+  // Per-session read times plus per-file write locks.
   // All tools that overwrite existing files should run their
   // assert/read/write/update sequence inside withLock(filepath, ...)
   // so concurrent writes to the same file are serialized.
   export const state = Instance.state(() => {
     const read: {
       [sessionID: string]: {
-        [path: string]: Stamp | undefined
+        [path: string]: Date | undefined
       }
     } = {}
     const locks = new Map<string, Promise<void>>()
@@ -28,26 +21,11 @@ export namespace FileTime {
     }
   })
 
-  export function stamp(mtime: Date, data: string | ArrayBuffer | Uint8Array): Stamp {
-    const size = typeof data === "string" ? Buffer.byteLength(data) : data.byteLength
-    return {
-      mtimeMs: mtime.getTime(),
-      size,
-      hash: Bun.hash.xxHash64(data),
-    }
-  }
-
-  export function read(sessionID: string, file: string, value: Stamp) {
+  export function read(sessionID: string, file: string) {
     log.info("read", { sessionID, file })
     const { read } = state()
     read[sessionID] = read[sessionID] || {}
-    read[sessionID][file] = value
-  }
-
-  export function clear(sessionID: string, file: string) {
-    const map = state().read[sessionID]
-    if (!map) return
-    delete map[file]
+    read[sessionID][file] = new Date()
   }
 
   export function get(sessionID: string, file: string) {
@@ -74,18 +52,6 @@ export namespace FileTime {
     }
   }
 
-  export async function withLocks<T>(filepaths: string[], fn: () => Promise<T>): Promise<T> {
-    const unique = Array.from(new Set(filepaths)).sort()
-
-    const run = (index: number): Promise<T> => {
-      const filepath = unique[index]
-      if (!filepath) return fn()
-      return withLock(filepath, () => run(index + 1))
-    }
-
-    return run(0)
-  }
-
   export async function assert(sessionID: string, filepath: string) {
     if (Flag.OPENCODE_DISABLE_FILETIME_CHECK === true) {
       return
@@ -93,34 +59,11 @@ export namespace FileTime {
 
     const time = get(sessionID, filepath)
     if (!time) throw new Error(`You must read file ${filepath} before overwriting it. Use the Read tool first`)
-
-    const file = Bun.file(filepath)
-    const stats = await file.stat()
-    const currentMtimeMs = stats.mtime.getTime()
-
-    if (currentMtimeMs <= time.mtimeMs) return
-
-    if (stats.size !== time.size) {
+    const stats = await Bun.file(filepath).stat()
+    if (stats.mtime.getTime() > time.getTime()) {
       throw new Error(
-        `File ${filepath} has been modified since it was last read.\nLast modification: ${stats.mtime.toISOString()}\nLast read: ${new Date(time.mtimeMs).toISOString()}\n\nPlease read the file again before modifying it.`,
+        `File ${filepath} has been modified since it was last read.\nLast modification: ${stats.mtime.toISOString()}\nLast read: ${time.toISOString()}\n\nPlease read the file again before modifying it.`,
       )
     }
-
-    // Hash-based detection for content changes even if mtime/size appear unchanged
-    const buf = await file.arrayBuffer()
-    const currentHash = Bun.hash.xxHash64(buf)
-
-    if (currentHash === time.hash) {
-      read(sessionID, filepath, {
-        mtimeMs: currentMtimeMs,
-        size: stats.size,
-        hash: currentHash,
-      })
-      return
-    }
-
-    throw new Error(
-      `File ${filepath} has been modified since it was last read.\nLast modification: ${stats.mtime.toISOString()}\nLast read: ${new Date(time.mtimeMs).toISOString()}\n\nPlease read the file again before modifying it.`,
-    )
   }
 }

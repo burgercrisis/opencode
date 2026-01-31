@@ -1,75 +1,64 @@
-import { AskTool } from "./ask"
+import { QuestionTool } from "./question"
 import { BashTool } from "./bash"
 import { EditTool } from "./edit"
 import { GlobTool } from "./glob"
 import { GrepTool } from "./grep"
 import { BatchTool } from "./batch"
 import { ReadTool } from "./read"
+import { TaskTool } from "./task"
 import { TodoWriteTool, TodoReadTool } from "./todo"
 import { WebFetchTool } from "./webfetch"
 import { WriteTool } from "./write"
 import { InvalidTool } from "./invalid"
 import { SkillTool } from "./skill"
-import { LspTool } from "./lsp"
-import { SubagentSpawnTool } from "./subagent-spawn"
-import { SendAgentMessageTool } from "./send-agent-message"
-import { WaitAgentMessageTool } from "./wait-agent-message"
-import { QuestionTool } from "./question"
 import type { Agent } from "../agent/agent"
 import { Tool } from "./tool"
 import { Instance } from "../project/instance"
 import { Config } from "../config/config"
 import path from "path"
-import { type ToolDefinition } from "@opencode-ai/plugin"
+import { type ToolContext as PluginToolContext, type ToolDefinition } from "@opencode-ai/plugin"
 import z from "zod"
 import { Plugin } from "../plugin"
 import { WebSearchTool } from "./websearch"
 import { CodeSearchTool } from "./codesearch"
 import { Flag } from "@/flag/flag"
 import { Log } from "@/util/log"
-import { sortEntries, sortPaths } from "./lib/registry-order"
+import { LspTool } from "./lsp"
 import { Truncate } from "./truncation"
 import { PlanExitTool, PlanEnterTool } from "./plan"
 import { ApplyPatchTool } from "./apply_patch"
+import { PatchTool } from "./patch"
 
 export namespace ToolRegistry {
   const log = Log.create({ service: "tool.registry" })
 
   export const state = Instance.state(async () => {
-    const custom = [] as Tool.Info[]
     const glob = new Bun.Glob("{tool,tools}/*.{js,ts}")
+    const directories = await Config.directories()
 
-    for (const dir of await Config.directories()) {
-      const matches = sortPaths(
-        await Array.fromAsync(
-          glob.scan({
-            cwd: dir,
-            absolute: true,
-            followSymlinks: true,
-            dot: true,
-          }),
-        ),
-      )
-
-      for (const match of matches) {
+    const customToolsFromDirs = await directories.reduce(async (accPromise, dir) => {
+      const acc = await accPromise
+      const matches = await Array.fromAsync(glob.scan({ cwd: dir, absolute: true, followSymlinks: true, dot: true }))
+      
+      const dirTools = await matches.reduce(async (dirAccPromise, match) => {
+        const dirAcc = await dirAccPromise
         const namespace = path.basename(match, path.extname(match))
         const mod = await import(match)
-        const entries = sortEntries(Object.entries<ToolDefinition>(mod))
-        for (const [id, def] of entries) {
-          custom.push(fromPlugin(id === "default" ? namespace : `${namespace}_${id}`, def))
-        }
-      }
-    }
+        const entries = Object.entries<ToolDefinition>(mod)
+        const matchedTools = entries.map(([id, def]) => fromPlugin(id === "default" ? namespace : `${namespace}_${id}`, def))
+        return dirAcc.concat(matchedTools)
+      }, Promise.resolve([] as Tool.Info[]))
+
+      return acc.concat(dirTools)
+    }, Promise.resolve([] as Tool.Info[]))
 
     const plugins = await Plugin.list()
-    for (const plugin of plugins) {
-      const entries = sortEntries(Object.entries(plugin.tool ?? {}))
-      for (const [id, def] of entries) {
-        custom.push(fromPlugin(id, def))
-      }
-    }
+    const customToolsFromPlugins = plugins.reduce((acc, plugin) => {
+      const pluginTools = Object.entries(plugin.tool ?? {}).map(([id, def]) => fromPlugin(id, def as ToolDefinition))
+      return acc.concat(pluginTools)
+    }, [] as Tool.Info[])
 
-    return { custom }
+    return { custom: [...customToolsFromDirs, ...customToolsFromPlugins] }
   })
 
   function fromPlugin(id: string, def: ToolDefinition): Tool.Info {
@@ -79,7 +68,12 @@ export namespace ToolRegistry {
         parameters: z.object(def.args),
         description: def.description,
         execute: async (args, ctx) => {
-          const result = await def.execute(args as any, ctx)
+          const pluginCtx = {
+            ...ctx,
+            directory: Instance.directory,
+            worktree: Instance.worktree,
+          } as unknown as PluginToolContext
+          const result = await def.execute(args as any, pluginCtx)
           const out = await Truncate.output(result, {}, initCtx?.agent)
           return {
             title: "",
@@ -92,13 +86,12 @@ export namespace ToolRegistry {
   }
 
   export async function register(tool: Tool.Info) {
-    const { custom } = await state()
-    const idx = custom.findIndex((t) => t.id === tool.id)
-    if (idx >= 0) {
-      custom.splice(idx, 1, tool)
-      return
-    }
-    custom.push(tool)
+    const s = await state()
+    // Mutate state container directly since state() returns a mutable container
+    // in the Instance.state pattern, but we use declarative methods for the update.
+    s.custom = s.custom.some((t) => t.id === tool.id)
+      ? s.custom.map((t) => (t.id === tool.id ? tool : t))
+      : [...s.custom, tool]
   }
 
   async function all(): Promise<Tool.Info[]> {
@@ -107,16 +100,14 @@ export namespace ToolRegistry {
 
     return [
       InvalidTool,
-      AskTool,
+      ...(["app", "cli", "desktop"].includes(Flag.OPENCODE_CLIENT) ? [QuestionTool] : []),
       BashTool,
       ReadTool,
       GlobTool,
       GrepTool,
       EditTool,
       WriteTool,
-      SubagentSpawnTool,
-      SendAgentMessageTool,
-      WaitAgentMessageTool,
+      TaskTool,
       WebFetchTool,
       TodoWriteTool,
       TodoReadTool,
@@ -124,9 +115,12 @@ export namespace ToolRegistry {
       CodeSearchTool,
       SkillTool,
       ApplyPatchTool,
+      PatchTool,
       ...(Flag.OPENCODE_EXPERIMENTAL_LSP_TOOL ? [LspTool] : []),
       ...(config.experimental?.batch_tool === true ? [BatchTool] : []),
-      ...(Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE && Flag.OPENCODE_CLIENT === "cli" ? [PlanExitTool, PlanEnterTool] : []),
+      ...(Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE && Flag.OPENCODE_CLIENT === "cli"
+        ? [PlanExitTool, PlanEnterTool]
+        : []),
       ...custom,
     ]
   }
@@ -135,45 +129,41 @@ export namespace ToolRegistry {
     return all().then((x) => x.map((t) => t.id))
   }
 
-  export async function enabled(agent: Agent.Info): Promise<Record<string, boolean>> {
-    const result: Record<string, boolean> = {}
+  export async function tools(
+    model: {
+      providerID: string
+      modelID: string
+    },
+    agent?: Agent.Info,
+  ) {
+    const allTools = await all()
 
-    // Only disable tools globally if edit is a string "deny"
-    // If edit is an object with patterns, per-file checks happen in the tools
-    if (agent.permission.edit === "deny") {
-      result["edit"] = false
-      result["write"] = false
-      result["patch"] = false
-    }
-    if (agent.permission.bash["*"] === "deny" && Object.keys(agent.permission.bash).length === 1) {
-      result["bash"] = false
-    }
-    if (agent.permission.webfetch === "deny") {
-      result["webfetch"] = false
-      result["codesearch"] = false
-      result["websearch"] = false
-    }
+    const usePatch = (() => {
+      const isGpt = model.modelID.includes("gpt-")
+      const isOss = model.modelID.includes("oss")
+      const isGpt4 = model.modelID.includes("gpt-4")
+      const isGpt5 = model.modelID.includes("gpt-5")
+      const isO1 = model.modelID.includes("o1")
+      const isO3 = model.modelID.includes("o3")
+      return isGpt && !isOss && !isGpt4 && !isGpt5 && !isO1 && !isO3
+    })()
 
-    return result
-  }
-
-  export async function tools(providerID: string, agent?: Agent.Info) {
-    const tools = await all()
-    const result = await Promise.all(
-      tools
+    return Promise.all(
+      allTools
         .filter((t) => {
-          // Enable websearch/codesearch for zen users OR via enable flag
-          if (t.id === "codesearch" || t.id === "websearch") {
-            return model.providerID === "opencode" || Flag.OPENCODE_ENABLE_EXA
-          }
+          const isSearch = t.id === "codesearch" || t.id === "websearch"
+          const isPatch = t.id === "patch"
+          const isApplyPatch = t.id === "apply_patch"
+          const isEditOrWrite = t.id === "edit" || t.id === "write"
 
-          // use apply tool in same format as codex
-          const usePatch =
-            model.modelID.includes("gpt-") && !model.modelID.includes("oss") && !model.modelID.includes("gpt-4")
-          if (t.id === "apply_patch") return usePatch
-          if (t.id === "edit" || t.id === "write") return !usePatch
-
-          return true
+          return (
+            isSearch ||
+            (isApplyPatch
+              ? usePatch
+              : isEditOrWrite || isPatch
+                ? !usePatch
+                : true)
+          )
         })
         .map(async (t) => {
           using _ = log.time(t.id)
@@ -183,30 +173,5 @@ export namespace ToolRegistry {
           }
         }),
     )
-    return result
-  }
-
-  }
-
-  export async function enabled(agent: Agent.Info): Promise<Record<string, boolean>> {
-    const result: Record<string, boolean> = {}
-
-    // Only disable tools globally if edit is a string "deny"
-    // If edit is an object with patterns, per-file checks happen in the tools
-    if (agent.permission.edit === "deny") {
-      result["edit"] = false
-      result["write"] = false
-      result["patch"] = false
-    }
-    if (agent.permission.bash["*"] === "deny" && Object.keys(agent.permission.bash).length === 1) {
-      result["bash"] = false
-    }
-    if (agent.permission.webfetch === "deny") {
-      result["webfetch"] = false
-      result["codesearch"] = false
-      result["websearch"] = false
-    }
-
-    return result
   }
 }

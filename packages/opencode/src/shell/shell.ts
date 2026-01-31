@@ -27,76 +27,46 @@ export namespace Shell {
       return
     }
 
-    try {
-      process.kill(-pid, "SIGTERM")
-      await Bun.sleep(SIGKILL_TIMEOUT_MS)
-      if (!opts?.exited?.()) {
-        process.kill(-pid, "SIGKILL")
-      }
-    } catch (_e) {
-      proc.kill("SIGTERM")
-      await Bun.sleep(SIGKILL_TIMEOUT_MS)
-      if (!opts?.exited?.()) {
-        proc.kill("SIGKILL")
+    const kill = (sig: "SIGTERM" | "SIGKILL") => {
+      try {
+        process.kill(-pid, sig)
+      } catch {
+        proc.kill(sig)
       }
     }
+
+    kill("SIGTERM")
+    await Bun.sleep(SIGKILL_TIMEOUT_MS)
+    if (!opts?.exited?.()) kill("SIGKILL")
   }
+
   const BLACKLIST = new Set(["fish", "nu"])
 
   function fallback() {
     if (process.platform === "win32") {
-      // First try to find bash in PATH (most reliable)
-      const bashInPath = Bun.which("bash")
-      if (bashInPath) {
-        return bashInPath
+      const bash = Bun.which("bash")
+      if (bash) return bash
+
+      if (Flag.OPENCODE_GIT_BASH_PATH && Bun.file(Flag.OPENCODE_GIT_BASH_PATH).size) {
+        return Flag.OPENCODE_GIT_BASH_PATH
       }
 
-      // Then try explicit flag if set
-      if (Flag.OPENCODE_GIT_BASH_PATH) {
-        try {
-          if (Bun.file(Flag.OPENCODE_GIT_BASH_PATH).size) {
-            return Flag.OPENCODE_GIT_BASH_PATH
-          }
-        } catch (e) {
-          // File doesn't exist, continue with fallback
-        }
-      }
-
-      // Try to find Git Bash via git.exe location
       const git = Bun.which("git")
       if (git) {
-        // Try multiple possible locations for bash
-        const possibleBashPaths = [
-          // Standard location: git.exe at cmd/, bash.exe at bin/
+        const paths = [
           path.join(git, "..", "..", "bin", "bash.exe"),
-          // Alternative: git.exe at bin/, bash.exe at bin/
           path.join(git, "..", "bash.exe"),
-          // git.exe at root, bash.exe at root
-          path.join(git, "..", "bash.exe"),
-          // Also try sh.exe as fallback
           path.join(git, "..", "..", "bin", "sh.exe"),
           path.join(git, "..", "sh.exe"),
         ]
-
-        for (const bashPath of possibleBashPaths) {
-          try {
-            if (Bun.file(bashPath).size > 0) {
-              return bashPath
-            }
-          } catch (e) {
-            // Continue to next path
-          }
-        }
+        const found = paths.find(p => Bun.file(p).size > 0)
+        if (found) return found
       }
 
-      // Graceful fallback to CMD.exe when Git Bash is unavailable
-      const cmdPath = process.env.COMSPEC || "cmd.exe"
-      return cmdPath
+      return process.env.COMSPEC || "cmd.exe"
     }
     if (process.platform === "darwin") return "/bin/zsh"
-    const bash = Bun.which("bash")
-    if (bash) return bash
-    return "/bin/sh"
+    return Bun.which("bash") || "/bin/sh"
   }
 
   export const preferred = lazy(() => {
@@ -112,6 +82,41 @@ export namespace Shell {
   })
 
   /**
+   * Returns the appropriate shell arguments for a given shell and command.
+   * Ensures login profiles are sourced for bash and zsh.
+   */
+  export function getShellArgs(shell: string, command: string): string[] {
+    const shellName = path.basename(shell).toLowerCase()
+
+    if (shellName.includes("zsh")) {
+      return [
+        "-c",
+        "-l",
+        `[[ -f ~/.zshenv ]] && source ~/.zshenv >/dev/null 2>&1 || true; [[ -f "\${ZDOTDIR:-$HOME}/.zshrc" ]] && source "\${ZDOTDIR:-$HOME}/.zshrc" >/dev/null 2>&1 || true; ${command}`,
+      ]
+    }
+
+    if (shellName.includes("bash")) {
+      return [
+        "-c",
+        "-l",
+        `[[ -f ~/.bashrc ]] && source ~/.bashrc >/dev/null 2>&1 || true; ${command}`,
+      ]
+    }
+
+    if (shellName.includes("pwsh") || shellName.includes("powershell")) {
+      return ["-NoProfile", "-Command", command]
+    }
+
+    if (shellName.includes("fish") || shellName.includes("nu")) {
+      return ["-c", command]
+    }
+
+    // Default fallback for other shells - try to use login shell to source profiles
+    return ["-c", "-l", command]
+  }
+
+  /**
    * Detects if a command is a PowerShell command
    */
   export function isPowerShellCommand(command: string): boolean {
@@ -122,19 +127,26 @@ export namespace Shell {
   }
 
   /**
-   * Detects if PowerShell arguments contain debug or verbose flags
+   * Detects if PowerShell arguments contain common parameters that should be moved to preferences
    * @param argsString - The PowerShell arguments string to analyze
-   * @returns Object with hasDebug and hasVerbose boolean properties
    */
-   function detectDebugAndVerboseFlags(argsString: string): { hasDebug: boolean, hasVerbose: boolean } {
-     // Check for -Debug and -Verbose flags in the arguments string
-     const debugMatch = argsString.match(/(^|\s)-Debug(\s|$)/i)
-     const verboseMatch = argsString.match(/(^|\s)-Verbose(\s|$)/i)
-     return {
-       hasDebug: !!debugMatch,
-       hasVerbose: !!verboseMatch
-     }
-   }
+  function detectCommonPreferences(argsString: string): {
+    hasDebug: boolean
+    hasVerbose: boolean
+    errorAction?: string
+    warningAction?: string
+  } {
+    const hasDebug = /-(?:Debug|d)(?:\s+|$)/i.test(argsString)
+    const hasVerbose = /-(?:Verbose|v)(?:\s+|$)/i.test(argsString)
+
+    const errorActionMatch = argsString.match(/-ErrorAction\s+(\w+)/i)
+    const errorAction = errorActionMatch ? errorActionMatch[1] : undefined
+
+    const warningActionMatch = argsString.match(/-WarningAction\s+(\w+)/i)
+    const warningAction = warningActionMatch ? warningActionMatch[1] : undefined
+
+    return { hasDebug, hasVerbose, errorAction, warningAction }
+  }
 
   /**
    * Detects if a command is a CMD command
@@ -184,7 +196,7 @@ export namespace Shell {
     
     const isBuiltin = firstWord ? CMD_BUILTINS.has(firstWord.toLowerCase()) : false
     const hasPipes = command.includes('|')
-
+    
     return isBuiltin || hasPipes
   }
 
@@ -213,6 +225,67 @@ export namespace Shell {
     useShellFlag: boolean
     /** The shell to use if useShellFlag is true */
     shell?: string
+    /** Optional environment variables to merge into the process environment */
+    env?: Record<string, string>
+    windowsVerbatimArguments?: boolean
+  }
+
+  /**
+   * Parses a PowerShell argument string into an array of arguments,
+   * specifically handling the -Command/-c flag and injecting preferences.
+   */
+  function getPowerShellArgs(argsString: string): string[] {
+    const { hasDebug, hasVerbose, errorAction, warningAction } = detectCommonPreferences(argsString)
+    
+    // Find the -Command or -c flag and its content
+    const commandMatch = argsString.match(/(-Command|-c)(?:\s+|$)(.*)$/i)
+    
+    const preferences = [
+      hasDebug ? "$DebugPreference='Continue';" : "",
+      hasVerbose ? "$VerbosePreference='Continue';" : "",
+      errorAction ? `$ErrorActionPreference='${errorAction}';` : "",
+      warningAction ? `$WarningActionPreference='${warningAction}';` : "",
+    ].filter(Boolean).join(" ")
+
+    if (commandMatch) {
+      const flag = commandMatch[1]
+      const rawBody = commandMatch[2].trim()
+      
+      // Remove surrounding quotes if present to inject preferences inside
+      const body = ((rawBody.startsWith('"') && rawBody.endsWith('"')) ||
+                    (rawBody.startsWith("'") && rawBody.endsWith("'")))
+        ? rawBody.slice(1, -1)
+        : rawBody
+
+      // Extract flags BEFORE the -Command flag
+      const beforeCommand = argsString.slice(0, commandMatch.index).trim()
+      const resultArgs: string[] = ["-NoProfile"]
+      
+      if (beforeCommand) {
+        // Clean and split flags. This is a simple split, but usually enough for PS flags
+        const cleanedBefore = beforeCommand
+          .replace(/-(?:Debug|d)(?:\s+|$)/gi, " ")
+          .replace(/-(?:Verbose|v)(?:\s+|$)/gi, " ")
+          .replace(/-ErrorAction\s+\w+/gi, " ")
+          .replace(/-WarningAction\s+\w+/gi, " ")
+          .split(/\s+/)
+          .filter(Boolean)
+        resultArgs.push(...cleanedBefore)
+      }
+
+      resultArgs.push(flag, preferences ? `${preferences} ${body}` : body)
+      return resultArgs
+    }
+
+    // If no -Command flag found, wrap everything in -Command
+    const cleaned = argsString
+      .replace(/-(?:Debug|d)(?:\s+|$)/gi, " ")
+      .replace(/-(?:Verbose|v)(?:\s+|$)/gi, " ")
+      .replace(/-ErrorAction\s+\w+/gi, " ")
+      .replace(/-WarningAction\s+\w+/gi, " ")
+      .trim()
+
+    return ["-NoProfile", "-Command", preferences ? `${preferences} ${cleaned}` : cleaned]
   }
 
   /**
@@ -220,209 +293,64 @@ export namespace Shell {
    * Routes PowerShell and CMD commands directly to their executables to avoid
    * variable corruption when passing through Git Bash.
    */
-  export function getSpawnConfig(command: string): SpawnConfig {
+  export function getSpawnConfig(command: string, configShell?: string): SpawnConfig {
     // Only apply special handling on Windows
     if (process.platform !== "win32") {
+      const shellPath = configShell || acceptable()
       return {
-        executable: command,
-        args: [],
-        useShellFlag: true,
-        shell: acceptable(),
+        executable: shellPath,
+        args: getShellArgs(shellPath, command),
+        useShellFlag: false,
       }
     }
 
     // Check for PowerShell commands first
     if (isPowerShellCommand(command)) {
-      // Extract the powershell executable and arguments
-      // Match pattern: powershell[.exe] or pwsh[.exe] <args>
       const match = command.match(/^(powershell|pwsh)(?:\.exe)?\s+(.*)$/i)
       if (match) {
-        const [, requestedShell, argsString] = match
-
-        // Check for debug/verbose flags in the arguments
-        const { hasDebug, hasVerbose } = detectDebugAndVerboseFlags(argsString)
-
-        // Parse PowerShell arguments - split on -Command, -File, etc. but keep quoted strings intact
-        // For -Command, we want: ["-Command", "the command string"]
-        // For -NoProfile -Command, we want: ["-NoProfile", "-Command", "the command string"]
-        const args: string[] = []
-        let current = argsString.trim()
-
-
-
-        while (current.length > 0) {
-          // Check for -Command or -c flag - everything after is a single argument
-          const commandFlagMatch = current.match(/^(-Command|-c)(?:\s+|$)/i)
-          if (commandFlagMatch) {
-            args.push(commandFlagMatch[1])
-            current = current.slice(commandFlagMatch[0].length).trim()
-            // Everything remaining is the command argument
-            if (current.length > 0) {
-              // Remove surrounding quotes if present
-              let commandArg = current;
-              if ((commandArg.startsWith('"') && commandArg.endsWith('"')) ||
-                  (commandArg.startsWith("'") && commandArg.endsWith("'"))) {
-                commandArg = commandArg.slice(1, -1);
-              }
-
-              // Prepend appropriate preference variables if debug/verbose flags were detected
-              const preferenceStatements = []
-              if (hasDebug) {
-                preferenceStatements.push(`$DebugPreference='Continue'`)
-              }
-              if (hasVerbose) {
-                preferenceStatements.push(`$VerbosePreference='Continue'`)
-              }
-              if (preferenceStatements.length > 0) {
-                commandArg = `${preferenceStatements.join('; ')}; ${commandArg}`
-              }
-
-              args.push(commandArg)
-            }
-            
-
-            
-            break
-          }
-
-          // Match other flags (starts with -)
-          const flagMatch = current.match(/^(-\w+)(?:\s+|$)/)
-          if (flagMatch) {
-            // Preserve all flags including -Debug and -Verbose since we handle them via preference variables
-            const flag = flagMatch[1]
-            args.push(flag)
-            current = current.slice(flagMatch[0].length).trim()
-            continue
-          }
-
-          // Match quoted string (double quotes)
-          const quotedMatch = current.match(/^"((?:[^"\\]|\\.)*)"/s)
-          if (quotedMatch) {
-            args.push(quotedMatch[1])
-            current = current.slice(quotedMatch[0].length).trim()
-            continue
-          }
-
-          // Match single quoted string
-          const singleQuotedMatch = current.match(/^'((?:[^'\\]|\\.)*)'/s)
-          if (singleQuotedMatch) {
-            args.push(singleQuotedMatch[1])
-            current = current.slice(singleQuotedMatch[0].length).trim()
-            continue
-          }
-
-          // Match unquoted word
-          const wordMatch = current.match(/^(\S+)/)
-          if (wordMatch) {
-            args.push(wordMatch[1])
-            current = current.slice(wordMatch[0].length).trim()
-            continue
-          }
-
-          // Should not reach here, but break to prevent infinite loop
-          break
-        }
-
-        // Determine which PowerShell executable to use
-        let executable = "powershell.exe"
-        if (requestedShell.toLowerCase() === "pwsh") {
-          // Try pwsh.exe first, fall back to powershell.exe if not available
-          const pwshPath = Bun.which("pwsh.exe") || Bun.which("pwsh")
-          if (pwshPath) {
-            executable = "pwsh.exe"
-          } else {
-            // pwsh.exe not found, use powershell.exe
-            executable = "powershell.exe"
-          }
-        }
+        const requestedShell = match[1]
+        const argsString = match[2]
+        const isPwsh = requestedShell.toLowerCase() === "pwsh"
+        const executable = isPwsh
+          ? (Bun.which("pwsh.exe") || Bun.which("pwsh") || "powershell.exe")
+          : "powershell.exe"
 
         return {
           executable,
-          args,
+          args: getPowerShellArgs(argsString),
           useShellFlag: false,
+          windowsVerbatimArguments: false,
         }
       }
     }
 
     // Check for CMD commands
     if (isCmdCommand(command)) {
-      // Extract the cmd executable and arguments
-      // Match pattern: cmd[.exe] <args>
       const match = command.match(/^(cmd(?:\.exe)?)\s+(.*)$/i)
       if (match) {
-        const [, , argsString] = match
-        // For CMD, we want to split on /c or /k but keep the rest as a single argument
-        // e.g., "cmd /c echo hello" -> ["/c", "echo hello"]
-        const cmdArgs: string[] = []
+        const argsString = match[2]
         const cmdMatch = argsString.match(/^(\/[ck])\s+(.*)$/i)
-        let commandToExecute = argsString
-
-        if (cmdMatch) {
-          cmdArgs.push(cmdMatch[1])
-          commandToExecute = cmdMatch[2]
-        }
-        // After extracting commandToExecute (around line 258)
-        // For CMD commands, ensure the entire command string is passed correctly
-        // Do NOT parse pipes, quotes, or other shell syntax - CMD.exe handles that
-
-        // Verify proper quoting for echo commands
-        if (/^\s*echo\s+/i.test(commandToExecute)) {
-          // Echo commands need special handling to preserve arguments
-          // Ensure arguments are not being stripped by bash
-          // Push the full command as a single argument
-          cmdArgs.push(commandToExecute)
-          return {
-            executable: process.env.COMSPEC || "cmd.exe",
-            args: cmdArgs,
-            useShellFlag: false,
-          }
-        }
-        if (commandToExecute.includes('|') || commandToExecute.includes('"')) {
-          cmdArgs.push(commandToExecute);
-          return {
-            executable: process.env.COMSPEC || "cmd.exe",
-            args: cmdArgs,
-            useShellFlag: false,
-          };
-        }
-
-        // Fix for chained commands (&& or ||) with dynamic environment variables (e.g., %cd%)
-        // CMD expands %variables% at parse time, not execution time, which breaks `cd /d %temp% && echo %cd%`
-        // We enable delayed expansion (/V:ON) and convert %var% to !var! for dynamic variables.
-        const isChained = /(&&|\|\|)/.test(commandToExecute)
-        const hasDynamicVars = hasDynamicEnvVars(commandToExecute)
+        const initialArgs = cmdMatch ? [cmdMatch[1]] : []
+        const rawToExecute = cmdMatch ? cmdMatch[2] : argsString
+        
+        const isChained = /(&&|\|\|)/.test(rawToExecute)
         const hasVOn = argsString.match(/\/V:ON/i)
-
-        if (isChained && hasDynamicVars && !hasVOn) {
-          // Add /V:ON flag for delayed expansion
-          cmdArgs.unshift("/V:ON")
-          // Convert dynamic variables to delayed expansion syntax
-          commandToExecute = convertToDelayedExpansion(commandToExecute)
-        }
-
-
-
-        cmdArgs.push(commandToExecute)
+        const useVOn = isChained && hasDynamicEnvVars(rawToExecute) && !hasVOn
+        
+        const cmdArgs = useVOn ? ["/V:ON", ...initialArgs] : initialArgs
+        const finalToExecute = useVOn ? convertToDelayedExpansion(rawToExecute) : rawToExecute
 
         return {
           executable: process.env.COMSPEC || "cmd.exe",
-          args: cmdArgs,
+          args: [...cmdArgs, finalToExecute],
           useShellFlag: false,
         }
       }
     }
 
-    // Check for bare CMD builtin commands that should be executed via CMD.exe
-    if (isCmdBuiltin(command) && process.platform === "win32") {
-      // For bare CMD builtins, wrap them in cmd /c to ensure proper execution
-      // Special case: bare "dir" command should show all files including hidden ones
-      let finalCommand = command
-      if (command.trim() === "dir") {
-        finalCommand = "dir /a"
-      }
-      
-
-      
+    // Check for bare CMD builtin commands
+    if (isCmdBuiltin(command)) {
+      const finalCommand = command.trim() === "dir" ? "dir /a" : command
       return {
         executable: process.env.COMSPEC || "cmd.exe",
         args: ["/c", finalCommand],
@@ -430,13 +358,20 @@ export namespace Shell {
       }
     }
  
-    // For all other commands (git, npm, etc.), use the shell
-    const shellPath = acceptable()
+    const shellPath = configShell || acceptable()
     return {
-      executable: command,
-      args: [],
-      useShellFlag: true,
-      shell: shellPath,
+      executable: shellPath,
+      args: getShellArgs(shellPath, command),
+      useShellFlag: false,
     }
+  }
+
+  /**
+   * Normalizes the exit code based on the raw exit code and error status
+   */
+  export function normalizeExitCode(exitCode: number | null | undefined, hasErrors: boolean): number {
+    if (exitCode === 0 && hasErrors) return 1
+    if (exitCode !== null && exitCode !== undefined) return exitCode
+    return hasErrors ? 1 : 0
   }
 }

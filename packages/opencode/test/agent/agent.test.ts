@@ -70,8 +70,6 @@ test("explore agent denies edit and write", async () => {
       expect(evalPerm(explore, "write")).toBe("deny")
       expect(evalPerm(explore, "todoread")).toBe("deny")
       expect(evalPerm(explore, "todowrite")).toBe("deny")
-      expect(evalPerm(explore, "send_agent_message")).toBe("allow")
-      expect(evalPerm(explore, "wait_agent_message")).toBe("allow")
     },
   })
 })
@@ -265,7 +263,7 @@ test("agent mode can be overridden", async () => {
   })
 })
 
-test("agent name override is rejected", async () => {
+test("agent name can be overridden", async () => {
   await using tmp = await tmpdir({
     config: {
       agent: {
@@ -276,7 +274,8 @@ test("agent name override is rejected", async () => {
   await Instance.provide({
     directory: tmp.path,
     fn: async () => {
-      await expect(Agent.get("build")).rejects.toThrow(/must not set/i)
+      const build = await Agent.get("build")
+      expect(build?.name).toBe("Builder")
     },
   })
 })

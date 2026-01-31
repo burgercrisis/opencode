@@ -9,6 +9,7 @@ const ctx = {
   messageID: "",
   callID: "",
   agent: "build",
+  messages: [],
   abort: AbortSignal.any([]),
   metadata: () => {},
   ask: async () => {},

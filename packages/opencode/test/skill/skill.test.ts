@@ -1,16 +1,9 @@
 import { test, expect } from "bun:test"
-import { Agent } from "../../src/agent/agent"
-import { Instance } from "../../src/project/instance"
 import { Skill } from "../../src/skill"
-import { SystemPrompt } from "../../src/session/system"
-import { SessionToolOverrides } from "../../src/session/tool-overrides"
-import { ToolRegistry } from "../../src/tool/registry"
-import { SkillTool } from "../../src/tool/skill"
-import { Wildcard } from "../../src/util/wildcard"
+import { Instance } from "../../src/project/instance"
 import { tmpdir } from "../fixture/fixture"
 import path from "path"
 import fs from "fs/promises"
-import { Filesystem } from "../../src/util/filesystem"
 
 async function createGlobalSkill(homeDir: string) {
   const skillDir = path.join(homeDir, ".claude", "skills", "global-test-skill")
@@ -57,7 +50,7 @@ Instructions here.
       const testSkill = skills.find((s) => s.name === "test-skill")
       expect(testSkill).toBeDefined()
       expect(testSkill!.description).toBe("A test skill for verification.")
-      expect(testSkill!.location).toContain(Filesystem.join("skill", "test-skill", "SKILL.md"))
+      expect(testSkill!.location).toContain("skill/test-skill/SKILL.md")
     },
   })
 })
@@ -151,7 +144,7 @@ description: A skill in the .claude/skills directory.
       expect(skills.length).toBe(1)
       const claudeSkill = skills.find((s) => s.name === "claude-skill")
       expect(claudeSkill).toBeDefined()
-      expect(claudeSkill!.location).toContain(Filesystem.join(".claude", "skills", "claude-skill", "SKILL.md"))
+      expect(claudeSkill!.location).toContain(".claude/skills/claude-skill/SKILL.md")
     },
   })
 })
@@ -171,7 +164,7 @@ test("discovers global skills from ~/.claude/skills/ directory", async () => {
         expect(skills.length).toBe(1)
         expect(skills[0].name).toBe("global-test-skill")
         expect(skills[0].description).toBe("A global skill from ~/.claude/skills for testing.")
-        expect(skills[0].location).toContain(Filesystem.join(".claude", "skills", "global-test-skill", "SKILL.md"))
+        expect(skills[0].location).toContain(".claude/skills/global-test-skill/SKILL.md")
       },
     })
   } finally {
@@ -187,90 +180,6 @@ test("returns empty array when no skills exist", async () => {
     fn: async () => {
       const skills = await Skill.all()
       expect(skills).toEqual([])
-    },
-  })
-})
-
-test("loading a skill can enable tools for the session", async () => {
-  await using tmp = await tmpdir({
-    git: true,
-    init: async (dir) => {
-      await Bun.write(
-        path.join(dir, ".opencode", "opencode.json"),
-        JSON.stringify(
-          {
-            tools: {
-              heavy: false,
-            },
-          },
-          null,
-          2,
-        ),
-      )
-
-      await Bun.write(
-        path.join(dir, ".opencode", "tool", "heavy.ts"),
-        `export default {
-  description: "A heavy tool used for tests",
-  args: {},
-  async execute() {
-    return "ok"
-  },
-}
-`,
-      )
-
-      await Bun.write(
-        path.join(dir, ".opencode", "skill", "webdev", "SKILL.md"),
-        `---
-name: webdev
-description: Enables heavy tools
-tools:
-  - heavy
----
-
-Use the heavy tool.
-`,
-      )
-    },
-  })
-
-  await Instance.provide({
-    directory: tmp.path,
-    fn: async () => {
-      const agent = await Agent.get("build")
-      const sessionID = "session_test"
-
-      const ids = await ToolRegistry.ids()
-      expect(ids).toContain("heavy")
-
-      const before = {
-        ...(await ToolRegistry.enabled(agent)),
-        ...(await SessionToolOverrides.get(sessionID)),
-      }
-      expect(Wildcard.all("heavy", before)).toBe(false)
-
-      const skillTool = await SkillTool.init({ agent })
-      await skillTool.execute({ name: "webdev" }, {
-        sessionID,
-        messageID: "message_test",
-        agent: agent.name,
-        abort: new AbortController().signal,
-        metadata() {},
-        async ask() {},
-      } as any)
-
-      const after = {
-        ...(await ToolRegistry.enabled(agent)),
-        ...(await SessionToolOverrides.get(sessionID)),
-      }
-      expect(Wildcard.all("heavy", after)).toBe(true)
-
-      SessionToolOverrides.evict(sessionID)
-      const persisted = await SessionToolOverrides.get(sessionID)
-      expect(Wildcard.all("heavy", persisted)).toBe(true)
-
-      await SessionToolOverrides.clear(sessionID)
     },
   })
 })

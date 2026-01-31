@@ -10,29 +10,15 @@ import { LSP } from "../lsp"
 import { createTwoFilesPatch, diffLines } from "diff"
 import DESCRIPTION from "./edit.txt"
 import { File } from "../file"
+import { FileWatcher } from "../file/watcher"
 import { Bus } from "../bus"
 import { FileTime } from "../file/time"
 import { Filesystem } from "../util/filesystem"
 import { Instance } from "../project/instance"
 import { Snapshot } from "@/snapshot"
 import { assertExternalDirectory } from "./external-directory"
-import { Agent } from "../agent"
-import { Permission } from "../permission"
 
 const MAX_DIAGNOSTICS_PER_FILE = 20
-
-type Diagnostic = Parameters<typeof LSP.Diagnostic.pretty>[0]
-
-function selectDiagnostics(issues: Diagnostic[], limit: number) {
-  const errors = issues.filter((item) => (item.severity ?? 1) === 1)
-  const warnings = issues.filter((item) => item.severity === 2)
-  const selected = [...errors, ...warnings].slice(0, limit)
-  const remaining = errors.length + warnings.length - selected.length
-  return {
-    selected,
-    remaining,
-  }
-}
 
 function normalizeLineEndings(text: string): string {
   return text.replaceAll("\r\n", "\n")
@@ -54,119 +40,99 @@ export const EditTool = Tool.define("edit", {
    * @returns Promise resolving to the edit result with metadata
    */
   async execute(params, ctx) {
-    if (!params.filePath) {
-      throw new Error("filePath is required")
-    }
+    if (!params.filePath) throw new Error("filePath is required")
+    if (params.oldString === params.newString) throw new Error("oldString and newString must be different")
 
-    if (params.oldString === params.newString) {
-      throw new Error("oldString and newString must be different")
-    }
-
-    const nativePath = Filesystem.nativePath(params.filePath)
-    const filePath = path.isAbsolute(nativePath) ? nativePath : Filesystem.join(Instance.directory, nativePath)
+    const filePath = path.isAbsolute(params.filePath)
+      ? params.filePath
+      : path.join(Instance.directory, params.filePath)
     await assertExternalDirectory(ctx, filePath)
 
     let diff = ""
     let contentOld = ""
     let contentNew = ""
-    // Resolve permission for this specific file
-    const resolvedPermission = Agent.resolveFilePermission({
-      permission: agent.permission.edit,
-      filePath,
-      baseDir: Instance.directory,
-    })
-
-    // Check for deny first
-    if (resolvedPermission === "deny") {
-      throw new Permission.RejectedError(
-        ctx.sessionID,
-        "edit",
-        ctx.callID,
-        { filepath: filePath },
-        `Editing file ${filePath} is denied by permission configuration`,
-      )
-    }
-
     await FileTime.withLock(filePath, async () => {
+      const file = Bun.file(filePath)
+      const existed = await file.exists()
+      const stats = existed ? await file.stat() : null
+
       if (params.oldString === "") {
         contentNew = params.newString
         diff = trimDiff(createTwoFilesPatch(filePath, filePath, contentOld, contentNew))
-        if (resolvedPermission === "ask") {
-          await Permission.ask({
-            type: "edit",
-            sessionID: ctx.sessionID,
-            messageID: ctx.messageID,
-            callID: ctx.callID,
-            title: "Edit this file: " + filePath,
-            metadata: {
-              filePath,
-              diff,
-            },
-          })
-        }
-        await Bun.write(filePath, params.newString)
-        await Bus.publish(File.Event.Edited, {
-          file: filePath,
+
+        await ctx.ask({
+          permission: "edit",
+          patterns: [path.relative(Instance.worktree, filePath)],
+          always: ["*"],
+          metadata: { filepath: filePath, diff },
         })
 
-        const fileAfter = Bun.file(filePath)
-        const statsAfter = await fileAfter.stat()
-        contentNew = await fileAfter.text()
-        diff = trimDiff(
-          createTwoFilesPatch(filePath, filePath, normalizeLineEndings(contentOld), normalizeLineEndings(contentNew)),
-        )
-        FileTime.read(ctx.sessionID, filePath, FileTime.stamp(statsAfter.mtime, contentNew))
+        await file.write(params.newString)
+        await Bus.publish(File.Event.Edited, { file: filePath })
+        await Bus.publish(FileWatcher.Event.Updated, {
+          file: filePath,
+          event: existed ? "change" : "add",
+        })
+        FileTime.read(ctx.sessionID, filePath)
+        contentNew = await file.text()
         return
       }
 
-      const file = Bun.file(filePath)
-      const stats = await file.stat().catch(() => {})
       if (!stats) throw new Error(`File ${filePath} not found`)
       if (stats.isDirectory()) throw new Error(`Path is a directory, not a file: ${filePath}`)
+
       await FileTime.assert(ctx.sessionID, filePath)
       contentOld = await file.text()
-      contentNew = replace(contentOld, params.oldString, params.newString, params.replaceAll)
-
-      diff = trimDiff(
-        createTwoFilesPatch(filePath, filePath, normalizeLineEndings(contentOld), normalizeLineEndings(contentNew)),
+      const contentNewTemp = replace(contentOld, params.oldString, params.newString, params.replaceAll)
+      const diffTemp = trimDiff(
+        createTwoFilesPatch(
+          filePath,
+          filePath,
+          normalizeLineEndings(contentOld),
+          normalizeLineEndings(contentNewTemp),
+        ),
       )
-      if (resolvedPermission === "ask") {
-        await Permission.ask({
-          type: "edit",
-          sessionID: ctx.sessionID,
-          messageID: ctx.messageID,
-          callID: ctx.callID,
-          title: "Edit this file: " + filePath,
-          metadata: {
-            filePath,
-            diff,
-          },
-        })
-      }
 
-      await file.write(contentNew)
-      await Bus.publish(File.Event.Edited, {
-        file: filePath,
+      await ctx.ask({
+        permission: "edit",
+        patterns: [path.relative(Instance.worktree, filePath)],
+        always: ["*"],
+        metadata: { filepath: filePath, diff: diffTemp },
       })
+
+      await file.write(contentNewTemp)
+      await Bus.publish(File.Event.Edited, { file: filePath })
+      await Bus.publish(FileWatcher.Event.Updated, {
+        file: filePath,
+        event: "change",
+      })
+
       contentNew = await file.text()
       diff = trimDiff(
-        createTwoFilesPatch(filePath, filePath, normalizeLineEndings(contentOld), normalizeLineEndings(contentNew)),
+        createTwoFilesPatch(
+          filePath,
+          filePath,
+          normalizeLineEndings(contentOld),
+          normalizeLineEndings(contentNew),
+        ),
       )
-      const statsAfter = await file.stat()
-      FileTime.read(ctx.sessionID, filePath, FileTime.stamp(statsAfter.mtime, contentNew))
+      FileTime.read(ctx.sessionID, filePath)
     })
 
-    const filediff: Snapshot.FileDiff = {
-      file: filePath,
-      before: contentOld,
-      after: contentNew,
-      additions: 0,
-      deletions: 0,
-    }
-    for (const change of diffLines(contentOld, contentNew)) {
-      if (change.added) filediff.additions += change.count || 0
-      if (change.removed) filediff.deletions += change.count || 0
-    }
+    const filediff = diffLines(contentOld, contentNew).reduce<Snapshot.FileDiff>(
+      (acc, change) => ({
+        ...acc,
+        additions: acc.additions + (change.added ? change.count || 0 : 0),
+        deletions: acc.deletions + (change.removed ? change.count || 0 : 0),
+      }),
+      {
+        file: filePath,
+        before: contentOld,
+        after: contentNew,
+        additions: 0,
+        deletions: 0,
+      },
+    )
 
     ctx.metadata({
       metadata: {
@@ -176,26 +142,33 @@ export const EditTool = Tool.define("edit", {
       },
     })
 
-    let output = "Edit applied successfully."
     await LSP.touchFile(filePath, true)
     const diagnostics = await LSP.diagnostics()
     const normalizedFilePath = Filesystem.normalizePath(filePath)
     const issues = diagnostics[normalizedFilePath] ?? []
-    const selected = selectDiagnostics(issues, MAX_DIAGNOSTICS_PER_FILE)
-    const savedDiagnostics: Record<string, Diagnostic[]> = {}
-    if (selected.selected.length > 0) {
-      savedDiagnostics[normalizedFilePath] = selected.selected
-      const suffix = selected.remaining > 0 ? `\n... and ${selected.remaining} more` : ""
-      output += `\n\nLSP diagnostics detected in this file:\n<diagnostics file="${filePath}">\n${selected.selected.map(LSP.Diagnostic.pretty).join("\n")}${suffix}\n</diagnostics>`
-    }
+    const errors = issues.filter((item) => item.severity === 1)
+
+    const output = (() => {
+      const base = "Edit applied successfully."
+      if (errors.length === 0) return base
+      const limited = errors.slice(0, MAX_DIAGNOSTICS_PER_FILE)
+      const suffix =
+        errors.length > MAX_DIAGNOSTICS_PER_FILE
+          ? `\n... and ${errors.length - MAX_DIAGNOSTICS_PER_FILE} more`
+          : ""
+      return (
+        base +
+        `\n\nLSP errors detected in this file, please fix:\n<diagnostics file="${filePath}">\n${limited.map(LSP.Diagnostic.pretty).join("\n")}${suffix}\n</diagnostics>`
+      )
+    })()
 
     return {
       metadata: {
-        diagnostics: savedDiagnostics,
+        diagnostics,
         diff,
         filediff,
       },
-      title: `${Filesystem.relativePath(Instance.worktree, filePath)}`,
+      title: `${path.relative(Instance.worktree, filePath)}`,
       output,
     }
   },
@@ -211,21 +184,35 @@ const MULTIPLE_CANDIDATES_SIMILARITY_THRESHOLD = 0.3
  * Levenshtein distance algorithm implementation
  */
 function levenshtein(a: string, b: string): number {
-  // Handle empty strings
-  if (a === "" || b === "") {
-    return Math.max(a.length, b.length)
-  }
-  const matrix = Array.from({ length: a.length + 1 }, (_, i) =>
+  if (a === "" || b === "") return Math.max(a.length, b.length)
+
+  const initialMatrix = Array.from({ length: a.length + 1 }, (_, i) =>
     Array.from({ length: b.length + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0)),
   )
 
-  for (let i = 1; i <= a.length; i++) {
-    for (let j = 1; j <= b.length; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1
-      matrix[i][j] = Math.min(matrix[i - 1][j] + 1, matrix[i][j - 1] + 1, matrix[i - 1][j - 1] + cost)
+  const filledMatrix = Array.from({ length: a.length }).reduce<number[][]>((acc, _, i) => {
+    const rowIdx = i + 1
+    const prevRow = acc[rowIdx - 1]
+    const currentRow = acc[rowIdx]
+
+    const processRow = (rowAcc: number[], j: number): number[] => {
+      const colIdx = j + 1
+      if (colIdx > b.length) return rowAcc
+      const cost = a[rowIdx - 1] === b[colIdx - 1] ? 0 : 1
+      const newValue = Math.min(
+        prevRow[colIdx] + 1,
+        rowAcc[colIdx - 1] + 1,
+        prevRow[colIdx - 1] + cost,
+      )
+      return processRow([...rowAcc, newValue], colIdx)
     }
-  }
-  return matrix[a.length][b.length]
+
+    const newRow = processRow([currentRow[0]], 0)
+
+    return [...acc.slice(0, rowIdx), newRow, ...acc.slice(rowIdx + 1)]
+  }, initialMatrix)
+
+  return filledMatrix[a.length][b.length]
 }
 
 /**
@@ -244,232 +231,151 @@ export const SimpleReplacer: Replacer = function* (_content, find) {
  */
 export const LineTrimmedReplacer: Replacer = function* (content, find) {
   const originalLines = content.split("\n")
-  const searchLines = find.split("\n")
+  const searchLines = find.endsWith("\n") ? find.split("\n").slice(0, -1) : find.split("\n")
 
-  if (searchLines[searchLines.length - 1] === "") {
-    searchLines.pop()
-  }
+  const processRange = (acc: string[], i: number): string[] => {
+    if (i > originalLines.length - searchLines.length) return acc
 
-  for (let i = 0; i <= originalLines.length - searchLines.length; i++) {
-    let matches = true
-
-    for (let j = 0; j < searchLines.length; j++) {
-      const originalTrimmed = originalLines[i + j].trim()
-      const searchTrimmed = searchLines[j].trim()
-
-      if (originalTrimmed !== searchTrimmed) {
-        matches = false
-        break
-      }
+    const checkMatch = (j: number): boolean => {
+      if (j >= searchLines.length) return true
+      if (originalLines[i + j].trim() !== searchLines[j].trim()) return false
+      return checkMatch(j + 1)
     }
 
-    if (matches) {
-      let matchStartIndex = 0
-      for (let k = 0; k < i; k++) {
-        matchStartIndex += originalLines[k].length + 1
-      }
+    const matches = checkMatch(0)
 
-      let matchEndIndex = matchStartIndex
-      for (let k = 0; k < searchLines.length; k++) {
-        matchEndIndex += originalLines[i + k].length
-        if (k < searchLines.length - 1) {
-          matchEndIndex += 1 // Add newline character except for the last line
-        }
+    const nextAcc = matches ? (() => {
+      const getStart = (idx: number, current: number): number => {
+        if (idx >= i) return current
+        return getStart(idx + 1, current + originalLines[idx].length + 1)
       }
+      const start = getStart(0, 0)
 
-      yield content.substring(matchStartIndex, matchEndIndex)
-    }
+      const getEnd = (j: number, current: number): number => {
+        if (j >= searchLines.length) return current
+        return getEnd(j + 1, current + originalLines[i + j].length + (j < searchLines.length - 1 ? 1 : 0))
+      }
+      const end = getEnd(0, start)
+
+      return [...acc, content.substring(start, end)]
+    })() : acc
+
+    return processRange(nextAcc, i + 1)
   }
+
+  yield* processRange([], 0)
 }
 
 export const BlockAnchorReplacer: Replacer = function* (content, find) {
   const originalLines = content.split("\n")
-  const searchLines = find.split("\n")
+  const searchLines = find.endsWith("\n") ? find.split("\n").slice(0, -1) : find.split("\n")
 
-  if (searchLines.length < 3) {
-    return
-  }
-
-  if (searchLines[searchLines.length - 1] === "") {
-    searchLines.pop()
-  }
-
-  const firstLineSearch = searchLines[0].trim()
-  const lastLineSearch = searchLines[searchLines.length - 1].trim()
+  const firstLineSearch = searchLines.length < 3 ? "" : searchLines[0].trim()
+  const lastLineSearch = searchLines.length < 3 ? "" : searchLines[searchLines.length - 1].trim()
   const searchBlockSize = searchLines.length
 
-  // Collect all candidate positions where both anchors match
-  const candidates: Array<{ startLine: number; endLine: number }> = []
-  for (let i = 0; i < originalLines.length; i++) {
-    if (originalLines[i].trim() !== firstLineSearch) {
-      continue
+  const findLastLine = (startIdx: number): number => {
+    const searchFrom = (idx: number): number => {
+      if (idx >= originalLines.length) return -1
+      if (originalLines[idx].trim() === lastLineSearch) return idx
+      return searchFrom(idx + 1)
     }
-
-    // Look for the matching last line after this first line
-    for (let j = i + 2; j < originalLines.length; j++) {
-      if (originalLines[j].trim() === lastLineSearch) {
-        candidates.push({ startLine: i, endLine: j })
-        break // Only match the first occurrence of the last line
-      }
-    }
+    return searchFrom(startIdx)
   }
 
-  // Return immediately if no candidates
-  if (candidates.length === 0) {
-    return
+  const collectCandidates = (acc: Array<{ startLine: number; endLine: number }>, i: number): Array<{ startLine: number; endLine: number }> => {
+    if (i >= originalLines.length) return acc
+    const isFirstMatch = originalLines[i].trim() === firstLineSearch
+    const endLine = isFirstMatch ? findLastLine(i + 2) : -1
+    const nextAcc = endLine !== -1 ? [...acc, { startLine: i, endLine }] : acc
+    return collectCandidates(nextAcc, i + 1)
   }
 
-  // Handle single candidate scenario (using relaxed threshold)
-  if (candidates.length === 1) {
-    const { startLine, endLine } = candidates[0]
+  const candidates = (searchLines.length < 3) ? [] : collectCandidates([], 0)
+
+  const getSimilarity = (startLine: number, endLine: number) => {
     const actualBlockSize = endLine - startLine + 1
+    const linesToCheck = Math.min(searchBlockSize - 2, actualBlockSize - 2)
 
-    let similarity = 0
-    let linesToCheck = Math.min(searchBlockSize - 2, actualBlockSize - 2) // Middle lines only
-
-    if (linesToCheck > 0) {
-      for (let j = 1; j < searchBlockSize - 1 && j < actualBlockSize - 1; j++) {
-        const originalLine = originalLines[startLine + j].trim()
-        const searchLine = searchLines[j].trim()
-        const maxLen = Math.max(originalLine.length, searchLine.length)
-        if (maxLen === 0) {
-          continue
-        }
-        const distance = levenshtein(originalLine, searchLine)
-        similarity += (1 - distance / maxLen) / linesToCheck
-
-        // Exit early when threshold is reached
-        if (similarity >= SINGLE_CANDIDATE_SIMILARITY_THRESHOLD) {
-          break
-        }
-      }
-    } else {
-      // No middle lines to compare, just accept based on anchors
-      similarity = 1.0
+    const calculateSimilarity = (acc: number, j: number): number => {
+      if (j >= linesToCheck) return acc
+      const originalLine = originalLines[startLine + j + 1].trim()
+      const searchLine = searchLines[j + 1].trim()
+      const maxLen = Math.max(originalLine.length, searchLine.length)
+      const similarity = maxLen === 0 ? 0 : (1 - levenshtein(originalLine, searchLine) / maxLen)
+      return calculateSimilarity(acc + similarity / linesToCheck, j + 1)
     }
 
-    if (similarity >= SINGLE_CANDIDATE_SIMILARITY_THRESHOLD) {
-      let matchStartIndex = 0
-      for (let k = 0; k < startLine; k++) {
-        matchStartIndex += originalLines[k].length + 1
-      }
-      let matchEndIndex = matchStartIndex
-      for (let k = startLine; k <= endLine; k++) {
-        matchEndIndex += originalLines[k].length
-        if (k < endLine) {
-          matchEndIndex += 1 // Add newline character except for the last line
-        }
-      }
-      yield content.substring(matchStartIndex, matchEndIndex)
-    }
-    return
+    return linesToCheck > 0 ? calculateSimilarity(0, 0) : 1.0
   }
 
-  // Calculate similarity for multiple candidates
-  let bestMatch: { startLine: number; endLine: number } | null = null
-  let maxSimilarity = -1
-
-  for (const candidate of candidates) {
-    const { startLine, endLine } = candidate
-    const actualBlockSize = endLine - startLine + 1
-
-    let similarity = 0
-    let linesToCheck = Math.min(searchBlockSize - 2, actualBlockSize - 2) // Middle lines only
-
-    if (linesToCheck > 0) {
-      for (let j = 1; j < searchBlockSize - 1 && j < actualBlockSize - 1; j++) {
-        const originalLine = originalLines[startLine + j].trim()
-        const searchLine = searchLines[j].trim()
-        const maxLen = Math.max(originalLine.length, searchLine.length)
-        if (maxLen === 0) {
-          continue
-        }
-        const distance = levenshtein(originalLine, searchLine)
-        similarity += 1 - distance / maxLen
-      }
-      similarity /= linesToCheck // Average similarity
-    } else {
-      // No middle lines to compare, just accept based on anchors
-      similarity = 1.0
+  const getMatchContent = (startLine: number, endLine: number) => {
+    const getStart = (idx: number, current: number): number => {
+      if (idx >= startLine) return current
+      return getStart(idx + 1, current + originalLines[idx].length + 1)
     }
+    const start = getStart(0, 0)
 
-    if (similarity > maxSimilarity) {
-      maxSimilarity = similarity
-      bestMatch = candidate
+    const getEndOffset = (idx: number, current: number): number => {
+      if (idx > endLine) return current
+      return getEndOffset(idx + 1, current + originalLines[idx].length + (idx < endLine ? 1 : 0))
     }
+    const end = start + getEndOffset(startLine, 0)
+    return content.substring(start, end)
   }
 
-  // Threshold judgment
-  if (maxSimilarity >= MULTIPLE_CANDIDATES_SIMILARITY_THRESHOLD && bestMatch) {
-    const { startLine, endLine } = bestMatch
-    let matchStartIndex = 0
-    for (let k = 0; k < startLine; k++) {
-      matchStartIndex += originalLines[k].length + 1
-    }
-    let matchEndIndex = matchStartIndex
-    for (let k = startLine; k <= endLine; k++) {
-      matchEndIndex += originalLines[k].length
-      if (k < endLine) {
-        matchEndIndex += 1
-      }
-    }
-    yield content.substring(matchStartIndex, matchEndIndex)
+  const findBest = (idx: number, currentBest: { match: { startLine: number; endLine: number } | null, max: number, threshold: number }): typeof currentBest => {
+    if (idx >= candidates.length) return currentBest
+    const candidate = candidates[idx]
+    const similarity = getSimilarity(candidate.startLine, candidate.endLine)
+    const nextBest = similarity > currentBest.max
+      ? { match: candidate, max: similarity, threshold: currentBest.threshold }
+      : currentBest
+    return findBest(idx + 1, nextBest)
   }
+
+  const initialBest = candidates.length === 1
+    ? { match: candidates[0], max: getSimilarity(candidates[0].startLine, candidates[0].endLine), threshold: SINGLE_CANDIDATE_SIMILARITY_THRESHOLD }
+    : { match: null as { startLine: number; endLine: number } | null, max: -1, threshold: MULTIPLE_CANDIDATES_SIMILARITY_THRESHOLD }
+
+  const best = candidates.length === 1 ? initialBest : findBest(0, initialBest)
+
+  yield* (best.match && best.max >= best.threshold) ? [getMatchContent(best.match.startLine, best.match.endLine)] : []
 }
 
 export const WhitespaceNormalizedReplacer: Replacer = function* (content, find) {
-  // Helper function to check if a string is whitespace-only
-  const isWhitespaceOnly = (text: string): boolean => {
-    return text.length > 0 && text.trim().length === 0
-  }
-  
-  const normalizeWhitespace = (text: string) => {
-    // If the text is whitespace-only, return a marker
-    if (isWhitespaceOnly(text)) {
-      return "\x00WHITESPACE_ONLY\x00"
-    }
-    // Otherwise, collapse multiple whitespace and trim
-    return text.replace(/\s+/g, " ").trim()
-  }
-  
+  const normalizeWhitespace = (text: string) => text.replace(/\s+/g, " ").trim()
   const normalizedFind = normalizeWhitespace(find)
-  
-  // Handle single line matches
+
   const lines = content.split("\n")
-  for (let i = 0; i < lines.length; i++) {
+
+  const processSingleLines = (acc: string[], i: number): string[] => {
+    if (i >= lines.length) return acc
     const line = lines[i]
-    if (normalizeWhitespace(line) === normalizedFind) {
-      yield line
-    } else if (!normalizedFind.includes("\x00")) {
-      // Only check for substring matches if not a whitespace-only marker
-      const normalizedLine = normalizeWhitespace(line)
-      if (normalizedLine.includes(normalizedFind)) {
-        const words = find.trim().split(/\s+/)
-        if (words.length > 0) {
-          const pattern = words.map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+")
-          try {
-            const regex = new RegExp(pattern)
-            const match = line.match(regex)
-            if (match) {
-              yield match[0]
-            }
-          } catch (e) {
-            // Invalid regex pattern, skip
-          }
-        }
-      }
-    }
+    const isExact = normalizeWhitespace(line) === normalizedFind
+    const match = !isExact && normalizeWhitespace(line).includes(normalizedFind) ? (() => {
+      const words = find.trim().split(/\s+/)
+      const pattern = words.length > 0 ? words.map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+") : ""
+      return pattern ? line.match(new RegExp(pattern)) : null
+    })() : null
+
+    const nextAcc = isExact ? [...acc, line] : (match ? [...acc, match[0]] : acc)
+    return processSingleLines(nextAcc, i + 1)
   }
-  
-  // Handle multi-line matches
+
+  yield* processSingleLines([], 0)
+
   const findLines = find.split("\n")
+
+  const processMultiLines = (acc: string[], i: number): string[] => {
+    if (i > lines.length - findLines.length) return acc
+    const block = lines.slice(i, i + findLines.length).join("\n")
+    const nextAcc = normalizeWhitespace(block) === normalizedFind ? [...acc, block] : acc
+    return processMultiLines(nextAcc, i + 1)
+  }
+
   if (findLines.length > 1) {
-    for (let i = 0; i <= lines.length - findLines.length; i++) {
-      const block = lines.slice(i, i + findLines.length)
-      if (normalizeWhitespace(block.join("\n")) === normalizedFind) {
-        yield block.join("\n")
-      }
-    }
+    yield* processMultiLines([], 0)
   }
 }
 
@@ -477,211 +383,201 @@ export const IndentationFlexibleReplacer: Replacer = function* (content, find) {
   const removeIndentation = (text: string) => {
     const lines = text.split("\n")
     const nonEmptyLines = lines.filter((line) => line.trim().length > 0)
-    if (nonEmptyLines.length === 0) return text
-
-    const minIndent = Math.min(
+    const minIndent = nonEmptyLines.length === 0 ? 0 : Math.min(
       ...nonEmptyLines.map((line) => {
         const match = line.match(/^(\s*)/)
         return match ? match[1].length : 0
       }),
     )
 
-    return lines.map((line) => (line.trim().length === 0 ? line : line.slice(minIndent))).join("\n")
+    const processLines = (acc: string[], idx: number): string[] => {
+      if (idx >= lines.length) return acc
+      const line = lines[idx]
+      const nextLine = line.trim().length === 0 ? line : line.slice(minIndent)
+      return processLines([...acc, nextLine], idx + 1)
+    }
+
+    return nonEmptyLines.length === 0 ? text : processLines([], 0).join("\n")
   }
 
   const normalizedFind = removeIndentation(find)
   const contentLines = content.split("\n")
   const findLines = find.split("\n")
 
-  for (let i = 0; i <= contentLines.length - findLines.length; i++) {
+  const processRange = (acc: string[], i: number): string[] => {
+    if (i > contentLines.length - findLines.length) return acc
     const block = contentLines.slice(i, i + findLines.length).join("\n")
-    if (removeIndentation(block) === normalizedFind) {
-      yield block
-    }
+    const nextAcc = removeIndentation(block) === normalizedFind ? [...acc, block] : acc
+    return processRange(nextAcc, i + 1)
   }
+
+  yield* processRange([], 0)
 }
 
 export const EscapeNormalizedReplacer: Replacer = function* (content, find) {
   const unescapeString = (str: string): string => {
     return str.replace(/\\(n|t|r|'|"|`|\\|\n|\$)/g, (match, capturedChar) => {
-      switch (capturedChar) {
-        case "n":
-          return "\n"
-        case "t":
-          return "\t"
-        case "r":
-          return "\r"
-        case "'":
-          return "'"
-        case '"':
-          return '"'
-        case "`":
-          return "`"
-        case "\\":
-          return "\\"
-        case "\n":
-          return "\n"
-        case "$":
-          return "$"
-        default:
-          return match
+      const mapping: Record<string, string> = {
+        n: "\n",
+        t: "\t",
+        r: "\r",
+        "'": "'",
+        '"': '"',
+        "`": "`",
+        "\\": "\\",
+        "\n": "\n",
+        $: "$",
       }
+      return mapping[capturedChar] || match
     })
   }
 
   const unescapedFind = unescapeString(find)
 
   // Try direct match with unescaped find string
-  if (content.includes(unescapedFind)) {
-    yield unescapedFind
-  }
+  yield* content.includes(unescapedFind) ? [unescapedFind] : []
 
   // Also try finding escaped versions in content that match unescaped find
   const lines = content.split("\n")
   const findLines = unescapedFind.split("\n")
 
-  for (let i = 0; i <= lines.length - findLines.length; i++) {
+  const processRange = (acc: string[], i: number): string[] => {
+    if (i > lines.length - findLines.length) return acc
     const block = lines.slice(i, i + findLines.length).join("\n")
-    const unescapedBlock = unescapeString(block)
-
-    if (unescapedBlock === unescapedFind) {
-      yield block
-    }
+    const nextAcc = unescapeString(block) === unescapedFind ? [...acc, block] : acc
+    return processRange(nextAcc, i + 1)
   }
+
+  yield* processRange([], 0)
 }
 
 export const MultiOccurrenceReplacer: Replacer = function* (content, find) {
-  // This replacer yields all exact matches, allowing the replace function
-  // to handle multiple occurrences based on replaceAll parameter
-  let startIndex = 0
-
-  while (true) {
-    const index = content.indexOf(find, startIndex)
-    if (index === -1) break
-
-    yield find
-    startIndex = index + find.length
+  const findIndices = (start: number, acc: number[]): number[] => {
+    const index = content.indexOf(find, start)
+    return index === -1 ? acc : findIndices(index + find.length, [...acc, index])
   }
+
+  const processIndices = (indices: number[], acc: string[]): string[] => {
+    if (indices.length === 0) return acc
+    return processIndices(indices.slice(1), [...acc, find])
+  }
+
+  yield* processIndices(findIndices(0, []), [])
 }
 
 export const TrimmedBoundaryReplacer: Replacer = function* (content, find) {
   const trimmedFind = find.trim()
 
-  if (trimmedFind === find) {
-    // Already trimmed, no point in trying
-    return
-  }
-
   // Try to find the trimmed version
-  if (content.includes(trimmedFind)) {
-    yield trimmedFind
-  }
+  yield* (trimmedFind !== find && content.includes(trimmedFind)) ? [trimmedFind] : []
 
   // Also try finding blocks where trimmed content matches
   const lines = content.split("\n")
   const findLines = find.split("\n")
 
-  for (let i = 0; i <= lines.length - findLines.length; i++) {
+  const processRange = (acc: string[], i: number): string[] => {
+    if (i > lines.length - findLines.length) return acc
     const block = lines.slice(i, i + findLines.length).join("\n")
-
-    if (block.trim() === trimmedFind) {
-      yield block
-    }
+    const nextAcc = block.trim() === trimmedFind ? [...acc, block] : acc
+    return processRange(nextAcc, i + 1)
   }
+
+  yield* processRange([], 0)
 }
 
 export const ContextAwareReplacer: Replacer = function* (content, find) {
   const findLines = find.split("\n")
-  if (findLines.length < 3) {
-    // Need at least 3 lines to have meaningful context
-    return
-  }
 
   // Remove trailing empty line if present
-  if (findLines[findLines.length - 1] === "") {
-    findLines.pop()
-  }
-
+  const searchLines = findLines[findLines.length - 1] === "" ? findLines.slice(0, -1) : findLines
   const contentLines = content.split("\n")
 
   // Extract first and last lines as context anchors
-  const firstLine = findLines[0].trim()
-  const lastLine = findLines[findLines.length - 1].trim()
+  const firstLine = searchLines[0].trim()
+  const lastLine = searchLines[searchLines.length - 1].trim()
 
-  // Find blocks that start and end with the context anchors
-  for (let i = 0; i < contentLines.length; i++) {
-    if (contentLines[i].trim() !== firstLine) continue
-
-    // Look for the matching last line
-    for (let j = i + 2; j < contentLines.length; j++) {
-      if (contentLines[j].trim() === lastLine) {
-        // Found a potential context block
-        const blockLines = contentLines.slice(i, j + 1)
-        const block = blockLines.join("\n")
-
-        // Check if the middle content has reasonable similarity
-        // (simple heuristic: at least 50% of non-empty lines should match when trimmed)
-        if (blockLines.length === findLines.length) {
-          let matchingLines = 0
-          let totalNonEmptyLines = 0
-
-          for (let k = 1; k < blockLines.length - 1; k++) {
-            const blockLine = blockLines[k].trim()
-            const findLine = findLines[k].trim()
-
-            if (blockLine.length > 0 || findLine.length > 0) {
-              totalNonEmptyLines++
-              if (blockLine === findLine) {
-                matchingLines++
-              }
-            }
-          }
-
-          if (totalNonEmptyLines === 0 || matchingLines / totalNonEmptyLines >= 0.5) {
-            yield block
-            break // Only match the first occurrence
-          }
-        }
-        break
-      }
+  const findLastLine = (startIdx: number): number => {
+    const searchFrom = (idx: number): number => {
+      if (idx >= contentLines.length) return -1
+      if (contentLines[idx].trim() === lastLine) return idx
+      return searchFrom(idx + 1)
     }
+    return searchFrom(startIdx)
+  }
+
+  const processRange = (acc: string[], i: number): string[] => {
+    if (i >= contentLines.length) return acc
+    const isFirstMatch = contentLines[i].trim() === firstLine
+    const j = isFirstMatch ? findLastLine(i + 2) : -1
+
+    const nextAcc = j !== -1 ? (() => {
+      const blockLines = contentLines.slice(i, j + 1)
+      const block = blockLines.join("\n")
+
+      const getStats = (idx: number, currentStats: { matching: number, total: number }): typeof currentStats => {
+        if (idx >= blockLines.length - 1) return currentStats
+        const blockLine = blockLines[idx].trim()
+        const findLine = searchLines[idx].trim()
+        const isEmpty = blockLine.length === 0 && findLine.length === 0
+        return getStats(idx + 1, {
+          matching: currentStats.matching + (!isEmpty && blockLine === findLine ? 1 : 0),
+          total: currentStats.total + (!isEmpty ? 1 : 0),
+        })
+      }
+
+      const stats = blockLines.length === searchLines.length
+        ? getStats(1, { matching: 0, total: 0 })
+        : { matching: 0, total: 1 }
+
+      return (stats.total === 0 || stats.matching / stats.total >= 0.5) ? [...acc, block] : acc
+    })() : acc
+
+    return processRange(nextAcc, i + 1)
+  }
+
+  if (findLines.length >= 3) {
+    yield* processRange([], 0)
   }
 }
 
 export function trimDiff(diff: string): string {
   const lines = diff.split("\n")
-  const contentLines = lines.filter(
-    (line) =>
-      (line.startsWith("+") || line.startsWith("-") || line.startsWith(" ")) &&
-      !line.startsWith("---") &&
-      !line.startsWith("+++"),
-  )
 
-  if (contentLines.length === 0) return diff
-
-  let min = Infinity
-  for (const line of contentLines) {
-    const content = line.slice(1)
-    if (content.trim().length > 0) {
-      const match = content.match(/^(\s*)/)
-      if (match) min = Math.min(min, match[1].length)
-    }
-  }
-  if (min === Infinity || min === 0) return diff
-  const trimmedLines = lines.map((line) => {
-    if (
-      (line.startsWith("+") || line.startsWith("-") || line.startsWith(" ")) &&
+  const getContentLines = (acc: string[], idx: number): string[] => {
+    if (idx >= lines.length) return acc
+    const line = lines[idx]
+    const isContent = (line.startsWith("+") || line.startsWith("-") || line.startsWith(" ")) &&
       !line.startsWith("---") &&
       !line.startsWith("+++")
-    ) {
-      const prefix = line[0]
-      const content = line.slice(1)
-      return prefix + content.slice(min)
-    }
-    return line
-  })
+    return getContentLines(isContent ? [...acc, line] : acc, idx + 1)
+  }
 
-  return trimmedLines.join("\n")
+  const contentLines = getContentLines([], 0)
+
+  const getMinIndent = (currentMin: number, idx: number): number => {
+    if (idx >= contentLines.length) return currentMin
+    const line = contentLines[idx]
+    const content = line.slice(1)
+    const match = content.trim().length > 0 ? content.match(/^(\s*)/) : null
+    const nextMin = match ? Math.min(currentMin, match[1].length) : currentMin
+    return getMinIndent(nextMin, idx + 1)
+  }
+
+  const min = getMinIndent(Infinity, 0)
+
+  const processLines = (acc: string[], idx: number): string[] => {
+    if (idx >= lines.length) return acc
+    const line = lines[idx]
+    const isContent = (line.startsWith("+") || line.startsWith("-") || line.startsWith(" ")) &&
+      !line.startsWith("---") &&
+      !line.startsWith("+++")
+    const prefix = line[0]
+    const content = line.slice(1)
+    const nextLine = !isContent ? line : prefix + content.slice(min)
+    return processLines([...acc, nextLine], idx + 1)
+  }
+
+  return (contentLines.length === 0 || min === Infinity || min === 0) ? diff : processLines([], 0).join("\n")
 }
 
 /**
@@ -698,14 +594,13 @@ export function trimDiff(diff: string): string {
  *
  * Example in bash: grep -P '\x{1F600}' file.txt to find lines containing the grinning face emoji.
  */
-export function replace(content: string, oldString: string, newString: string, replaceAll = false): string {
-  if (oldString === newString) {
-    throw new Error("oldString and newString must be different")
-  }
-
-  let notFound = true
-
-  for (const replacer of [
+export function replace(
+  content: string,
+  oldString: string,
+  newString: string,
+  replaceAll = false,
+): string {
+  const replacers = [
     SimpleReplacer,
     LineTrimmedReplacer,
     BlockAnchorReplacer,
@@ -715,24 +610,31 @@ export function replace(content: string, oldString: string, newString: string, r
     TrimmedBoundaryReplacer,
     ContextAwareReplacer,
     MultiOccurrenceReplacer,
-  ]) {
-    for (const search of replacer(content, oldString)) {
-      const index = content.indexOf(search)
-      if (index === -1) continue
-      notFound = false
-      if (replaceAll) {
-        return content.replaceAll(search, newString)
-      }
-      const lastIndex = content.lastIndexOf(search)
-      if (index !== lastIndex) continue
-      return content.substring(0, index) + newString + content.substring(index + search.length)
-    }
-  }
+  ]
 
-  if (notFound) {
-    throw new Error("oldString not found in content")
-  }
-  throw new Error(
-    "Found multiple matches for oldString. Provide more surrounding lines in oldString to identify the correct match.",
+  const matches = replacers.reduce<string[]>((acc, replacer) => {
+    return (acc.length > 0 && !replaceAll) ? acc : [...acc, ...Array.from(replacer(content, oldString))]
+  }, [])
+
+  const uniqueMatches = Array.from(new Set(matches))
+
+  return matches.length === 0 ? (() => { throw new Error("oldString not found in content") })() : (
+    replaceAll ? uniqueMatches.reduce((acc, match) => acc.replaceAll(match, newString), content) : (
+      uniqueMatches.length > 1 ? (() => {
+        throw new Error(
+          "Found multiple matches for oldString. Provide more surrounding lines in oldString to identify the correct match.",
+        )
+      })() : (() => {
+        const search = uniqueMatches[0]
+        const index = content.indexOf(search)
+        const lastIndex = content.lastIndexOf(search)
+
+        return index !== lastIndex ? (() => {
+          throw new Error(
+            "Found multiple matches for oldString. Provide more surrounding lines in oldString to identify the correct match.",
+          )
+        })() : content.substring(0, index) + newString + content.substring(index + search.length)
+      })()
+    )
   )
 }

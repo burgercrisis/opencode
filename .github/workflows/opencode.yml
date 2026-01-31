@@ -15,10 +15,11 @@ jobs:
       startsWith(github.event.comment.body, '/opencode')
     runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
-      id-token: write
+      # SECURITY: CRITICAL - REMOVED id-token: write to prevent token forgery
       contents: read
       pull-requests: read
       issues: read
+      # SECURITY: Principle of least privilege - no write permissions
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -28,7 +29,11 @@ jobs:
       - name: Run opencode
         uses: anomalyco/opencode/github@latest
         env:
+          # SECURITY: Never log secrets or tokens
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
-          OPENCODE_PERMISSION: '{"bash": "deny"}'
+          # SECURITY: Restrictive permissions - principle of least privilege
+          OPENCODE_PERMISSION: '{"bash": "deny", "webfetch": "deny", "edit": "deny", "write": "deny", "read": "allow"}'
+          # SECURITY: Prevent secret leakage in logs
+          GITHUB_LOG_LEVEL: error
         with:
           model: opencode/claude-opus-4-5

@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
+import type { NamedError } from "@opencode-ai/util/error"
+import { APICallError } from "ai"
 import { SessionRetry } from "../../src/session/retry"
 import { MessageV2 } from "../../src/session/message-v2"
-import { NamedError } from "@opencode-ai/util/error"
-import { JSONParseError, TypeValidationError } from "ai"
 
 function apiError(headers?: Record<string, string>): MessageV2.APIError {
   return new MessageV2.APIError({
@@ -10,6 +10,10 @@ function apiError(headers?: Record<string, string>): MessageV2.APIError {
     isRetryable: true,
     responseHeaders: headers,
   }).toObject() as MessageV2.APIError
+}
+
+function wrap(message: unknown): ReturnType<NamedError["toObject"]> {
+  return { data: { message } } as ReturnType<NamedError["toObject"]>
 }
 
 describe("session.retry.delay", () => {
@@ -83,44 +87,30 @@ describe("session.retry.delay", () => {
 })
 
 describe("session.retry.retryable", () => {
-  test("retries common socket close errors", () => {
-    const err = new NamedError.Unknown({ message: "SocketError: socket closed" }).toObject()
-    expect(SessionRetry.retryable(err)).toBe("Network error")
+  test("maps too_many_requests json messages", () => {
+    const error = wrap(JSON.stringify({ type: "error", error: { type: "too_many_requests" } }))
+    expect(SessionRetry.retryable(error)).toBe("Too Many Requests")
   })
 
-  test("retries unknown certificate verification errors", () => {
-    const err = new NamedError.Unknown({ message: "Error: unknown certificate verification error" }).toObject()
-    expect(SessionRetry.retryable(err)).toBe("Network error (TLS)")
+  test("maps overloaded provider codes", () => {
+    const error = wrap(JSON.stringify({ code: "resource_exhausted" }))
+    expect(SessionRetry.retryable(error)).toBe("Provider is overloaded")
   })
 
-  test("retries common TLS verification errors", () => {
-    const errors = [
-      "Error: self signed certificate",
-      "Error: self signed certificate in certificate chain",
-      "Error: unable to get local issuer certificate",
-      "Error: unable to verify the first certificate",
-      "Error: certificate has expired",
-      "Error: ERR_TLS_CERT_ALTNAME_INVALID fetching https://example.com",
-    ]
-
-    for (const message of errors) {
-      const err = new NamedError.Unknown({ message }).toObject()
-      expect(SessionRetry.retryable(err)).toBe("Network error (TLS)")
-    }
+  test("handles json messages without code", () => {
+    const error = wrap(JSON.stringify({ error: { message: "no_kv_space" } }))
+    expect(SessionRetry.retryable(error)).toBe("Provider Server Error")
   })
 
-  test("retries TLS errors even when APIError isRetryable is false", () => {
-    const err = new MessageV2.APIError({
-      message: "unknown certificate verification error",
-      isRetryable: false,
-    }).toObject()
-
-    expect(SessionRetry.retryable(err)).toBe("unknown certificate verification error")
+  test("does not throw on numeric error codes", () => {
+    const error = wrap(JSON.stringify({ type: "error", error: { code: 123 } }))
+    const result = SessionRetry.retryable(error)
+    expect(result).toBeUndefined()
   })
 
-  test("does not retry unrelated unknown errors", () => {
-    const err = new NamedError.Unknown({ message: "TypeError: undefined is not a function" }).toObject()
-    expect(SessionRetry.retryable(err)).toBeUndefined()
+  test("returns undefined for non-json message", () => {
+    const error = wrap("not-json")
+    expect(SessionRetry.retryable(error)).toBeUndefined()
   })
 })
 
@@ -131,7 +121,7 @@ describe("session.message-v2.fromError", () => {
       using server = Bun.serve({
         port: 0,
         idleTimeout: 8,
-        async fetch(_req) {
+        async fetch(req) {
           return new Response(
             new ReadableStream({
               async pull(controller) {
@@ -173,106 +163,17 @@ describe("session.message-v2.fromError", () => {
     expect(retryable).toBe("Connection reset by server")
   })
 
-  test("marks streamed OpenAI rate-limit errors retryable", () => {
-    const chunk = {
-      type: "error",
-      sequence_number: 2,
-      error: {
-        type: "too_many_requests",
-        code: "rate_limit_exceeded",
-        message: "Rate limit exceeded.",
-        param: "input",
-      },
-    }
-
-    const error = MessageV2.fromError(chunk, { providerID: "openai" })
-
-    expect(MessageV2.APIError.isInstance(error)).toBe(true)
-    expect((error as MessageV2.APIError).data.isRetryable).toBe(true)
-  })
-
-  test("marks OpenAI stream_error chunks retryable", () => {
-    const chunk = {
-      type: "error",
-      error: {
-        type: "stream_error",
-        message: "SSE stream closed before receiving response.completed",
-      },
-    }
-
-    const error = MessageV2.fromError(chunk, { providerID: "openai" })
-
-    expect(MessageV2.APIError.isInstance(error)).toBe(true)
-    expect((error as MessageV2.APIError).data.isRetryable).toBe(true)
-  })
-
-  test("marks JSONParseError retryable", () => {
-    const err = new JSONParseError({
-      text: '{"a":1}{"b":2}',
-      cause: new Error("Unexpected token"),
+  test("marks OpenAI 404 status codes as retryable", () => {
+    const error = new APICallError({
+      message: "boom",
+      url: "https://api.openai.com/v1/chat/completions",
+      requestBodyValues: {},
+      statusCode: 404,
+      responseHeaders: { "content-type": "application/json" },
+      responseBody: '{"error":"boom"}',
+      isRetryable: false,
     })
-
-    const error = MessageV2.fromError(err, { providerID: "openai" })
-
-    expect(MessageV2.APIError.isInstance(error)).toBe(true)
-    expect((error as MessageV2.APIError).data.isRetryable).toBe(true)
-    expect((error as MessageV2.APIError).data.metadata?.type).toBe("json_parse_error")
-  })
-
-  test("does not retry streamed OpenAI context-length errors", () => {
-    const chunk = {
-      type: "error",
-      sequence_number: 2,
-      error: {
-        type: "invalid_request_error",
-        code: "context_length_exceeded",
-        message: "Your input exceeds the context window of this model.",
-        param: "input",
-      },
-    }
-
-    const error = MessageV2.fromError(chunk, { providerID: "openai" })
-
-    expect(MessageV2.APIError.isInstance(error)).toBe(true)
-    expect((error as MessageV2.APIError).data.isRetryable).toBe(false)
-  })
-
-  test("converts gateway-style Responses errors in TypeValidationError.value to retryable APIError", () => {
-    const error = new TypeValidationError({
-      value: {
-        error: {
-          message: "stream error: stream ID 137; INTERNAL_ERROR; received from peer",
-          type: "server_error",
-          code: "internal_server_error",
-        },
-      },
-      cause: new Error("schema mismatch"),
-    })
-
-    const result = MessageV2.fromError(error, { providerID: "openai" })
-
-    expect(MessageV2.APIError.isInstance(result)).toBe(true)
-    expect((result as MessageV2.APIError).data.isRetryable).toBe(true)
-    expect((result as MessageV2.APIError).data.message).toInclude("received from peer")
-    expect((result as MessageV2.APIError).data.metadata?.code).toBe("internal_server_error")
-    expect((result as MessageV2.APIError).data.metadata?.type).toBe("server_error")
-  })
-
-  test("does not retry gateway-style context-length errors in TypeValidationError.value", () => {
-    const error = new TypeValidationError({
-      value: {
-        error: {
-          message: "This model's maximum context length is 8192 tokens.",
-          type: "invalid_request_error",
-          code: "context_length_exceeded",
-        },
-      },
-      cause: new Error("schema mismatch"),
-    })
-
-    const result = MessageV2.fromError(error, { providerID: "openai" })
-
-    expect(MessageV2.APIError.isInstance(result)).toBe(true)
-    expect((result as MessageV2.APIError).data.isRetryable).toBe(false)
+    const result = MessageV2.fromError(error, { providerID: "openai" }) as MessageV2.APIError
+    expect(result.data.isRetryable).toBe(true)
   })
 })

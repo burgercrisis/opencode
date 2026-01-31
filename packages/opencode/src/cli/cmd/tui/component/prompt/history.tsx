@@ -20,7 +20,6 @@ export type PromptInfo = {
             end: number
             value: string
           }
-          expanded?: boolean
         }
       })
   )[]

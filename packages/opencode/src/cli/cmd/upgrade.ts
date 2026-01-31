@@ -9,7 +9,7 @@ export const UpgradeCommand = {
   builder: (yargs: Argv) => {
     return yargs
       .positional("target", {
-        describe: "version to upgrade to, for ex '1.0.100' or 'v1.0.100'",
+        describe: "version to upgrade to, for ex '0.1.48' or 'v0.1.48'",
         type: "string",
       })
       .option("method", {
@@ -57,6 +57,7 @@ export const UpgradeCommand = {
     if (err) {
       spinner.stop("Upgrade failed", 1)
       if (err instanceof Installation.UpgradeFailedError) {
+        // necessary because choco only allows install/upgrade in elevated terminals
         if (method === "choco" && err.data.stderr.includes("not running from an elevated command shell")) {
           prompts.log.error("Please run the terminal as Administrator and try again")
         } else {

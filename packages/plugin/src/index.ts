@@ -4,7 +4,7 @@ import type {
   Project,
   Model,
   Provider,
-  PermissionRequest,
+  Permission,
   UserMessage,
   Message,
   Part,
@@ -203,7 +203,7 @@ export interface Hooks {
     },
   ) => Promise<void>
   "experimental.chat.system.transform"?: (
-    input: { sessionID: string },
+    input: { sessionID?: string; model: Model },
     output: {
       system: string[]
     },
@@ -223,15 +223,4 @@ export interface Hooks {
     input: { sessionID: string; messageID: string; partID: string },
     output: { text: string },
   ) => Promise<void>
-  /**
-   * Register custom plugin commands (accessible via /command in TUI)
-   */
-  "plugin.command"?: {
-    [key: string]: {
-      description: string
-      aliases?: string[]
-      sessionOnly?: boolean
-      execute(input: { sessionID?: string; client: ReturnType<typeof createOpencodeClient> }): Promise<void>
-    }
-  }
 }

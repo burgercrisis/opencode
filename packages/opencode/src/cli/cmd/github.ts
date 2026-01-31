@@ -916,14 +916,14 @@ export const GithubRunCommand = cmd({
         })
 
         // result should always be assistant just satisfying type checker
-        if (result.info.role === "assistant" && result.info.error) {
-          console.error("Agent error:", result.info.error)
+        if ((result as any).info?.role === "assistant" && (result as any).info?.error) {
+          console.error("Agent error:", (result as any).info.error)
           throw new Error(
-            `${result.info.error.name}: ${"message" in result.info.error ? result.info.error.message : ""}`,
+            `${(result as any).info.error.name}: ${"message" in (result as any).info.error ? (result as any).info.error.message : ""}`,
           )
         }
 
-        const text = extractResponseText(result.parts)
+        const text = extractResponseText((result as any).parts)
         if (text) return text
 
         // No text part (tool-only or reasoning-only) - ask agent to summarize
@@ -945,14 +945,14 @@ export const GithubRunCommand = cmd({
           ],
         })
 
-        if (summary.info.role === "assistant" && summary.info.error) {
-          console.error("Summary agent error:", summary.info.error)
+        if ((summary as any).info.role === "assistant" && (summary as any).info.error) {
+          console.error("Summary agent error:", (summary as any).info.error)
           throw new Error(
-            `${summary.info.error.name}: ${"message" in summary.info.error ? summary.info.error.message : ""}`,
+            `${(summary as any).info.error.name}: ${"message" in (summary as any).info.error ? (summary as any).info.error.message : ""}`,
           )
         }
 
-        const summaryText = extractResponseText(summary.parts)
+        const summaryText = extractResponseText((summary as any).parts)
         if (!summaryText) {
           throw new Error("Failed to get summary from agent")
         }

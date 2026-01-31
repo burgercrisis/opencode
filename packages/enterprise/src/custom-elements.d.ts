@@ -1,1 +1,1 @@
-export * from "../../ui/src/custom-elements.d.ts"
+/// <reference types="../../ui/src/custom-elements.d.ts" />

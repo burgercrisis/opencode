@@ -9,7 +9,7 @@ import { assertExternalDirectory } from "./external-directory"
 import { Filesystem } from "../util/filesystem"
 
 const MAX_LINE_LENGTH = 2000
-const MATCH_LIMIT = 100
+const MATCH_LIMIT = 250
 
 export const GrepTool = Tool.define("grep", {
   description: DESCRIPTION,
@@ -19,23 +19,22 @@ export const GrepTool = Tool.define("grep", {
     include: z.string().optional().describe('File pattern to include in the search (e.g. "*.js", "*.{ts,tsx}")'),
   }),
   async execute(params, ctx) {
-    if (!params.pattern) {
-      throw new Error("pattern is required")
-    }
+    const pattern = params.pattern || (() => { throw new Error("pattern is required") })()
 
     await ctx.ask({
       permission: "grep",
-      patterns: [params.pattern],
+      patterns: [pattern],
       always: ["*"],
       metadata: {
-        pattern: params.pattern,
+        pattern,
         path: params.path,
         include: params.include,
       },
     })
 
-    let searchPath = params.path ?? Instance.directory
-    searchPath = path.isAbsolute(searchPath) ? Filesystem.nativePath(searchPath) : Filesystem.resolvePath(Instance.directory, searchPath)
+    const searchPath = params.path
+      ? (path.isAbsolute(params.path) ? Filesystem.nativePath(params.path) : Filesystem.resolvePath(Instance.directory, params.path))
+      : Instance.directory
     await assertExternalDirectory(ctx, searchPath, { kind: "directory" })
 
     const rgPath = await Ripgrep.filepath()
@@ -46,134 +45,119 @@ export const GrepTool = Tool.define("grep", {
       "--no-messages",
       "--field-match-separator=|",
       "--regexp",
-      params.pattern,
+      pattern,
+      ...(params.include ? ["--glob", params.include] : []),
+      searchPath,
     ]
-    if (params.include) {
-      args.push("--glob", params.include)
-    }
-    args.push(searchPath)
 
     const proc = Bun.spawn([rgPath, ...args], {
       stdout: "pipe",
       stderr: "pipe",
+      signal: ctx.abort,
     })
 
     const reader = proc.stdout.getReader()
     const decoder = new TextDecoder()
-    let buffer = ""
-    const matches: Array<{
+
+    interface Match {
       path: string
       lineNum: number
       lineText: string
-    }> = []
-    let truncated = false
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split("\n")
-        buffer = lines.pop() || ""
-
-        for (const line of lines) {
-          if (!line) continue
-          if (matches.length >= MATCH_LIMIT) {
-            truncated = true
-            break
-          }
-
-          const [filePath, lineNumStr, ...lineTextParts] = line.split("|")
-          if (!filePath || !lineNumStr || lineTextParts.length === 0) continue
-
-          matches.push({
-            path: filePath,
-            lineNum: parseInt(lineNumStr, 10),
-            lineText: lineTextParts.join("|"),
-          })
-        }
-
-        if (truncated) break
-      }
-
-      if (!truncated && buffer) {
-        const [filePath, lineNumStr, ...lineTextParts] = buffer.split("|")
-        if (filePath && lineNumStr && lineTextParts.length > 0) {
-          matches.push({
-            path: filePath,
-            lineNum: parseInt(lineNumStr, 10),
-            lineText: lineTextParts.join("|"),
-          })
-        }
-      }
-    } finally {
-      if (truncated) proc.kill()
-      reader.releaseLock()
+      modTime?: number
     }
 
+    const read = async (acc: Match[], buffer: string): Promise<{ matches: Match[]; truncated: boolean }> => {
+      const { done, value } = await reader.read()
+      
+      const processDone = () => {
+        const remaining = buffer.split("|")
+        const match = remaining.length >= 3 ? {
+          path: remaining[0],
+          lineNum: parseInt(remaining[1], 10),
+          lineText: remaining.slice(2).join("|"),
+        } : null
+        return {
+          matches: match ? [...acc, match].slice(0, MATCH_LIMIT) : acc,
+          truncated: acc.length >= MATCH_LIMIT || (match !== null && acc.length + 1 > MATCH_LIMIT),
+        }
+      }
+
+      if (done) return processDone()
+
+      const content = buffer + decoder.decode(value, { stream: true })
+      const lines = content.split(/\r?\n/)
+      const last = lines.pop() || ""
+
+      const newMatches = lines
+        .filter(Boolean)
+        .map((line) => {
+          const [filePath, lineNumStr, ...lineTextParts] = line.split("|")
+          return filePath && lineNumStr && lineTextParts.length > 0
+            ? {
+                path: filePath,
+                lineNum: parseInt(lineNumStr, 10),
+                lineText: lineTextParts.join("|"),
+              }
+            : null
+        })
+        .filter((m): m is Match => m !== null)
+
+      const total = [...acc, ...newMatches]
+      if (total.length >= MATCH_LIMIT) {
+        proc.kill()
+        return { matches: total.slice(0, MATCH_LIMIT), truncated: true }
+      }
+      return read(total, last)
+    }
+
+    const { matches: rawMatches, truncated } = await read([], "").finally(() => reader.releaseLock())
     const errorOutput = await new Response(proc.stderr).text()
     const exitCode = await proc.exited
 
-    // Exit codes: 0 = matches found, 1 = no matches, 2 = errors (but may still have matches)
-    // With --no-messages, we suppress error output but still get exit code 2 for broken symlinks etc.
-    // Only return no matches if exit code 1 and no matches were found
-    if (exitCode === 1 && matches.length === 0) {
-      return {
-        title: params.pattern,
-        metadata: { matches: 0, truncated: false },
-        output: "No files found",
-      }
-    }
-
-    // Handle errors: fail if exit code indicates failure and we haven't truncated
-    if (exitCode !== 0 && exitCode !== 1 && exitCode !== 2 && !truncated) {
-      throw new Error(`ripgrep failed: ${errorOutput}`)
-    }
-
-    const hasErrors = exitCode === 2
-
-    if (matches.length === 0) {
-      return {
-        title: params.pattern,
-        metadata: { matches: 0, truncated: false },
-        output: "No files found",
-      }
-    }
-
-    const outputLines = [`Found ${matches.length} matches`]
-
-    let currentFile = ""
-    for (const match of matches) {
-      if (currentFile !== match.path) {
-        if (currentFile !== "") {
-          outputLines.push("")
+    return ((exitCode === 1 && rawMatches.length === 0) || rawMatches.length === 0)
+      ? {
+          title: pattern,
+          metadata: { matches: 0, truncated: false },
+          output: "No files found",
         }
-        currentFile = match.path
-        outputLines.push(`${match.path}:`)
-      }
-      const truncatedLineText =
-        match.lineText.length > MAX_LINE_LENGTH ? match.lineText.substring(0, MAX_LINE_LENGTH) + "..." : match.lineText
-      outputLines.push(`  Line ${match.lineNum}: ${truncatedLineText}`)
-    }
+      : (exitCode !== 0 && exitCode !== 1 && exitCode !== 2 && !truncated)
+        ? (() => { throw new Error(`ripgrep failed: ${errorOutput}`) })()
+        : (async () => {
+            const hasErrors = exitCode === 2
+            const uniqueFiles = [...new Set(rawMatches.map((m) => m.path))]
+            
+            const fileStats = await uniqueFiles.reduce(async (accPromise, filePath) => {
+              const acc = await accPromise
+              const stats = await Bun.file(filePath).stat().catch(() => null)
+              return acc.set(filePath, stats?.mtime.getTime() ?? 0)
+            }, Promise.resolve(new Map<string, number>()))
 
-    if (truncated) {
-      outputLines.push("")
-      outputLines.push("(Results are truncated. Consider using a more specific path or pattern.)")
-    }
+            const matches = rawMatches
+              .map((m) => ({ ...m, modTime: fileStats.get(m.path) ?? 0 }))
+              .sort((a, b) => b.modTime - a.modTime)
 
-    if (hasErrors) {
-      outputLines.push("")
-      outputLines.push("(Some paths were inaccessible and skipped)")
-    }
+            const formattedMatches = matches.reduce((acc, match, i) => {
+              const prev = matches[i - 1]
+              const fileHeader = !prev || prev.path !== match.path ? [`${acc.length > 0 ? "\n" : ""}${match.path}:`] : []
+              const truncatedLineText = match.lineText.length > MAX_LINE_LENGTH
+                ? match.lineText.substring(0, MAX_LINE_LENGTH) + "..."
+                : match.lineText
+              return acc.concat(fileHeader, `  Line ${match.lineNum}: ${truncatedLineText}`)
+            }, [] as string[])
 
-    return {
-      title: params.pattern,
-      metadata: {
-        matches: matches.length,
-        truncated,
-      },
-      output: outputLines.join("\n"),
-    }
+            return {
+              title: pattern,
+              metadata: {
+                matches: matches.length,
+                truncated,
+              },
+              output: [
+                `Found ${matches.length} matches`,
+                ...formattedMatches,
+                ...(truncated ? ["", "(Results are truncated. Consider using a more specific path or pattern.)"] : []),
+                ...(hasErrors ? ["", "(Some paths were inaccessible and skipped)"] : []),
+              ].join("\n"),
+            }
+          })()
   },
 })

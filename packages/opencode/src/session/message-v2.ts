@@ -176,6 +176,8 @@ export namespace MessageV2 {
       })
       .optional(),
     command: z.string().optional(),
+  }).meta({
+    ref: "SubtaskPart",
   })
   export type SubtaskPart = z.infer<typeof SubtaskPart>
 
@@ -208,6 +210,7 @@ export namespace MessageV2 {
       input: z.number(),
       output: z.number(),
       reasoning: z.number(),
+      sent: z.number().optional(),
       cache: z.object({
         read: z.number(),
         write: z.number(),
@@ -322,8 +325,11 @@ export namespace MessageV2 {
     system: z.string().optional(),
     tools: z.record(z.string(), z.boolean()).optional(),
     variant: z.string().optional(),
-    sentEstimate: z.number().optional(),
-    contextEstimate: z.number().optional(),
+    tokens: z
+      .object({
+        sent: z.number().optional(),
+      })
+      .optional(),
   }).meta({
     ref: "UserMessage",
   })
@@ -382,15 +388,12 @@ export namespace MessageV2 {
       input: z.number(),
       output: z.number(),
       reasoning: z.number(),
+      sent: z.number().optional(),
       cache: z.object({
         read: z.number(),
         write: z.number(),
       }),
     }),
-    outputEstimate: z.number().optional(),
-    reasoningEstimate: z.number().optional(),
-    contextEstimate: z.number().optional(),
-    sentEstimate: z.number().optional(),
     finish: z.string().optional(),
   }).meta({
     ref: "AssistantMessage",
@@ -637,7 +640,7 @@ export namespace MessageV2 {
       sessionID: Identifier.schema("session"),
       messageID: Identifier.schema("message"),
     }),
-    async (input) => {
+    async (input): Promise<WithParts> => {
       return {
         info: await Storage.read<MessageV2.Info>(["message", input.sessionID, input.messageID]),
         parts: await parts(input.messageID),
@@ -660,6 +663,13 @@ export namespace MessageV2 {
     }
     result.reverse()
     return result
+  }
+
+  const isOpenAiErrorRetryable = (e: APICallError) => {
+    const status = e.statusCode
+    if (!status) return e.isRetryable
+    // openai sometimes returns 404 for models that are actually available
+    return status === 404 || e.isRetryable
   }
 
   export function fromError(e: unknown, ctx: { providerID: string }) {
@@ -730,7 +740,7 @@ export namespace MessageV2 {
           {
             message,
             statusCode: e.statusCode,
-            isRetryable: e.isRetryable,
+            isRetryable: ctx.providerID.startsWith("openai") ? isOpenAiErrorRetryable(e) : e.isRetryable,
             responseHeaders: e.responseHeaders,
             responseBody: e.responseBody,
             metadata,

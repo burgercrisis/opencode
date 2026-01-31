@@ -1,15 +1,18 @@
 import { realpathSync } from "fs"
-import { homedir } from "os"
+import path, { 
+  dirname as pathDirname, 
+  join as pathJoin, 
+  relative as pathRelative, 
+  isAbsolute as pathIsAbsolute, 
+  resolve as pathResolve, 
+  normalize as pathNormalize 
+} from "path"
 import { Flag } from "@/flag/flag"
-import path from "path"
+
+import { normalize as _normalize } from "@opencode-ai/util/path"
 
 export namespace Filesystem {
-  export function expanduser(p: string): string {
-    if (p === "~") return homedir()
-    if (p.startsWith("~/")) return join(homedir(), p.slice(2))
-    return p
-  }
-
+  export const normalize = _normalize
   export const exists = (p: string) =>
     Bun.file(p)
       .stat()
@@ -21,6 +24,7 @@ export namespace Filesystem {
       .stat()
       .then((s) => s.isDirectory())
       .catch(() => false)
+
   /**
    * On Windows, normalize a path to its canonical casing using the filesystem.
    * This is needed because Windows paths are case-insensitive but LSP servers
@@ -35,7 +39,36 @@ export namespace Filesystem {
     }
   }
 
-  
+  /**
+   * On Windows, convert a path to its shell-native format.
+   * This is needed to match worktree path (`git rev-parse --show-toplevel`)
+   * and escaping issues in MSYS based shells (e.g. git bash).
+   */
+  export function nativePath(p: string): string {
+    const normalized = normalize(p)
+    if (process.platform !== "win32") return normalized
+    if (Flag.OPENCODE_EXPERIMENTAL_MSYS_PATHS) {
+      return normalized
+    }
+    return normalized.replace(/\//g, "\\")
+  }
+
+  export function relativePath(from: string, to: string) {
+    return nativePath(path.relative(nativePath(from), nativePath(to)))
+  }
+
+  export function resolvePath(...segments: string[]) {
+    return nativePath(path.resolve(...segments))
+  }
+
+  export function join(...segments: string[]) {
+    return nativePath(path.join(...segments))
+  }
+
+  export function dirname(p: string) {
+    return nativePath(path.dirname(p))
+  }
+
   /**
    * Cross-platform path normalization for git operations.
    * Ensures consistent path handling across Windows, Linux, and Mac.
@@ -46,52 +79,36 @@ export namespace Filesystem {
    */
   export function normalizeGitPath(p: string, forGit: boolean = true): string {
     if (!p) return p
-
+    
     // Resolve to absolute path to eliminate relative components
-    let normalized = path.isAbsolute(p) ? p : path.resolve(p)
-
+    const absolute = pathIsAbsolute(p) ? p : pathResolve(p)
+    
     // Normalize path separators for consistency
-    normalized = path.normalize(normalized)
+    const normalized = pathNormalize(absolute)
     
     // For git commands, always use forward slashes regardless of platform
     // Git internally always uses forward slashes
     if (forGit) {
-      normalized = normalized.replace(/\\/g, "/")
+      return normalized.replace(/\\/g, "/")
     }
     
     return normalized
   }
   
   /**
-   * On Windows, convert a path to its shell-native format.
-   * This is needed to match worktree path (`git rev-parse --show-toplevel`)
-   * and escaping issues in MSYS based shells (e.g. git bash).
-   */
-  export function nativePath(p: string): string {
-    if (process.platform !== "win32") return p
-    if (Flag.OPENCODE_EXPERIMENTAL_MSYS_PATHS) {
-      // Convert MSYS format /c/foo to C:/foo and normalize all separators to forward slashes
-      return p.replace(/^\/([a-zA-Z])\//, (_, d) => `${d.toUpperCase()}:/`).replace(/\\+/g, "/")
-    }
-    // Convert to backslashes for native Windows
-    // First handle MSYS format /c/foo -> C:\foo, then convert all forward slashes
-    return p.replace(/^\/([a-zA-Z])\//, (_, d) => `${d.toUpperCase()}:\\`).replace(/\//g, "\\")
-  }
-
-  /**
    * Normalize path for platform-native file operations.
    * Uses backslashes on Windows, forward slashes elsewhere.
    */
-  export function normalizeNativePath(p: string): string {
-    if (!p) return p
-
-    const normalized = path.normalize(p)
-
+  export function normalizeNativePath(path: string): string {
+    if (!path) return path
+    
+    const normalized = pathNormalize(path)
+    
     // Convert to platform-native separators
     if (process.platform === "win32") {
       return normalized.replace(/\//g, "\\")
     }
-
+    
     return normalized
   }
   
@@ -99,23 +116,22 @@ export namespace Filesystem {
    * Get canonical project directory path for consistent project ID generation.
    * Handles different path representations (relative, absolute, network paths).
    */
-  export function getCanonicalPath(p: string): string {
-    if (!p) return p
-
+  export function getCanonicalPath(path: string): string {
+    if (!path) return path
+    
     try {
       // Resolve to absolute path and get real path (resolves symlinks, case, etc.)
-      const absolute = path.resolve(p)
-
+      const absolute = pathResolve(path)
+      
       if (process.platform === "win32") {
         // On Windows, use realpath to get canonical casing and resolve symlinks
         return realpathSync.native(absolute)
-      } else {
-        // On Unix systems, realpath also resolves symlinks
-        return realpathSync(absolute)
       }
+      // On Unix systems, realpath also resolves symlinks
+      return realpathSync(absolute)
     } catch {
       // If realpath fails, fall back to absolute normalized path
-      return path.resolve(p)
+      return pathResolve(path)
     }
   }
   
@@ -130,6 +146,9 @@ export namespace Filesystem {
     if (filename.includes('\0')) return false
     if (/[\x00-\x1f\x7f]/.test(filename)) return false // Control characters
     
+    // Check for path separators (filename should not be a path)
+    if (/[\\/]/.test(filename)) return false
+
     // Check length limits (255 is common limit)
     if (filename.length > 255) return false
     
@@ -159,87 +178,46 @@ export namespace Filesystem {
    * Check if a file is likely binary based on its content.
    * Returns true if file appears to be binary data.
    */
-  export async function isBinaryFile(filepath: string): Promise<boolean> {
-    try {
-      const file = Bun.file(filepath)
-      if (!(await file.exists())) return true // Fail safe
-      
-      const buffer = await file.arrayBuffer()
-      const bytes = new Uint8Array(buffer)
-      
-      // Check first 8000 bytes for binary indicators
-      let nullCount = 0
-      const sampleSize = Math.min(bytes.length, 8000)
-      
-      for (let i = 0; i < sampleSize; i++) {
-        // Null bytes are strong binary indicators
-        if (bytes[i] === 0) {
-          nullCount++
-          if (nullCount > 2) return true // More than 2 null bytes = binary
-        }
-        
-        // Check for high concentration of non-printable characters
-        if (bytes[i] < 32 && bytes[i] !== 9 && bytes[i] !== 10 && bytes[i] !== 13) {
-          // Allow tabs, newlines, carriage returns
-          return true
-        }
+  export async function isBinaryFile(p: string): Promise<boolean> {
+    const file = Bun.file(p)
+    if (!(await file.exists())) return true // Fail safe
+    
+    const bytes = new Uint8Array(await file.arrayBuffer())
+    
+    // Check first 8000 bytes for binary indicators
+    const sample = Math.min(bytes.length, 8000)
+    
+    const check = (i: number, nulls: number): boolean => {
+      if (i >= sample) return false
+      if (bytes[i] === 0) {
+        if (nulls + 1 > 2) return true
+        return check(i + 1, nulls + 1)
       }
-      
-      return false
-    } catch {
-      return true // Fail safe - assume binary if we can't read
+      if (bytes[i] < 32 && bytes[i] !== 9 && bytes[i] !== 10 && bytes[i] !== 13) return true
+      return check(i + 1, nulls)
     }
+    
+    return check(0, 0)
   }
   
   /**
    * Validate that a filepath is safe and within project boundaries.
    * Prevents directory traversal attacks and validates path format.
    */
-  export function validateFilepath(filepath: string, projectRoot: string): { valid: boolean; reason?: string } {
-    if (!filepath) {
-      return { valid: false, reason: 'Empty filepath' }
-    }
+  export function validateFilepath(p: string, root: string): { valid: boolean; reason?: string } {
+    if (!p) return { valid: false, reason: 'Empty filepath' }
+    if (p.includes('\0')) return { valid: false, reason: 'Null bytes in filepath' }
     
-    // Check for null bytes
-    if (filepath.includes('\0')) {
-      return { valid: false, reason: 'Null bytes in filepath' }
-    }
+    const abs = pathIsAbsolute(p) ? p : pathResolve(root, p)
+    if (!contains(root, abs)) return { valid: false, reason: 'Path outside project directory' }
     
-    // Convert to absolute path
-    const absolutePath = path.isAbsolute(filepath) ? filepath : path.resolve(projectRoot, filepath)
-
-    // Check if path is within project root (prevent directory traversal)
-    if (!contains(absolutePath, projectRoot)) {
-      return { valid: false, reason: 'Path outside project directory' }
-    }
-
-    // Check for symbolic link loops (simplified check)
-    if (filepath.includes('..')) {
-      // Normalize and check again
-      const normalized = path.normalize(absolutePath)
-      if (!contains(normalized, projectRoot)) {
-        return { valid: false, reason: 'Symbolic link or path traversal detected' }
-      }
+    if (p.includes('..') && !contains(root, pathNormalize(abs))) {
+      return { valid: false, reason: 'Symbolic link or path traversal detected' }
     }
     
     return { valid: true }
   }
-  
-  export function relativePath(from: string, to: string) {
-    return nativePath(path.relative(nativePath(from), nativePath(to)))
-  }
 
-  export function resolvePath(...segments: string[]) {
-    return nativePath(path.resolve(...segments))
-  }
-
-  export function join(...segments: string[]) {
-    return nativePath(path.join(...segments))
-  }
-
-  export function dirname(p: string) {
-    return nativePath(path.dirname(p))
-  }
   export function overlaps(a: string, b: string) {
     const relA = relativePath(a, b)
     const relB = relativePath(b, a)
@@ -251,58 +229,56 @@ export namespace Filesystem {
     return !/^\.\.|.:/.test(path)
   }
 
-  export async function findUp(target: string, start: string, stop?: string) {
-    let current = start
-    const result = []
-    while (true) {
-      const search = join(current, target)
-      if (await exists(search)) result.push(search)
-      if (stop === current) break
-      const parent = dirname(current)
-      if (parent === current) break
-      current = parent
+  export async function findUp(target: string, start: string, stop?: string): Promise<string[]> {
+    const find = async (curr: string, acc: string[]): Promise<string[]> => {
+      const search = join(curr, target)
+      const nextAcc = (await exists(search)) ? [...acc, search] : acc
+      if (stop === curr) return nextAcc
+      const next = dirname(curr)
+      if (next === curr) return nextAcc
+      return find(next, nextAcc)
     }
-    return result
+    return find(start, [])
   }
 
   export async function* up(options: { targets: string[]; start: string; stop?: string }) {
     const { targets, start, stop } = options
-    let current = start
-    while (true) {
-      for (const target of targets) {
-        const search = join(current, target)
-        if (await exists(search)) yield search
-      }
-      if (stop === current) break
-      const parent = dirname(current)
-      if (parent === current) break
-      current = parent
+    const iterate = async function* (curr: string): AsyncGenerator<string> {
+      const matches = await Promise.all(
+        targets.map(async (target) => {
+          const search = join(curr, target)
+          return (await exists(search)) ? search : undefined
+        }),
+      )
+
+      yield* matches.filter((x): x is string => !!x)
+
+      if (stop === curr) return
+      const next = dirname(curr)
+      if (next === curr) return
+      yield* iterate(next)
     }
+    yield* iterate(start)
   }
 
-  export async function globUp(pattern: string, start: string, stop?: string) {
-    let current = start
-    const result = []
-    while (true) {
-      try {
-        const glob = new Bun.Glob(pattern)
-        for await (const match of glob.scan({
-          cwd: current,
+  export async function globUp(pattern: string, start: string, stop?: string): Promise<string[]> {
+    const glob = new Bun.Glob(pattern)
+    const scan = async (curr: string, acc: string[]): Promise<string[]> => {
+      const matches = await Array.fromAsync(
+        glob.scan({
+          cwd: curr,
           absolute: true,
           onlyFiles: true,
           followSymlinks: true,
           dot: true,
-        })) {
-          result.push(match)
-        }
-      } catch {
-        // Skip invalid glob patterns
-      }
-      if (stop === current) break
-      const parent = dirname(current)
-      if (parent === current) break
-      current = parent
+        }),
+      )
+      const nextAcc = [...acc, ...matches]
+      if (stop === curr) return nextAcc
+      const next = dirname(curr)
+      if (next === curr) return nextAcc
+      return scan(next, nextAcc)
     }
-    return result
+    return scan(start, [])
   }
 }

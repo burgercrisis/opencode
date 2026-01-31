@@ -1,3 +1,5 @@
+import { sep } from "node:path"
+
 export namespace FileIgnore {
   const FOLDERS = new Set([
     "node_modules",
@@ -62,19 +64,18 @@ export namespace FileIgnore {
       whitelist?: Bun.Glob[]
     },
   ) {
-    const normalized = filepath.replace(/\\/g, '/');
     for (const glob of opts?.whitelist || []) {
-      if (glob.match(normalized)) return false
+      if (glob.match(filepath)) return false
     }
 
-    const parts = normalized.split('/')
+    const parts = filepath.split(sep)
     for (let i = 0; i < parts.length; i++) {
       if (FOLDERS.has(parts[i])) return true
     }
 
     const extra = opts?.extra || []
     for (const glob of [...FILE_GLOBS, ...extra]) {
-      if (glob.match(normalized)) return true
+      if (glob.match(filepath)) return true
     }
 
     return false

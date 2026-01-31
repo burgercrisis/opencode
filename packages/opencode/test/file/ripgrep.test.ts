@@ -73,7 +73,7 @@ test("tree respects limit and shows truncation", async () => {
       await fs.mkdir(path.join(dir, "src"))
       // Create more files than the limit
       for (let i = 1; i <= 10; i++) {
-        await fs.writeFile(path.join(dir, "src", `file${i.toString().padStart(2, "0")}.ts`), "")
+        await fs.writeFile(path.join(dir, "src", `file${i.toString().padStart(2, "0")}.ts`), "")   
       }
     },
   })

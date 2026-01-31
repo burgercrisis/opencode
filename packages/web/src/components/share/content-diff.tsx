@@ -1,5 +1,4 @@
-import { parsePatch } from "diff"
-import { createMemo } from "solid-js"
+import { createMemo, createResource, For, Show } from "solid-js"
 import { ContentCode } from "./content-code"
 import styles from "./content-diff.module.css"
 
@@ -15,99 +14,103 @@ interface Props {
 }
 
 export function ContentDiff(props: Props) {
-  const rows = createMemo(() => {
-    const diffRows: DiffRow[] = []
+  const [rows] = createResource(
+    () => props.diff,
+    async (diff) => {
+      const diffRows: DiffRow[] = []
 
-    try {
-      const patches = parsePatch(props.diff)
+      try {
+        const { parsePatch } = await import("diff")
+        const patches = parsePatch(diff)
 
-      for (const patch of patches) {
-        for (const hunk of patch.hunks) {
-          const lines = hunk.lines
-          let i = 0
+        for (const patch of patches) {
+          for (const hunk of patch.hunks) {
+            const lines = hunk.lines
+            let i = 0
 
-          while (i < lines.length) {
-            const line = lines[i]
-            const content = line.slice(1)
-            const prefix = line[0]
+            while (i < lines.length) {
+              const line = lines[i]
+              const content = line.slice(1)
+              const prefix = line[0]
 
-            if (prefix === "-") {
-              // Look ahead for consecutive additions to pair with removals
-              const removals: string[] = [content]
-              let j = i + 1
+              if (prefix === "-") {
+                // Look ahead for consecutive additions to pair with removals
+                const removals: string[] = [content]
+                let j = i + 1
 
-              // Collect all consecutive removals
-              while (j < lines.length && lines[j][0] === "-") {
-                removals.push(lines[j].slice(1))
-                j++
-              }
-
-              // Collect all consecutive additions that follow
-              const additions: string[] = []
-              while (j < lines.length && lines[j][0] === "+") {
-                additions.push(lines[j].slice(1))
-                j++
-              }
-
-              // Pair removals with additions
-              const maxLength = Math.max(removals.length, additions.length)
-              for (let k = 0; k < maxLength; k++) {
-                const hasLeft = k < removals.length
-                const hasRight = k < additions.length
-
-                if (hasLeft && hasRight) {
-                  // Replacement - left is removed, right is added
-                  diffRows.push({
-                    left: removals[k],
-                    right: additions[k],
-                    type: "modified",
-                  })
-                } else if (hasLeft) {
-                  // Pure removal
-                  diffRows.push({
-                    left: removals[k],
-                    right: "",
-                    type: "removed",
-                  })
-                } else if (hasRight) {
-                  // Pure addition - only create if we actually have content
-                  diffRows.push({
-                    left: "",
-                    right: additions[k],
-                    type: "added",
-                  })
+                // Collect all consecutive removals
+                while (j < lines.length && lines[j][0] === "-") {
+                  removals.push(lines[j].slice(1))
+                  j++
                 }
-              }
 
-              i = j
-            } else if (prefix === "+") {
-              // Standalone addition (not paired with removal)
-              diffRows.push({
-                left: "",
-                right: content,
-                type: "added",
-              })
-              i++
-            } else if (prefix === " ") {
-              diffRows.push({
-                left: content === "" ? " " : content,
-                right: content === "" ? " " : content,
-                type: "unchanged",
-              })
-              i++
-            } else {
-              i++
+                // Collect all consecutive additions that follow
+                const additions: string[] = []
+                while (j < lines.length && lines[j][0] === "+") {
+                  additions.push(lines[j].slice(1))
+                  j++
+                }
+
+                // Pair removals with additions
+                const maxLength = Math.max(removals.length, additions.length)
+                for (let k = 0; k < maxLength; k++) {
+                  const hasLeft = k < removals.length
+                  const hasRight = k < additions.length
+
+                  if (hasLeft && hasRight) {
+                    // Replacement - left is removed, right is added
+                    diffRows.push({
+                      left: removals[k],
+                      right: additions[k],
+                      type: "modified",
+                    })
+                  } else if (hasLeft) {
+                    // Pure removal
+                    diffRows.push({
+                      left: removals[k],
+                      right: "",
+                      type: "removed",
+                    })
+                  } else if (hasRight) {
+                    // Pure addition - only create if we actually have content
+                    diffRows.push({
+                      left: "",
+                      right: additions[k],
+                      type: "added",
+                    })
+                  }
+                }
+
+                i = j
+              } else if (prefix === "+") {
+                // Standalone addition (not paired with removal)
+                diffRows.push({
+                  left: "",
+                  right: content,
+                  type: "added",
+                })
+                i++
+              } else if (prefix === " ") {
+                diffRows.push({
+                  left: content === "" ? " " : content,
+                  right: content === "" ? " " : content,
+                  type: "unchanged",
+                })
+                i++
+              } else {
+                i++
+              }
             }
           }
         }
+      } catch (error) {
+        console.error("Failed to parse patch:", error)
+        return []
       }
-    } catch (error) {
-      console.error("Failed to parse patch:", error)
-      return []
-    }
 
-    return diffRows
-  })
+      return diffRows
+    },
+  )
 
   const mobileRows = createMemo(() => {
     const mobileBlocks: {
@@ -115,6 +118,7 @@ export function ContentDiff(props: Props) {
       lines: string[]
     }[] = []
     const currentRows = rows()
+    if (!currentRows) return []
 
     let i = 0
     while (i < currentRows.length) {
@@ -159,30 +163,49 @@ export function ContentDiff(props: Props) {
 
   return (
     <div class={styles.root}>
-      <div data-component="desktop">
-        {rows().map((r) => (
-          <div data-component="diff-row" data-type={r.type}>
-            <div data-slot="before" data-diff-type={r.type === "removed" || r.type === "modified" ? "removed" : ""}>
-              <ContentCode code={r.left} flush lang={props.lang} />
+      <Show when={rows()}>
+        {(currentRows) => (
+          <>
+            <div data-component="desktop">
+              <For each={currentRows()}>
+                {(r) => (
+                  <div data-component="diff-row" data-type={r.type}>
+                    <div
+                      data-slot="before"
+                      data-diff-type={r.type === "removed" || r.type === "modified" ? "removed" : ""}
+                    >
+                      <ContentCode code={r.left} flush lang={props.lang} />
+                    </div>
+                    <div data-slot="after" data-diff-type={r.type === "added" || r.type === "modified" ? "added" : ""}>
+                      <ContentCode code={r.right} lang={props.lang} flush />
+                    </div>
+                  </div>
+                )}
+              </For>
             </div>
-            <div data-slot="after" data-diff-type={r.type === "added" || r.type === "modified" ? "added" : ""}>
-              <ContentCode code={r.right} lang={props.lang} flush />
-            </div>
-          </div>
-        ))}
-      </div>
 
-      <div data-component="mobile">
-        {mobileRows().map((block) => (
-          <div data-component="diff-block" data-type={block.type}>
-            {block.lines.map((line) => (
-              <div data-diff-type={block.type === "removed" ? "removed" : block.type === "added" ? "added" : ""}>
-                <ContentCode code={line} lang={props.lang} flush />
-              </div>
-            ))}
-          </div>
-        ))}
-      </div>
+            <div data-component="mobile">
+              <For each={mobileRows()}>
+                {(block) => (
+                  <div data-component="diff-block" data-type={block.type}>
+                    <For each={block.lines}>
+                      {(line) => (
+                        <div
+                          data-diff-type={
+                            block.type === "removed" ? "removed" : block.type === "added" ? "added" : ""
+                          }
+                        >
+                          <ContentCode code={line} lang={props.lang} flush />
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                )}
+              </For>
+            </div>
+          </>
+        )}
+      </Show>
     </div>
   )
 }

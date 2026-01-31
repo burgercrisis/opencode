@@ -3,3 +3,4 @@ exact = true
 
 [test]
 root = "./do-not-run-tests-from-root"
+

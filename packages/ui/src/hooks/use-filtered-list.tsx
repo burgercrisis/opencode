@@ -13,6 +13,7 @@ export interface FilteredListProps<T> {
   sortBy?: (a: T, b: T) => number
   sortGroupsBy?: (a: { category: string; items: T[] }, b: { category: string; items: T[] }) => number
   onSelect?: (value: T | undefined, index: number) => void
+  noInitialSelection?: boolean
 }
 
 export function useFilteredList<T>(props: FilteredListProps<T>) {
@@ -57,6 +58,7 @@ export function useFilteredList<T>(props: FilteredListProps<T>) {
   })
 
   function initialActive() {
+    if (props.noInitialSelection) return ""
     if (props.current) return props.key(props.current)
 
     const items = flat()
@@ -66,18 +68,22 @@ export function useFilteredList<T>(props: FilteredListProps<T>) {
 
   const list = createList({
     items: () => flat().map(props.key),
-    initialActive: props.current ? props.key(props.current) : flat()[0] ? props.key(flat()[0]) : undefined,
+    initialActive: initialActive(),
     loop: true,
   })
 
   const reset = () => {
+    if (props.noInitialSelection) {
+      list.setActive("")
+      return
+    }
     const all = flat()
     if (all.length === 0) return
     list.setActive(props.key(all[0]))
   }
 
   const onKeyDown = (event: KeyboardEvent) => {
-    if (event.key === "Enter" || event.key === "Tab") {
+    if (event.key === "Enter" && !event.isComposing) {
       event.preventDefault()
       const selectedIndex = flat().findIndex((x) => props.key(x) === list.active())
       const selected = flat()[selectedIndex]

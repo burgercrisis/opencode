@@ -69,7 +69,6 @@ export default function Share(props: { id: string; api: string; info: Session.In
   const messages = createMemo(() => Object.values(store.messages).toSorted((a, b) => a.id?.localeCompare(b.id)))
   const [connectionStatus, setConnectionStatus] = createSignal<[Status, string?]>(["disconnected", "Disconnected"])
   createEffect(() => {
-    if (!debug) return
     console.log(unwrap(store))
   })
 
@@ -99,14 +98,10 @@ export default function Share(props: { id: string; api: string; info: Session.In
 
       setConnectionStatus(["connecting"])
 
-      const url = new URL(apiUrl)
-      if (url.protocol === "http:") url.protocol = "ws:"
-      if (url.protocol === "https:") url.protocol = "wss:"
-      const root = url.pathname.endsWith("/") ? url.pathname.slice(0, -1) : url.pathname
-      url.pathname = root + "/share_poll"
-      url.searchParams.set("id", props.id)
-      const wsUrl = url.toString()
-      if (debug) console.log("Connecting to WebSocket URL:", wsUrl)
+      // Always use secure WebSocket protocol (wss)
+      const wsBaseUrl = apiUrl.replace(/^https?:\/\//, "wss://")
+      const wsUrl = `${wsBaseUrl}/share_poll?id=${props.id}`
+      console.log("Connecting to WebSocket URL:", wsUrl)
 
       // Create WebSocket connection
       socket = new WebSocket(wsUrl)
@@ -114,12 +109,12 @@ export default function Share(props: { id: string; api: string; info: Session.In
       // Handle connection opening
       socket.onopen = () => {
         setConnectionStatus(["connected"])
-        if (debug) console.log("WebSocket connection established")
+        console.log("WebSocket connection established")
       }
 
       // Handle incoming messages
       socket.onmessage = (event) => {
-        if (debug) console.log("WebSocket message received")
+        console.log("WebSocket message received")
         try {
           const d = JSON.parse(event.data)
           const [root, type, ...splits] = d.key.split("/")
@@ -157,7 +152,7 @@ export default function Share(props: { id: string; api: string; info: Session.In
 
       // Handle connection close and reconnection
       socket.onclose = (event) => {
-        if (debug) console.log(`WebSocket closed: ${event.code} ${event.reason}`)
+        console.log(`WebSocket closed: ${event.code} ${event.reason}`)
         setConnectionStatus(["reconnecting"])
 
         // Try to reconnect after 2 seconds
@@ -171,7 +166,7 @@ export default function Share(props: { id: string; api: string; info: Session.In
 
     // Clean up on component unmount
     onCleanup(() => {
-      if (debug) console.log("Cleaning up WebSocket connection")
+      console.log("Cleaning up WebSocket connection")
       if (socket) {
         socket.close()
       }

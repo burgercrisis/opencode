@@ -1,5 +1,6 @@
 import z from "zod"
 import path from "path"
+import os from "os"
 import { Config } from "../config/config"
 import { Instance } from "../project/instance"
 import { NamedError } from "@opencode-ai/util/error"
@@ -40,11 +41,10 @@ export namespace Skill {
 
   const OPENCODE_SKILL_GLOB = new Bun.Glob("{skill,skills}/**/SKILL.md")
   const CLAUDE_SKILL_GLOB = new Bun.Glob("skills/**/SKILL.md")
+  const SKILL_GLOB = new Bun.Glob("**/SKILL.md")
 
   export const state = Instance.state(async () => {
-    const skills: Record<string, Info> = {}
-
-    const addSkill = async (match: string) => {
+    const parseSkill = async (match: string): Promise<Info | undefined> => {
       const md = await ConfigMarkdown.parse(match).catch((err) => {
         const message = ConfigMarkdown.FrontmatterError.isInstance(err)
           ? err.data.message
@@ -54,66 +54,93 @@ export namespace Skill {
         return undefined
       })
 
-      if (!md) return
-
-      const parsed = Info.pick({ name: true, description: true }).safeParse(md.data)
-      if (!parsed.success) return
-
-      // Warn on duplicate skill names
-      if (skills[parsed.data.name]) {
-        log.warn("duplicate skill name", {
-          name: parsed.data.name,
-          existing: skills[parsed.data.name].location,
-          duplicate: match,
-        })
-      }
-
-      skills[parsed.data.name] = {
-        name: parsed.data.name,
-        description: parsed.data.description,
-        location: Filesystem.nativePath(match),
-      }
+      return md
+        ? (() => {
+            const parsed = Info.pick({ name: true, description: true }).safeParse(md.data)
+            return parsed.success
+              ? {
+                  name: parsed.data.name,
+                  description: parsed.data.description,
+                  location: match.replaceAll(path.sep, "/"),
+                }
+              : undefined
+          })()
+        : undefined
     }
 
-    // Scan .claude/skills/ directories (project-level)
-    const claudeDirs = await Array.fromAsync(
+    const claudeBaseDirs = await Array.fromAsync(
       Filesystem.up({
         targets: [".claude"],
         start: Instance.directory,
         stop: Instance.worktree,
       }),
     )
-    // Also include global ~/.claude/skills/
+
     const globalClaude = `${Global.Path.home}/.claude`
-    if (await Filesystem.isDir(globalClaude)) {
-      claudeDirs.push(globalClaude)
-    }
+    const claudeDirs = (await Filesystem.isDir(globalClaude)) ? [...claudeBaseDirs, globalClaude] : claudeBaseDirs
 
-    if (!Flag.OPENCODE_DISABLE_CLAUDE_CODE_SKILLS) {
-      for (const dir of claudeDirs) {
-        const matches = await Array.fromAsync(
-          CLAUDE_SKILL_GLOB.scan({
-            cwd: dir,
-            absolute: true,
-            onlyFiles: true,
-            followSymlinks: true,
-            dot: true,
-          }),
-        ).catch((error) => {
-          log.error("failed .claude directory scan for skills", { dir, error })
-          return []
+    const claudeMatches = !Flag.OPENCODE_DISABLE_CLAUDE_CODE_SKILLS
+      ? await claudeDirs.reduce(async (accPromise, dir) => {
+          const acc = await accPromise
+          const matches = await Array.fromAsync(
+            CLAUDE_SKILL_GLOB.scan({
+              cwd: dir,
+              absolute: true,
+              onlyFiles: true,
+              followSymlinks: true,
+              dot: true,
+            }),
+          ).catch((error) => {
+            log.error("failed .claude directory scan for skills", { dir, error })
+            return [] as string[]
+          })
+          return [...acc, ...matches]
+        }, Promise.resolve([] as string[]))
+      : []
+
+    const opencodeDirs = await Config.directories()
+    const opencodeMatches = await opencodeDirs.reduce(async (accPromise, dir) => {
+      const acc = await accPromise
+      const matches = await Array.fromAsync(
+        OPENCODE_SKILL_GLOB.scan({
+          cwd: dir,
+          absolute: true,
+          onlyFiles: true,
+          followSymlinks: true,
+        }),
+      )
+      return [...acc, ...matches]
+    }, Promise.resolve([] as string[]))
+
+    const skills: Record<string, Info> = {}
+
+    const addSkill = async (match: string) => {
+      const skill = await parseSkill(match)
+      if (!skill) return
+      if (skills[skill.name]) {
+        log.warn("duplicate skill name", {
+          name: skill.name,
+          existing: skills[skill.name].location,
+          duplicate: skill.location,
         })
-
-        for (const match of matches) {
-          await addSkill(match)
-        }
       }
+      skills[skill.name] = skill
     }
 
-    // Scan .opencode/skill/ directories
-    for (const dir of await Config.directories()) {
-      for await (const match of OPENCODE_SKILL_GLOB.scan({
-        cwd: dir,
+    const allMatches = [...claudeMatches, ...opencodeMatches]
+    await Promise.all(allMatches.map(addSkill))
+
+    // Scan additional skill paths from config
+    const config = await Config.get()
+    for (const skillPath of config.skills?.paths ?? []) {
+      const expanded = skillPath.startsWith("~/") ? path.join(os.homedir(), skillPath.slice(2)) : skillPath
+      const resolved = path.isAbsolute(expanded) ? expanded : path.join(Instance.directory, expanded)
+      if (!(await Filesystem.isDir(resolved))) {
+        log.warn("skill path not found", { path: resolved })
+        continue
+      }
+      for await (const match of SKILL_GLOB.scan({
+        cwd: resolved,
         absolute: true,
         onlyFiles: true,
         followSymlinks: true,

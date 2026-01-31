@@ -92,24 +92,24 @@ describe("Truncate", () => {
       expect(written).toBe(lines)
     })
 
-    test("suggests subagent_spawn tool when agent has subagent_spawn permission", async () => {
+    test("suggests Task tool when agent has task permission", async () => {
       const lines = Array.from({ length: 100 }, (_, i) => `line${i}`).join("\n")
-      const agent = { permission: [{ permission: "subagent_spawn", pattern: "*", action: "allow" as const }] }
+      const agent = { permission: [{ permission: "task", pattern: "*", action: "allow" as const }] }
       const result = await Truncate.output(lines, { maxLines: 10 }, agent as any)
 
       expect(result.truncated).toBe(true)
       expect(result.content).toContain("Grep")
-      expect(result.content).toContain("subagent_spawn tool")
+      expect(result.content).toContain("Task tool")
     })
 
-    test("omits subagent_spawn hint when agent lacks subagent_spawn permission", async () => {
+    test("omits Task tool hint when agent lacks task permission", async () => {
       const lines = Array.from({ length: 100 }, (_, i) => `line${i}`).join("\n")
-      const agent = { permission: [{ permission: "subagent_spawn", pattern: "*", action: "deny" as const }] }
+      const agent = { permission: [{ permission: "task", pattern: "*", action: "deny" as const }] }
       const result = await Truncate.output(lines, { maxLines: 10 }, agent as any)
 
       expect(result.truncated).toBe(true)
       expect(result.content).toContain("Grep")
-      expect(result.content).not.toContain("subagent_spawn tool")
+      expect(result.content).not.toContain("Task tool")
     })
 
     test("does not write file when not truncated", async () => {
