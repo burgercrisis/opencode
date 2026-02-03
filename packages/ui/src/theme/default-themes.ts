@@ -15,6 +15,7 @@ import carbonfoxThemeJson from "./themes/carbonfox.json"
 import gruvboxThemeJson from "./themes/gruvbox.json"
 import auraThemeJson from "./themes/aura.json"
 import customThemeJson from "./themes/custom-theme.json"
+import ipomoeaThemeJson from "./themes/ipomoea.json"
 export const oc1Theme = oc1ThemeJson as DesktopTheme
 export const tokyonightTheme = tokyoThemeJson as DesktopTheme
 export const draculaTheme = draculaThemeJson as DesktopTheme
@@ -31,6 +32,9 @@ export const carbonfoxTheme = carbonfoxThemeJson as DesktopTheme
 export const gruvboxTheme = gruvboxThemeJson as DesktopTheme
 export const auraTheme = auraThemeJson as DesktopTheme
 export const customTheme = customThemeJson as DesktopTheme
+export const ipomoeaTheme = ipomoeaThemeJson as DesktopTheme
+
+
 
 export const DEFAULT_THEMES: Record<string, DesktopTheme> = {
   "oc-1": oc1Theme,
@@ -49,4 +53,5 @@ export const DEFAULT_THEMES: Record<string, DesktopTheme> = {
   tokyonight: tokyonightTheme,
   vesper: vesperTheme,
   "custom-theme": customTheme,
+  ipomoea: ipomoeaTheme,
 }
