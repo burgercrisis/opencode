@@ -151,15 +151,10 @@
   }
 
   pre {
-    margin-top: 2rem;
-    margin-bottom: 2rem;
-    overflow: auto;
-
-    scrollbar-width: none;
-    &::-webkit-scrollbar {
-      display: none;
-    }
-  }
+  margin-top: 2rem;
+  margin-bottom: 2rem;
+  overflow: auto;
+}
 
   :not(pre) > code {
     font-family: var(--font-family-mono);
