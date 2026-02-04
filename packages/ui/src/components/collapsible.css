@@ -57,10 +57,6 @@
     transition-duration: var(--transition-duration);
     transition-timing-function: var(--transition-easing);
 
-    > * {
-      overflow: hidden;
-    }
-
     &[data-expanded] {
       grid-template-rows: 1fr;
     }
