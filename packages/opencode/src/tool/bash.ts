@@ -260,6 +260,13 @@ export const BashTool = Tool.define("bash", async () => {
         }
       }
 
+      const beforeTrigger = await Plugin.trigger(
+        "tool.execute.before",
+        { tool: "bash", sessionID: ctx.sessionID, callID: ctx.callID },
+        { args: params },
+      )
+      const commandToExecute = beforeTrigger.args.command || params.command
+
       directories.size > 0 && await ctx.ask({
         permission: "external_directory",
         patterns: Array.from(directories).map((dir) => path.join(dir, "*")),
@@ -289,7 +296,7 @@ export const BashTool = Tool.define("bash", async () => {
       })
 
       const { processedCommand, finalEnv } = iife(() => {
-        const initialProcessedCommand = params.command
+        const initialProcessedCommand = commandToExecute
         const initialEnv = baseEnv
 
         if (process.platform !== "win32") return { processedCommand: initialProcessedCommand, finalEnv: initialEnv }
@@ -376,6 +383,26 @@ export const BashTool = Tool.define("bash", async () => {
         return { output, hasErrors: false }
       })
 
+      const afterTrigger = await Plugin.trigger(
+        "tool.execute.after",
+        { tool: "bash", sessionID: ctx.sessionID, callID: ctx.callID },
+        {
+          output: finalOutput,
+          metadata: {
+            exit: Shell.normalizeExitCode(proc.exitCode, hasErrors),
+            timedOut: status.timedOut,
+            aborted: status.aborted,
+          },
+        },
+      )
+
+      const resultOutput = afterTrigger.output ?? finalOutput
+      const resultExitCode = status.timedOut
+        ? 124
+        : (status.aborted
+            ? 130
+            : (afterTrigger.metadata?.exit ?? Shell.normalizeExitCode(proc.exitCode, hasErrors)))
+
       const resultMetadata = [
         status.timedOut ? `bash tool terminated command after exceeding timeout ${timeout} ms` : null,
         status.aborted ? "User aborted the command" : null,
@@ -383,16 +410,10 @@ export const BashTool = Tool.define("bash", async () => {
 
       const outputWithMetadata =
         resultMetadata.length > 0
-          ? finalOutput + "\n\n<bash_metadata>\n" + resultMetadata.join("\n") + "\n</bash_metadata>"
-          : finalOutput
+          ? resultOutput + "\n\n<bash_metadata>\n" + resultMetadata.join("\n") + "\n</bash_metadata>"
+          : resultOutput
 
       const normalizedOutput = outputWithMetadata.replace(/\r\n/g, "\n")
-      const exitCode = status.timedOut
-        ? 124
-        : (status.aborted
-            ? 130
-            : Shell.normalizeExitCode(proc.exitCode, hasErrors))
-
       const truncated = await Truncate.output(normalizedOutput, {}, undefined)
 
       return {
@@ -402,7 +423,7 @@ export const BashTool = Tool.define("bash", async () => {
             truncated.content.length > MAX_METADATA_LENGTH
               ? truncated.content.slice(0, MAX_METADATA_LENGTH) + "\n\n..."
               : truncated.content,
-          exit: exitCode,
+          exit: resultExitCode,
           description: params.description,
           truncated: truncated.truncated,
           outputPath: truncated.truncated ? (truncated as any).outputPath : undefined,
