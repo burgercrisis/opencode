@@ -1,0 +1,77 @@
+{
+  "$schema": "https://opencode.ai/desktop-theme.json",
+  "name": "Abyss",
+  "id": "abyss",
+  "light": {
+    "seeds": {
+      "neutral": "#e1e5f2",
+      "primary": "#003366",
+      "success": "#1a7a33",
+      "warning": "#a67c00",
+      "error": "#b32424",
+      "info": "#0055aa",
+      "interactive": "#003366",
+      "diffAdd": "#3d8a5a",
+      "diffDelete": "#c94040"
+    },
+    "overrides": {
+      "background-base": "#e1e5f2",
+      "background-weak": "#d0d7e5",
+      "background-strong": "#ebf0f7",
+      "background-stronger": "#f1f4f9",
+      "border-weak-base": "#b9c2d1",
+      "border-base": "#90a0b9",
+      "border-strong-base": "#667fa1",
+      "text-base": "#001a33",
+      "text-weak": "#4d6680",
+      "text-strong": "#000d1a",
+      "syntax-string": "#1a7a33",
+      "syntax-primitive": "#b32424",
+      "syntax-property": "#003366",
+      "syntax-type": "#a67c00",
+      "syntax-constant": "#0055aa",
+      "syntax-info": "#0055aa",
+      "markdown-heading": "#003366",
+      "markdown-text": "#001a33",
+      "markdown-link": "#003366",
+      "markdown-link-text": "#0055aa",
+      "markdown-code": "#1a7a33"
+    }
+  },
+  "dark": {
+    "seeds": {
+      "neutral": "#000c18",
+      "primary": "#6688cc",
+      "success": "#22aa44",
+      "warning": "#ddbb88",
+      "error": "#f14c4c",
+      "info": "#6688cc",
+      "interactive": "#6688cc",
+      "diffAdd": "#1a7a33",
+      "diffDelete": "#b32424"
+    },
+    "overrides": {
+      "background-base": "#000c18",
+      "background-weak": "#00080f",
+      "background-strong": "#001221",
+      "background-stronger": "#001629",
+      "border-weak-base": "#1c3a59",
+      "border-base": "#2b5277",
+      "border-strong-base": "#386a9a",
+      "text-base": "#6688cc",
+      "text-weak": "#384887",
+      "text-strong": "#99aabb",
+      "syntax-string": "#22aa44",
+      "syntax-primitive": "#ddbb88",
+      "syntax-property": "#6688cc",
+      "syntax-type": "#6688cc",
+      "syntax-constant": "#ddbb88",
+      "syntax-info": "#6688cc",
+      "markdown-heading": "#6688cc",
+      "markdown-text": "#6688cc",
+      "markdown-link": "#6688cc",
+      "markdown-link-text": "#6688cc",
+      "markdown-code": "#22aa44"
+    }
+  }
+}

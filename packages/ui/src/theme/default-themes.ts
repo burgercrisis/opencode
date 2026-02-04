@@ -1,5 +1,6 @@
 import type { DesktopTheme } from "./types"
 import oc1ThemeJson from "./themes/oc-1.json"
+import abyssThemeJson from "./themes/abyss.json"
 import tokyoThemeJson from "./themes/tokyonight.json"
 import draculaThemeJson from "./themes/dracula.json"
 import monokaiThemeJson from "./themes/monokai.json"
@@ -17,6 +18,7 @@ import auraThemeJson from "./themes/aura.json"
 import customThemeJson from "./themes/custom-theme.json"
 import ipomoeaThemeJson from "./themes/ipomoea.json"
 export const oc1Theme = oc1ThemeJson as DesktopTheme
+export const abyssTheme = abyssThemeJson as DesktopTheme
 export const tokyonightTheme = tokyoThemeJson as DesktopTheme
 export const draculaTheme = draculaThemeJson as DesktopTheme
 export const monokaiTheme = monokaiThemeJson as DesktopTheme
@@ -38,6 +40,7 @@ export const ipomoeaTheme = ipomoeaThemeJson as DesktopTheme
 
 export const DEFAULT_THEMES: Record<string, DesktopTheme> = {
   "oc-1": oc1Theme,
+  abyss: abyssTheme,
   aura: auraTheme,
   ayu: ayuTheme,
   carbonfox: carbonfoxTheme,
