@@ -349,26 +349,23 @@ export namespace Session {
 
   export async function* list() {
     const project = Instance.project
-    const items = await Storage.list(["session", project.id])
-    const process = async function* (remaining: string[][]): AsyncGenerator<Info> {
-      const item = remaining[0]
-      if (!item) return
-      yield Storage.read<Info>(item)
-      yield* process(remaining.slice(1))
+    for (const item of await Storage.list(["session", project.id])) {
+      const session = await Storage.read<Info>(item).catch(() => undefined)
+      if (!session) continue
+      yield session
     }
-    yield* process(items)
   }
 
   export const children = fn(Identifier.schema("session"), async (parentID) => {
     const project = Instance.project
-    const items = await Storage.list(["session", project.id])
-    const process = async (remaining: string[][], acc: Session.Info[]): Promise<Session.Info[]> => {
-      const item = remaining[0]
-      if (!item) return acc
-      const session = await Storage.read<Info>(item)
-      return process(remaining.slice(1), session.parentID === parentID ? [...acc, session] : acc)
+    const result = [] as Session.Info[]
+    for (const item of await Storage.list(["session", project.id])) {
+      const session = await Storage.read<Info>(item).catch(() => undefined)
+      if (!session) continue
+      if (session.parentID !== parentID) continue
+      result.push(session)
     }
-    return process(items, [])
+    return result
   })
 
   export const remove = fn(Identifier.schema("session"), async (sessionID) => {
@@ -545,14 +542,14 @@ export namespace Session {
       return {
         cost: safe(
           new Decimal(0)
-            .add(new Decimal(tokens.input).mul(costInfo?.input ?? 0).div(1_000_000))
-            .add(new Decimal(tokens.output).mul(costInfo?.output ?? 0).div(1_000_000))
-            .add(new Decimal(tokens.cache.read).mul(costInfo?.cache?.read ?? 0).div(1_000_000))
-            .add(new Decimal(tokens.cache.write).mul(costInfo?.cache?.write ?? 0).div(1_000_000))
-            // TODO: update models.dev to have better pricing model, for now:
-            // charge reasoning tokens at the same rate as output tokens
-            .add(new Decimal(tokens.reasoning).mul(costInfo?.output ?? 0).div(1_000_000))
-            .toNumber(),
+          .add(new Decimal(tokens.input).mul(costInfo?.input ?? 0).div(1_000_000))
+          .add(new Decimal(tokens.output).mul(costInfo?.output ?? 0).div(1_000_000))
+          .add(new Decimal(tokens.cache.read).mul(costInfo?.cache?.read ?? 0).div(1_000_000))
+          .add(new Decimal(tokens.cache.write).mul(costInfo?.cache?.write ?? 0).div(1_000_000))
+          // TODO: update models.dev to have better pricing model, for now:
+          // charge reasoning tokens at the same rate as output tokens
+          .add(new Decimal(tokens.reasoning).mul(costInfo?.output ?? 0).div(1_000_000))
+          .toNumber(),
         ),
         tokens,
       }

@@ -9,7 +9,7 @@ import { SessionRevert } from "./revert"
 import { Session } from "."
 import { Agent } from "../agent/agent"
 import { Provider } from "../provider/provider"
-import { type Tool as AITool, tool, jsonSchema, type ToolCallOptions } from "ai"
+import { type Tool as AITool, tool, jsonSchema, type ToolCallOptions, asSchema } from "ai"
 import { SessionCompaction } from "./compaction"
 import { Instance } from "../project/instance"
 import { Bus } from "../bus"
@@ -63,17 +63,17 @@ export namespace SessionPrompt {
           abort: AbortController
           callbacks: {
             resolve(input: MessageV2.WithParts): void
-            reject(): void
+            reject(reason?: any): void
           }[]
         }
       > = {}
       return data
     },
     async (current) => {
-      for (const entry of Object.values(current)) {
-        entry.abort.abort()
-        for (const cb of entry.callbacks) {
-          cb.reject()
+      for (const item of Object.values(current)) {
+        item.abort.abort()
+        for (const callback of item.callbacks) {
+          callback.reject(new DOMException("Aborted", "AbortError"))
         }
       }
     },
@@ -247,10 +247,13 @@ export namespace SessionPrompt {
     log.info("cancel", { sessionID })
     const s = state()
     const match = s[sessionID]
-    if (!match) return
+    if (!match) {
+      SessionStatus.set(sessionID, { type: "idle" })
+      return
+    }
     match.abort.abort()
     for (const item of match.callbacks) {
-      item.reject()
+      item.reject(new DOMException("Aborted", "AbortError"))
     }
     delete s[sessionID]
     SessionStatus.set(sessionID, { type: "idle" })
@@ -1123,55 +1126,17 @@ export namespace SessionPrompt {
   }
 
   async function createUserMessage(input: PromptInput) {
-    let agent: Agent.Info
-    let agentName: string
-    
-    // Resolve agent with robust fallback logic
-    if (input.agent) {
-      try {
-        agent = await Agent.get(input.agent)
-        agentName = input.agent
-        log.debug("Using explicitly provided agent", { 
-          sessionID: input.sessionID, 
-          agent: agentName 
-        })
-      } catch (error) {
-        log.error("Failed to get explicitly provided agent, falling back to last agent", { 
-          sessionID: input.sessionID, 
-          requestedAgent: input.agent,
-          error: error instanceof Error ? error.message : String(error) 
-        })
-        agentName = await lastAgent(input.sessionID)
-        agent = await Agent.get(agentName)
-      }
-    } else {
-      agentName = await lastAgent(input.sessionID)
-      agent = await Agent.get(agentName)
-    }
+    const agent = await Agent.get(input.agent ?? (await Agent.defaultAgent()))
 
-    // Resolve model with robust fallback logic
-    let model: { providerID: string; modelID: string }
-    if (input.model) {
-      // Use explicitly provided model
-      model = input.model
-      log.debug("Using explicitly provided model", { 
-        sessionID: input.sessionID, 
-        providerID: model.providerID, 
-        modelID: model.modelID 
-      })
-    } else if (agent.model) {
-      // Use agent's default model
-      model = agent.model
-      log.debug("Using agent default model", { 
-        sessionID: input.sessionID, 
-        agent: agent.name,
-        providerID: model.providerID, 
-        modelID: model.modelID 
-      })
-    } else {
-      // Fall back to last used model
-      model = await lastModel(input.sessionID)
-    }
+    const model = input.model ?? agent.model ?? (await lastModel(input.sessionID))
+    const variant =
+      input.variant ??
+      (agent.variant &&
+      agent.model &&
+      model.providerID === agent.model.providerID &&
+      model.modelID === agent.model.modelID
+        ? agent.variant
+        : undefined)
 
     const info: MessageV2.Info = {
       id: input.messageID ?? Identifier.ascending("message"),
@@ -1182,9 +1147,9 @@ export namespace SessionPrompt {
       },
       tools: input.tools,
       agent: agent.name,
-      model: model,
+      model,
       system: input.system,
-      variant: input.variant,
+      variant,
     }
     using _ = defer(() => InstructionPrompt.clear(info.id))
 
@@ -2277,12 +2242,15 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     const matchingInvocation = invocations[shellName] ?? invocations[""]
     const args = matchingInvocation?.args
 
+    const cwd = Instance.directory
+    const shellEnv = await Plugin.trigger("shell.env", { cwd }, { env: {} })
     const proc = spawn(shell, args, {
-      cwd: Instance.directory,
+      cwd,
       detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
       env: {
         ...process.env,
+        ...shellEnv.env,
         TERM: "dumb",
       },
     })

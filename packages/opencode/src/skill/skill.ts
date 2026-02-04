@@ -18,6 +18,7 @@ export namespace Skill {
     name: z.string(),
     description: z.string(),
     location: z.string(),
+    content: z.string(),
   })
   export type Info = z.infer<typeof Info>
 
@@ -39,12 +40,19 @@ export namespace Skill {
     }),
   )
 
+  // External skill directories to search for (project-level and global)
+  // These follow the directory layout used by Claude Code and other agents.
+  const EXTERNAL_DIRS = [".claude", ".agents"]
+  const EXTERNAL_SKILL_GLOB = new Bun.Glob("skills/**/SKILL.md")
+
   const OPENCODE_SKILL_GLOB = new Bun.Glob("{skill,skills}/**/SKILL.md")
-  const CLAUDE_SKILL_GLOB = new Bun.Glob("skills/**/SKILL.md")
   const SKILL_GLOB = new Bun.Glob("**/SKILL.md")
 
   export const state = Instance.state(async () => {
-    const parseSkill = async (match: string): Promise<Info | undefined> => {
+    const skills: Record<string, Info> = {}
+    const dirs = new Set<string>()
+
+    const addSkill = async (match: string) => {
       const md = await ConfigMarkdown.parse(match).catch((err) => {
         const message = ConfigMarkdown.FrontmatterError.isInstance(err)
           ? err.data.message
@@ -54,81 +62,67 @@ export namespace Skill {
         return undefined
       })
 
-      return md
-        ? (() => {
-            const parsed = Info.pick({ name: true, description: true }).safeParse(md.data)
-            return parsed.success
-              ? {
-                  name: parsed.data.name,
-                  description: parsed.data.description,
-                  location: match.replaceAll(path.sep, "/"),
-                }
-              : undefined
-          })()
-        : undefined
+      if (!md) return
+
+      const parsed = Info.pick({ name: true, description: true }).safeParse(md.data)
+      if (!parsed.success) return
+
+      // Warn on duplicate skill names
+      if (skills[parsed.data.name]) {
+        log.warn("duplicate skill name", {
+          name: parsed.data.name,
+          existing: skills[parsed.data.name].location,
+          duplicate: match,
+        })
+      }
+
+      dirs.add(path.dirname(match))
+
+      skills[parsed.data.name] = {
+        name: parsed.data.name,
+        description: parsed.data.description,
+        location: match.replaceAll(path.sep, "/"), // Normalize path for Windows
+        content: md.content,
+      }
     }
 
-    const claudeBaseDirs = await Array.fromAsync(
-      Filesystem.up({
-        targets: [".claude"],
-        start: Instance.directory,
-        stop: Instance.worktree,
-      }),
-    )
-
-    const globalClaude = `${Global.Path.home}/.claude`
-    const claudeDirs = (await Filesystem.isDir(globalClaude)) ? [...claudeBaseDirs, globalClaude] : claudeBaseDirs
-
-    const claudeMatches = !Flag.OPENCODE_DISABLE_CLAUDE_CODE_SKILLS
-      ? await claudeDirs.reduce(async (accPromise, dir) => {
-          const acc = await accPromise
-          const matches = await Array.fromAsync(
-            CLAUDE_SKILL_GLOB.scan({
-              cwd: dir,
-              absolute: true,
-              onlyFiles: true,
-              followSymlinks: true,
-              dot: true,
-            }),
-          ).catch((error) => {
-            log.error("failed .claude directory scan for skills", { dir, error })
-            return [] as string[]
-          })
-          return [...acc, ...matches]
-        }, Promise.resolve([] as string[]))
-      : []
-
-    const opencodeDirs = await Config.directories()
-    const opencodeMatches = await opencodeDirs.reduce(async (accPromise, dir) => {
-      const acc = await accPromise
-      const matches = await Array.fromAsync(
-        OPENCODE_SKILL_GLOB.scan({
-          cwd: dir,
+    const scanGlob = async (glob: Bun.Glob, root: string, scope: "global" | "project" | "config") => {
+      return Array.fromAsync(
+        glob.scan({
+          cwd: root,
           absolute: true,
           onlyFiles: true,
           followSymlinks: true,
+          dot: true,
         }),
       )
-      return [...acc, ...matches]
-    }, Promise.resolve([] as string[]))
-
-    const skills: Record<string, Info> = {}
-
-    const addSkill = async (match: string) => {
-      const skill = await parseSkill(match)
-      if (!skill) return
-      if (skills[skill.name]) {
-        log.warn("duplicate skill name", {
-          name: skill.name,
-          existing: skills[skill.name].location,
-          duplicate: skill.location,
+        .then((matches) => Promise.all(matches.map(addSkill)))
+        .catch((error) => {
+          log.error(`failed to scan ${scope} skills`, { dir: root, error })
         })
-      }
-      skills[skill.name] = skill
     }
 
-    const allMatches = [...claudeMatches, ...opencodeMatches]
-    await Promise.all(allMatches.map(addSkill))
+    // Scan external skill directories (.claude/skills/, .agents/skills/, etc.)
+    // Load global (home) first, then project-level (so project-level overwrites)
+    if (!Flag.OPENCODE_DISABLE_EXTERNAL_SKILLS) {
+      for (const dir of EXTERNAL_DIRS) {
+        const root = path.join(Global.Path.home, dir)
+        if (!(await Filesystem.isDir(root))) continue
+        await scanGlob(EXTERNAL_SKILL_GLOB, root, "global")
+      }
+
+      for await (const root of Filesystem.up({
+        targets: EXTERNAL_DIRS,
+        start: Instance.directory,
+        stop: Instance.worktree,
+      })) {
+        await scanGlob(EXTERNAL_SKILL_GLOB, root, "project")
+      }
+    }
+
+    // Scan opencode skill directories
+    const opencodeDirs = await Config.directories()
+    await Promise.all(opencodeDirs.map((dir) => scanGlob(OPENCODE_SKILL_GLOB, dir, "global")))
 
     // Scan additional skill paths from config
     const config = await Config.get()
@@ -139,24 +133,24 @@ export namespace Skill {
         log.warn("skill path not found", { path: resolved })
         continue
       }
-      for await (const match of SKILL_GLOB.scan({
-        cwd: resolved,
-        absolute: true,
-        onlyFiles: true,
-        followSymlinks: true,
-      })) {
-        await addSkill(match)
-      }
+      await scanGlob(SKILL_GLOB, resolved, "config")
     }
 
-    return skills
+    return {
+      skills,
+      dirs: Array.from(dirs),
+    }
   })
 
   export async function get(name: string) {
-    return state().then((x) => x[name])
+    return state().then((x) => x.skills[name])
   }
 
   export async function all() {
-    return state().then((x) => Object.values(x))
+    return state().then((x) => Object.values(x.skills))
+  }
+
+  export async function dirs() {
+    return state().then((x) => x.dirs)
   }
 }

@@ -4,6 +4,7 @@ import {
   Message as MessageType,
   Part as PartType,
   type PermissionRequest,
+  type QuestionRequest,
   TextPart,
   ToolPart,
 } from "@opencode-ai/sdk/v2/client"
@@ -151,6 +152,8 @@ export function SessionTurn(
   const emptyAssistant: AssistantMessage[] = []
   const emptyPermissions: PermissionRequest[] = []
   const emptyPermissionParts: { part: ToolPart; message: AssistantMessage }[] = []
+  const emptyQuestions: QuestionRequest[] = []
+  const emptyQuestionParts: { part: ToolPart; message: AssistantMessage }[] = []
   const emptyDiffs: FileDiff[] = []
   const idle = { type: "idle" as const }
 
@@ -167,10 +170,13 @@ export function SessionTurn(
     const result = Binary.search(messages, props.messageID, (m) => m.id)
     if (!result || !result.found) return -1
 
-    const msg = messages[result.index]
+    const index = result.found ? result.index : messages.findIndex((m) => m.id === props.messageID)
+    if (index < 0) return -1
+
+    const msg = messages[index]
     if (!msg || msg.role !== "user") return -1
 
-    return result.index
+    return index
   })
 
   const message = createMemo(() => {
@@ -291,6 +297,51 @@ const permissionParts = createMemo(() => {
     return emptyPermissionParts
   })
 
+  const questions = createMemo(() => data.store.question?.[props.sessionID] ?? emptyQuestions)
+  const nextQuestion = createMemo(() => questions()[0])
+
+  const questionParts = createMemo(() => {
+    if (props.stepsExpanded) return emptyQuestionParts
+
+    const next = nextQuestion()
+    if (!next || !next.tool) return emptyQuestionParts
+
+    const message = findLast(assistantMessages(), (m) => m.id === next.tool!.messageID)
+    if (!message) return emptyQuestionParts
+
+    const parts = data.store.part[message.id] ?? emptyParts
+    for (const part of parts) {
+      if (part?.type !== "tool") continue
+      const tool = part as ToolPart
+      if (tool.callID === next.tool?.callID) return [{ part: tool, message }]
+    }
+
+    return emptyQuestionParts
+  })
+
+  const answeredQuestionParts = createMemo(() => {
+    if (props.stepsExpanded) return emptyQuestionParts
+    if (questions().length > 0) return emptyQuestionParts
+
+    const result: { part: ToolPart; message: AssistantMessage }[] = []
+
+    for (const msg of assistantMessages()) {
+      const parts = data.store.part[msg.id] ?? emptyParts
+      for (const part of parts) {
+        if (part?.type !== "tool") continue
+        const tool = part as ToolPart
+        if (tool.tool !== "question") continue
+        // @ts-expect-error metadata may not exist on all tool states
+        const answers = tool.state?.metadata?.answers
+        if (answers && answers.length > 0) {
+          result.push({ part: tool, message: msg })
+        }
+      }
+    }
+
+    return result
+  })
+
   const shellModePart = createMemo(() => {
     const p = parts()
     if (p.length === 0) return
@@ -360,6 +411,8 @@ const permissionParts = createMemo(() => {
   const status = createMemo(() => data.store.session_status[props.sessionID] ?? idle)
   const working = createMemo(() => status().type !== "idle" && isLastUserMessage())
   const retry = createMemo(() => {
+    // session_status is session-scoped; only show retry on the active (last) turn
+    if (!isLastUserMessage()) return
     const s = status()
     if (s.type !== "retry") return
     return s
@@ -570,7 +623,7 @@ const permissionParts = createMemo(() => {
                               <Match when={working()}>
                                 <Spinner />
                               </Match>
-                              <Match when={true}>
+                              <Match when={!props.stepsExpanded}>
                                 <svg
                                   width="10"
                                   height="10"
@@ -581,6 +634,23 @@ const permissionParts = createMemo(() => {
                                 >
                                   <path
                                     d="M8.125 1.875H1.875L5 8.125L8.125 1.875Z"
+                                    fill="currentColor"
+                                    stroke="currentColor"
+                                    stroke-linejoin="round"
+                                  />
+                                </svg>
+                              </Match>
+                              <Match when={props.stepsExpanded}>
+                                <svg
+                                  width="10"
+                                  height="10"
+                                  viewBox="0 0 10 10"
+                                  fill="none"
+                                  xmlns="http://www.w3.org/2000/svg"
+                                  class="text-icon-base"
+                                >
+                                  <path
+                                    d="M8.125 8.125H1.875L5 1.875L8.125 8.125Z"
                                     fill="currentColor"
                                     stroke="currentColor"
                                     stroke-linejoin="round"
@@ -646,6 +716,20 @@ const permissionParts = createMemo(() => {
                     <Show when={!props.stepsExpanded && permissionParts().length > 0}>
                       <div data-slot="session-turn-permission-parts">
                         <For each={permissionParts()}>
+                          {({ part, message }) => <Part part={part} message={message} />}
+                        </For>
+                      </div>
+                    </Show>
+                    <Show when={!props.stepsExpanded && questionParts().length > 0}>
+                      <div data-slot="session-turn-question-parts">
+                        <For each={questionParts()}>
+                          {({ part, message }) => <Part part={part} message={message} />}
+                        </For>
+                      </div>
+                    </Show>
+                    <Show when={!props.stepsExpanded && answeredQuestionParts().length > 0}>
+                      <div data-slot="session-turn-answered-question-parts">
+                        <For each={answeredQuestionParts()}>
                           {({ part, message }) => <Part part={part} message={message} />}
                         </For>
                       </div>

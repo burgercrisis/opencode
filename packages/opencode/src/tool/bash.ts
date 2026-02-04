@@ -18,6 +18,7 @@ import { Config } from "../config/config"
 
 import { BashArity } from "@/permission/arity"
 import { Truncate } from "./truncation"
+import { Plugin } from "@/plugin"
 
 const MAX_METADATA_LENGTH = 30_000
 const DEFAULT_TIMEOUT = Flag.OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS || 2 * 60 * 1000
@@ -207,54 +208,62 @@ export const BashTool = Tool.define("bash", async () => {
       const tree = await parser().then((p) => p.parse(params.command))
       const _tree = !tree ? (() => { throw new Error("Failed to parse command") })() : tree
 
-      const { directories, patterns, always } = _tree.rootNode.descendantsOfType("command").reduce(
-        (acc, node) => {
-          if (!node) return acc
-          const command = Array.from({ length: node.childCount })
-            .map((_, i) => node.child(i))
-            .filter(
-              (child): child is NonNullable<typeof child> =>
-                !!child && ["command_name", "word", "string", "raw_string", "concatenation"].includes(child.type),
-            )
-            .map((child) => child.text)
+      const directories = new Set<string>()
+      if (!Instance.containsPath(cwd)) {
+        directories.add(Filesystem.normalize(cwd))
+      }
+      const patterns = new Set<string>()
+      const always = new Set<string>()
 
-          if (command.length === 0) return acc
+      for (const node of _tree.rootNode.descendantsOfType("command")) {
+        if (!node) continue
 
-          const newDirectories = ["cd", "rm", "cp", "mv", "mkdir", "touch", "chmod", "chown", "cat"].includes(command[0])
-            ? command.slice(1).reduce((dAcc, arg) => {
-                return (arg.startsWith("-") || (command[0] === "chmod" && arg.startsWith("+")))
-                  ? dAcc
-                  : (() => {
-                      const resolved = (() => {
-                        try {
-                          return Filesystem.getCanonicalPath(path.resolve(cwd, arg))
-                        } catch {
-                          return path.resolve(cwd, arg)
-                        }
-                      })()
-                      const normalized = Filesystem.normalize(resolved)
-                      return !Instance.containsPath(normalized) ? dAcc.add(normalized) : dAcc
-                    })()
-              }, new Set(acc.directories))
-            : acc.directories
+        // Get full command text including redirects if present
+        const commandText = node.parent?.type === "redirected_statement" ? node.parent.text : node.text
 
-          return {
-            directories: newDirectories,
-            patterns: command.length && command[0] !== "cd" ? new Set(acc.patterns).add(command.join(" ")) : acc.patterns,
-            always: command.length && command[0] !== "cd" ? new Set(acc.always).add(BashArity.prefix(command).join(" ") + "*") : acc.always
+        const command = Array.from({ length: node.childCount })
+          .map((_, i) => node.child(i))
+          .filter(
+            (child): child is NonNullable<typeof child> =>
+              !!child && ["command_name", "word", "string", "raw_string", "concatenation"].includes(child.type),
+          )
+          .map((child) => child.text)
+
+        if (command.length === 0) continue
+
+        if (["cd", "rm", "cp", "mv", "mkdir", "touch", "chmod", "chown", "cat"].includes(command[0])) {
+          for (const arg of command.slice(1)) {
+            if (arg.startsWith("-") || (command[0] === "chmod" && arg.startsWith("+"))) continue
+
+            const resolved = (() => {
+              try {
+                return Filesystem.getCanonicalPath(path.resolve(cwd, arg))
+              } catch {
+                return path.resolve(cwd, arg)
+              }
+            })()
+            const normalized = Filesystem.normalize(resolved)
+
+            if (!Instance.containsPath(normalized)) {
+              const isDir = await Filesystem.isDir(normalized).catch(() => false)
+              const dir = isDir ? normalized : path.dirname(normalized)
+              if (!Instance.containsPath(dir)) {
+                directories.add(dir)
+              }
+            }
           }
-        },
-        {
-          directories: Instance.containsPath(cwd) ? new Set<string>() : new Set([Filesystem.normalize(cwd)]),
-          patterns: new Set<string>(),
-          always: new Set<string>(),
         }
-      )
+
+        if (command.length && command[0] !== "cd") {
+          patterns.add(commandText)
+          always.add(BashArity.prefix(command).join(" ") + " *")
+        }
+      }
 
       directories.size > 0 && await ctx.ask({
         permission: "external_directory",
-        patterns: Array.from(directories),
-        always: Array.from(directories).map((x) => Filesystem.join(Filesystem.dirname(x), "/*")),
+        patterns: Array.from(directories).map((dir) => path.join(dir, "*")),
+        always: Array.from(directories).map((dir) => path.join(dir, "*")),
         metadata: {},
       })
 
@@ -300,7 +309,9 @@ export const BashTool = Tool.define("bash", async () => {
 
       const config = await Config.get()
       const spawnConfig = Shell.getSpawnConfig(processedCommand, config.shell)
-      const mergedEnv = { ...finalEnv, ...spawnConfig.env } as Record<string, string>
+      
+      const shellEnv = await Plugin.trigger("shell.env", { cwd }, { env: {} })
+      const mergedEnv = { ...finalEnv, ...spawnConfig.env, ...shellEnv.env } as Record<string, string>
 
       Shell.isCmdBuiltin(processedCommand) && log.info("Detected bare CMD builtin, automatically wrapping", {
         command: processedCommand.substring(0, 100),
