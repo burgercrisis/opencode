@@ -720,7 +720,7 @@ export namespace SessionPrompt {
         synthetic: true,
       })
       
-      return fallbackMessage
+      return { info: fallbackMessage, parts: [] }
     }
   }
 
@@ -2823,7 +2823,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
            (draft) => {
              try {
                const cleaned = text
-                .replace(/<thinking>[\s\S]*?<\/thinking>\s*/g, "")
+                .replace(/<(thinking|think)>[\s\S]*?<\/(thinking|think)>\s*/g, "")
                 .split("\n")
                 .map((line: string) => line.trim())
                 .find((line: string) => line.length > 0)
