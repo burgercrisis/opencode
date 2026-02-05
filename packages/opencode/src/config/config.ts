@@ -92,7 +92,6 @@ export namespace Config {
       }
     }
 
-    // Global user config overrides remote config.
     result = mergeConfigConcatArrays(result, await global())
 
     // Custom config path overrides global config.
@@ -155,6 +154,7 @@ export namespace Config {
     let finalResult = await unique(directories).reduce(async (accPromise, dir) => {
       const acc = await accPromise
 
+      log.debug("Scanning directory for config", { dir })
       const withDirConfig: any =
         dir.endsWith(".opencode") || dir === Flag.OPENCODE_CONFIG_DIR
           ? await ["opencode.jsonc", "opencode.json"].reduce(async (innerAccPromise, file) => {
@@ -170,8 +170,15 @@ export namespace Config {
               })
             }, Promise.resolve(acc))
           : acc
+    
+      const shouldInstall = await (async () => {
+        // Only install in test if explicitly requested
+        if (Installation.isTest() && !Flag.OPENCODE_FORCE_INSTALL) {
+          return false
+        }
+        return await needsInstall(dir)
+      })()
 
-      const shouldInstall = await needsInstall(dir)
       if (shouldInstall) {
         await installDependencies(dir)
       }
@@ -257,7 +264,7 @@ export namespace Config {
         ...(Flag.OPENCODE_DISABLE_AUTOCOMPACT ? { auto: false } : {}),
         ...(Flag.OPENCODE_DISABLE_PRUNE ? { prune: false } : {}),
       },
-      plugin: Array.from(new Set(withLegacyTools.plugin ?? [])),
+      plugin: deduplicatePlugins(withLegacyTools.plugin ?? []),
     }
 
     return {
@@ -476,164 +483,973 @@ export namespace Config {
       }),
     )
 
-    return (
-      await Promise.all(
-        items.map(async (item) => {
-          const content = await Bun.file(item).text()
-          const parsed = parseJsonc(content)
-          const result = z.any().safeParse(parsed)
-          return result.success
-            ? result.data
-            : (() => {
-                throw new InvalidError(
-                  { path: item, issues: result.error.issues },
-                  { cause: result.error },
-                )
-              })()
-        }),
-      )
-    ).flat()
+    return items.map((item) => pathToFileURL(item).href)
   }
+
+  /**
+   * Extracts a canonical plugin name from a plugin specifier.
+   * - For file:// URLs: extracts filename without extension
+   * - For npm packages: extracts package name without version
+   *
+   * @example
+   * getPluginName("file:///path/to/plugin/foo.js") // "foo"
+   * getPluginName("oh-my-opencode@2.4.3") // "oh-my-opencode"
+   * getPluginName("@scope/pkg@1.0.0") // "@scope/pkg"
+   */
+  export function getPluginName(plugin: string): string {
+    if (plugin.startsWith("file://")) {
+      return path.parse(new URL(plugin).pathname).name
+    }
+    const lastAt = plugin.lastIndexOf("@")
+    if (lastAt > 0) {
+      return plugin.substring(0, lastAt)
+    }
+    return plugin
+  }
+
+  /**
+   * Deduplicates plugins by name, with later entries (higher priority) winning.
+   * Priority order (highest to lowest):
+   * 1. Local plugin/ directory
+   * 2. Local opencode.json
+   * 3. Global plugin/ directory
+   * 4. Global opencode.json
+   *
+   * Since plugins are added in low-to-high priority order,
+   * we reverse, deduplicate (keeping first occurrence), then restore order.
+   */
+  export function deduplicatePlugins(plugins: string[]): string[] {
+    const seenNames = new Set<string>()
+    const uniqueSpecifiers: string[] = []
+
+    for (const specifier of plugins.toReversed()) {
+      const name = getPluginName(specifier)
+      if (!seenNames.has(name)) {
+        seenNames.add(name)
+        uniqueSpecifiers.push(specifier)
+      }
+    }
+
+    return uniqueSpecifiers.toReversed()
+  }
+
+  export const McpLocal = z
+    .object({
+      type: z.literal("local").describe("Type of MCP server connection"),
+      command: z.string().array().describe("Command and arguments to run the MCP server"),
+      environment: z
+        .record(z.string(), z.string())
+        .optional()
+        .describe("Environment variables to set when running the MCP server"),
+      enabled: z.boolean().optional().describe("Enable or disable the MCP server on startup"),
+      timeout: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe("Timeout in ms for MCP server requests. Defaults to 5000 (5 seconds) if not specified."),
+    })
+    .strict()
+    .meta({
+      ref: "McpLocalConfig",
+    })
+
+  export const McpOAuth = z
+    .object({
+      clientId: z
+        .string()
+        .optional()
+        .describe("OAuth client ID. If not provided, dynamic client registration (RFC 7591) will be attempted."),
+      clientSecret: z.string().optional().describe("OAuth client secret (if required by the authorization server)"),
+      scope: z.string().optional().describe("OAuth scopes to request during authorization"),
+    })
+    .strict()
+    .meta({
+      ref: "McpOAuthConfig",
+    })
+  export type McpOAuth = z.infer<typeof McpOAuth>
+
+  export const McpRemote = z
+    .object({
+      type: z.literal("remote").describe("Type of MCP server connection"),
+      url: z.string().describe("URL of the remote MCP server"),
+      enabled: z.boolean().optional().describe("Enable or disable the MCP server on startup"),
+      headers: z.record(z.string(), z.string()).optional().describe("Headers to send with the request"),
+      oauth: z
+        .union([McpOAuth, z.literal(false)])
+        .optional()
+        .describe(
+          "OAuth authentication configuration for the MCP server. Set to false to disable OAuth auto-detection.",
+        ),
+      timeout: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe("Timeout in ms for MCP server requests. Defaults to 5000 (5 seconds) if not specified."),
+    })
+    .strict()
+    .meta({
+      ref: "McpRemoteConfig",
+    })
+
+  export const Mcp = z.discriminatedUnion("type", [McpLocal, McpRemote])
+  export type Mcp = z.infer<typeof Mcp>
+
+  export const PermissionAction = z.enum(["ask", "allow", "deny"]).meta({
+    ref: "PermissionActionConfig",
+  })
+  export type PermissionAction = z.infer<typeof PermissionAction>
+
+  export const PermissionObject = z.record(z.string(), PermissionAction).meta({
+    ref: "PermissionObjectConfig",
+  })
+  export type PermissionObject = z.infer<typeof PermissionObject>
+
+  export const PermissionRule = z.union([PermissionAction, PermissionObject]).meta({
+    ref: "PermissionRuleConfig",
+  })
+  export type PermissionRule = z.infer<typeof PermissionRule>
+
+  // Capture original key order before zod reorders, then rebuild in original order
+  const permissionPreprocess = (val: unknown) => {
+    if (typeof val === "object" && val !== null && !Array.isArray(val)) {
+      return { __originalKeys: Object.keys(val), ...val }
+    }
+    return val
+  }
+
+  const permissionTransform = (x: unknown): Record<string, PermissionRule> => {
+    if (typeof x === "string") return { "*": x as PermissionAction }
+    const obj = x as { __originalKeys?: string[] } & Record<string, unknown>
+    const { __originalKeys, ...rest } = obj
+    if (!__originalKeys) return rest as Record<string, PermissionRule>
+    const result: Record<string, PermissionRule> = {}
+    for (const key of __originalKeys) {
+      if (key in rest) result[key] = rest[key] as PermissionRule
+    }
+    return result
+  }
+
+  export const Permission = z
+    .preprocess(
+      permissionPreprocess,
+      z
+        .object({
+          __originalKeys: z.string().array().optional(),
+          read: PermissionRule.optional(),
+          edit: PermissionRule.optional(),
+          glob: PermissionRule.optional(),
+          grep: PermissionRule.optional(),
+          list: PermissionRule.optional(),
+          bash: PermissionRule.optional(),
+          task: PermissionRule.optional(),
+          external_directory: PermissionRule.optional(),
+          todowrite: PermissionAction.optional(),
+          todoread: PermissionAction.optional(),
+          question: PermissionAction.optional(),
+          webfetch: PermissionAction.optional(),
+          websearch: PermissionAction.optional(),
+          codesearch: PermissionAction.optional(),
+          lsp: PermissionRule.optional(),
+          doom_loop: PermissionAction.optional(),
+          skill: PermissionRule.optional(),
+        })
+        .catchall(PermissionRule)
+        .or(PermissionAction),
+    )
+    .transform(permissionTransform)
+    .meta({
+      ref: "PermissionConfig",
+    })
+  export type Permission = z.infer<typeof Permission>
+
+  export const Command = z.object({
+    template: z.string(),
+    description: z.string().optional(),
+    agent: z.string().optional(),
+    model: z.string().optional(),
+    subtask: z.boolean().optional(),
+  })
+  export type Command = z.infer<typeof Command>
+
+  export const Skills = z.object({
+    paths: z.array(z.string()).optional().describe("Additional paths to skill folders"),
+  })
+  export type Skills = z.infer<typeof Skills>
+
+  export const Agent = z
+    .object({
+      model: z.string().optional(),
+      variant: z
+        .string()
+        .optional()
+        .describe("Default model variant for this agent (applies only when using the agent's configured model)."),
+      temperature: z.number().optional(),
+      top_p: z.number().optional(),
+      prompt: z.string().optional(),
+      tools: z.record(z.string(), z.boolean()).optional().describe("@deprecated Use 'permission' field instead"),
+      disable: z.boolean().optional(),
+      description: z.string().optional().describe("Description of when to use the agent"),
+      mode: z.enum(["subagent", "primary", "all"]).optional(),
+      hidden: z
+        .boolean()
+        .optional()
+        .describe("Hide this subagent from the @ autocomplete menu (default: false, only applies to mode: subagent)"),
+      options: z.record(z.string(), z.any()).optional(),
+      color: z
+        .union([
+          z.string().regex(/^#[0-9a-fA-F]{6}$/, "Invalid hex color format"),
+          z.enum(["primary", "secondary", "accent", "success", "warning", "error", "info"]),
+        ])
+        .optional()
+        .describe("Hex color code (e.g., #FF5733) or theme color (e.g., primary)"),
+      steps: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe("Maximum number of agentic iterations before forcing text-only response"),
+      maxSteps: z.number().int().positive().optional().describe("@deprecated Use 'steps' field instead."),
+      permission: z.lazy(() => Permission.optional()),
+  })
+  .catchall(z.any())
+  .transform((agent, ctx) => {
+      const knownKeys = new Set([
+        "name",
+        "model",
+        "variant",
+        "prompt",
+        "description",
+        "temperature",
+        "top_p",
+        "mode",
+        "hidden",
+        "color",
+        "steps",
+        "maxSteps",
+        "options",
+        "permission",
+        "disable",
+        "tools",
+      ])
+
+      // Extract unknown properties into options
+      const options: Record<string, unknown> = { ...agent.options }
+      for (const [key, value] of Object.entries(agent)) {
+        if (!knownKeys.has(key)) options[key] = value
+      }
+
+      // Convert legacy tools config to permissions
+      const permission: Permission = {}
+      for (const [tool, enabled] of Object.entries(agent.tools ?? {})) {
+        const action = enabled ? "allow" : "deny"
+        // write, edit, patch, multiedit all map to edit permission
+        if (tool === "write" || tool === "edit" || tool === "patch" || tool === "multiedit") {
+          permission.edit = action
+        } else {
+          permission[tool] = action
+        }
+      }
+      Object.assign(permission, agent.permission)
+
+      // Convert legacy maxSteps to steps
+      const steps = agent.steps ?? agent.maxSteps
+
+      return { ...agent, options, permission, steps } as typeof agent & {
+        options?: Record<string, unknown>
+        permission?: Permission
+        steps?: number
+      }
+    })
+    .meta({
+      ref: "AgentConfig",
+    })
+  export type Agent = z.infer<typeof Agent>
+
+  export const Keybinds = z
+    .object({
+      leader: z.string().optional().default("ctrl+x").describe("Leader key for keybind combinations"),
+      app_exit: z.string().optional().default("ctrl+c,ctrl+d,<leader>q").describe("Exit the application"),
+      editor_open: z.string().optional().default("<leader>e").describe("Open external editor"),
+      theme_list: z.string().optional().default("<leader>t").describe("List available themes"),
+      sidebar_toggle: z.string().optional().default("<leader>b").describe("Toggle sidebar"),
+      scrollbar_toggle: z.string().optional().default("none").describe("Toggle session scrollbar"),
+      username_toggle: z.string().optional().default("none").describe("Toggle username visibility"),
+      status_view: z.string().optional().default("<leader>s").describe("View status"),
+      session_export: z.string().optional().default("<leader>x").describe("Export session to editor"),
+      session_new: z.string().optional().default("<leader>n").describe("Create a new session"),
+      session_list: z.string().optional().default("<leader>l").describe("List all sessions"),
+      session_timeline: z.string().optional().default("<leader>g").describe("Show session timeline"),
+      session_fork: z.string().optional().default("none").describe("Fork session from message"),
+      session_rename: z.string().optional().default("ctrl+r").describe("Rename session"),
+      session_delete: z.string().optional().default("ctrl+d").describe("Delete session"),
+      stash_delete: z.string().optional().default("ctrl+d").describe("Delete stash entry"),
+      model_provider_list: z.string().optional().default("ctrl+a").describe("Open provider list from model dialog"),
+      model_favorite_toggle: z.string().optional().default("ctrl+f").describe("Toggle model favorite status"),
+      session_share: z.string().optional().default("none").describe("Share current session"),
+      session_unshare: z.string().optional().default("none").describe("Unshare current session"),
+      session_interrupt: z.string().optional().default("escape").describe("Interrupt current session"),
+      session_compact: z.string().optional().default("<leader>c").describe("Compact the session"),
+      messages_page_up: z.string().optional().default("pageup,ctrl+alt+b").describe("Scroll messages up by one page"),
+      messages_page_down: z
+        .string()
+        .optional()
+        .default("pagedown,ctrl+alt+f")
+        .describe("Scroll messages down by one page"),
+      messages_line_up: z.string().optional().default("ctrl+alt+y").describe("Scroll messages up by one line"),
+      messages_line_down: z.string().optional().default("ctrl+alt+e").describe("Scroll messages down by one line"),
+      messages_half_page_up: z.string().optional().default("ctrl+alt+u").describe("Scroll messages up by half page"),
+      messages_half_page_down: z
+        .string()
+        .optional()
+        .default("ctrl+alt+d")
+        .describe("Scroll messages down by half page"),
+      messages_first: z.string().optional().default("ctrl+g,home").describe("Navigate to first message"),
+      messages_last: z.string().optional().default("ctrl+alt+g,end").describe("Navigate to last message"),
+      messages_next: z.string().optional().default("none").describe("Navigate to next message"),
+      messages_previous: z.string().optional().default("none").describe("Navigate to previous message"),
+      messages_last_user: z.string().optional().default("none").describe("Navigate to last user message"),
+      messages_copy: z.string().optional().default("<leader>y").describe("Copy message"),
+      messages_undo: z.string().optional().default("<leader>u").describe("Undo message"),
+      messages_redo: z.string().optional().default("<leader>r").describe("Redo message"),
+      messages_toggle_conceal: z
+        .string()
+        .optional()
+        .default("<leader>h")
+        .describe("Toggle code block concealment in messages"),
+      tool_details: z.string().optional().default("none").describe("Toggle tool details visibility"),
+      model_list: z.string().optional().default("<leader>m").describe("List available models"),
+      model_cycle_recent: z.string().optional().default("f2").describe("Next recently used model"),
+      model_cycle_recent_reverse: z.string().optional().default("shift+f2").describe("Previous recently used model"),
+      model_cycle_favorite: z.string().optional().default("none").describe("Next favorite model"),
+      model_cycle_favorite_reverse: z.string().optional().default("none").describe("Previous favorite model"),
+      command_list: z.string().optional().default("ctrl+p").describe("List available commands"),
+      agent_list: z.string().optional().default("<leader>a").describe("List agents"),
+      agent_cycle: z.string().optional().default("tab").describe("Next agent"),
+      agent_cycle_reverse: z.string().optional().default("shift+tab").describe("Previous agent"),
+      variant_cycle: z.string().optional().default("ctrl+t").describe("Cycle model variants"),
+      input_clear: z.string().optional().default("ctrl+c").describe("Clear input field"),
+      input_history_search: z.string().optional().default("ctrl+r").describe("Search input history"),
+      input_accept: z.string().optional().default("enter").describe("Accept input"),
+      input_line_break: z.string().optional().default("shift+enter,alt+enter").describe("Insert line break in input"),
+      input_line_home: z.string().optional().default("ctrl+a").describe("Move to start of line in input"),
+      input_line_end: z.string().optional().default("ctrl+e").describe("Move to end of line in input"),
+      input_select_line_home: z
+        .string()
+        .optional()
+        .default("ctrl+shift+a")
+        .describe("Select to start of line in input"),
+      input_select_line_end: z.string().optional().default("ctrl+shift+e").describe("Select to end of line in input"),
+      input_visual_line_home: z.string().optional().default("alt+a").describe("Move to start of visual line in input"),
+      input_visual_line_end: z.string().optional().default("alt+e").describe("Move to end of visual line in input"),
+      input_select_visual_line_home: z
+        .string()
+        .optional()
+        .default("alt+shift+a")
+        .describe("Select to start of visual line in input"),
+      input_select_visual_line_end: z
+        .string()
+        .optional()
+        .default("alt+shift+e")
+        .describe("Select to end of visual line in input"),
+      input_buffer_home: z.string().optional().default("home").describe("Move to start of buffer in input"),
+      input_buffer_end: z.string().optional().default("end").describe("Move to end of buffer in input"),
+      input_select_buffer_home: z
+        .string()
+        .optional()
+        .default("shift+home")
+        .describe("Select to start of buffer in input"),
+      input_select_buffer_end: z.string().optional().default("shift+end").describe("Select to end of buffer in input"),
+      input_delete_line: z.string().optional().default("ctrl+shift+d").describe("Delete line in input"),
+      input_delete_to_line_end: z.string().optional().default("ctrl+k").describe("Delete to end of line in input"),
+      input_delete_to_line_start: z.string().optional().default("ctrl+u").describe("Delete to start of line in input"),
+      input_backspace: z.string().optional().default("backspace,shift+backspace").describe("Backspace in input"),
+      input_delete: z.string().optional().default("ctrl+d,delete,shift+delete").describe("Delete character in input"),
+      input_undo: z.string().optional().default("ctrl+-,super+z").describe("Undo in input"),
+      input_redo: z.string().optional().default("ctrl+.,super+shift+z").describe("Redo in input"),
+      input_word_forward: z
+        .string()
+        .optional()
+        .default("alt+f,alt+right,ctrl+right")
+        .describe("Move word forward in input"),
+      input_word_backward: z
+        .string()
+        .optional()
+        .default("alt+b,alt+left,ctrl+left")
+        .describe("Move word backward in input"),
+      input_select_word_forward: z
+        .string()
+        .optional()
+        .default("alt+shift+f,alt+shift+right")
+        .describe("Select word forward in input"),
+      input_select_word_backward: z
+        .string()
+        .optional()
+        .default("alt+shift+b,alt+shift+left")
+        .describe("Select word backward in input"),
+      input_delete_word_forward: z
+        .string()
+        .optional()
+        .default("alt+d,alt+delete,ctrl+delete")
+        .describe("Delete word forward in input"),
+      input_delete_word_backward: z
+        .string()
+        .optional()
+        .default("ctrl+w,ctrl+backspace,alt+backspace")
+        .describe("Delete word backward in input"),
+      history_previous: z.string().optional().default("up").describe("Previous history item"),
+      history_next: z.string().optional().default("down").describe("Next history item"),
+      session_child_cycle: z.string().optional().default("<leader>right").describe("Next child session"),
+      session_child_cycle_reverse: z.string().optional().default("<leader>left").describe("Previous child session"),
+      session_parent: z.string().optional().default("<leader>up").describe("Go to parent session"),
+      terminal_suspend: z.string().optional().default("ctrl+z").describe("Suspend terminal"),
+      terminal_title_toggle: z.string().optional().default("none").describe("Toggle terminal title"),
+      tips_toggle: z.string().optional().default("<leader>h").describe("Toggle tips on home screen"),
+    })
+    .strict()
+    .meta({
+      ref: "KeybindsConfig",
+    })
+
+  export const TUI = z.object({
+    scroll_speed: z.number().min(0.001).optional().describe("TUI scroll speed"),
+    scroll_acceleration: z
+      .object({
+        enabled: z.boolean().describe("Enable scroll acceleration"),
+      })
+      .optional()
+      .describe("Scroll acceleration settings"),
+    diff_style: z
+      .enum(["auto", "stacked"])
+      .optional()
+      .describe("Control diff rendering style: 'auto' adapts to terminal width, 'stacked' always shows single column"),
+  })
+
+  export const Server = z
+    .object({
+      port: z.number().int().positive().optional().describe("Port to listen on"),
+      hostname: z.string().optional().describe("Hostname to listen on"),
+      mdns: z.boolean().optional().describe("Enable mDNS service discovery"),
+      mdnsDomain: z.string().optional().describe("Custom domain name for mDNS service (default: opencode.local)"),
+      cors: z.array(z.string()).optional().describe("Additional domains to allow for CORS"),
+    })
+    .strict()
+    .meta({
+      ref: "ServerConfig",
+    })
+
+  export const Layout = z.enum(["auto", "stretch"]).meta({
+    ref: "LayoutConfig",
+  })
+  export type Layout = z.infer<typeof Layout>
+
+  export const Provider = ModelsDev.Provider.partial()
+    .extend({
+      whitelist: z.array(z.string()).optional(),
+      blacklist: z.array(z.string()).optional(),
+      models: z
+        .record(
+          z.string(),
+          ModelsDev.Model.partial().extend({
+            variants: z
+              .record(
+                z.string(),
+                z
+                  .object({
+                    disabled: z.boolean().optional().describe("Disable this variant for the model"),
+                  })
+                  .catchall(z.any()),
+              )
+              .optional()
+              .describe("Variant-specific configuration"),
+          }),
+        )
+        .optional(),
+      options: z
+        .object({
+          apiKey: z.string().optional(),
+          baseURL: z.string().optional(),
+          enterpriseUrl: z.string().optional().describe("GitHub Enterprise URL for copilot authentication"),
+          setCacheKey: z.boolean().optional().describe("Enable promptCacheKey for this provider (default false)"),
+          timeout: z
+            .union([
+              z
+                .number()
+                .int()
+                .positive()
+                .describe(
+                  "Timeout in milliseconds for requests to this provider. Default is 300000 (5 minutes). Set to false to disable timeout.",
+                ),
+              z.literal(false).describe("Disable timeout for this provider entirely."),
+            ])
+            .optional()
+            .describe(
+              "Timeout in milliseconds for requests to this provider. Default is 300000 (5 minutes). Set to false to disable timeout.",
+            ),
+        })
+        .catchall(z.any())
+        .optional(),
+    })
+    .strict()
+    .meta({
+      ref: "ProviderConfig",
+    })
+  export type Provider = z.infer<typeof Provider>
+
+  export const Info = z
+    .object({
+      $schema: z.string().optional().describe("JSON schema reference for configuration validation"),
+      theme: z.string().optional().describe("Theme name to use for the interface"),
+      keybinds: Keybinds.optional().describe("Custom keybind configurations"),
+      logLevel: Log.Level.optional().describe("Log level"),
+      tui: TUI.optional().describe("TUI specific settings"),
+      server: Server.optional().describe("Server configuration for opencode serve and web commands"),
+      command: z
+        .record(z.string(), Command)
+        .optional()
+        .describe("Command configuration, see https://opencode.ai/docs/commands"),
+      skills: Skills.optional().describe("Additional skill folder paths"),
+      watcher: z
+        .object({
+          ignore: z.array(z.string()).optional(),
+        })
+        .optional(),
+      plugin: z.string().array().optional(),
+      snapshot: z.boolean().optional(),
+      share: z
+        .enum(["manual", "auto", "disabled"])
+        .optional()
+        .describe(
+          "Control sharing behavior:'manual' allows manual sharing via commands, 'auto' enables automatic sharing, 'disabled' disables all sharing",
+        ),
+      autoshare: z
+        .boolean()
+        .optional()
+        .describe("@deprecated Use 'share' field instead. Share newly created sessions automatically"),
+      autoupdate: z
+        .union([z.boolean(), z.literal("notify")])
+        .optional()
+        .describe(
+          "Automatically update to the latest version. Set to true to auto-update, false to disable, or 'notify' to show update notifications",
+        ),
+      disabled_providers: z.array(z.string()).optional().describe("Disable providers that are loaded automatically"),
+      enabled_providers: z
+        .array(z.string())
+        .optional()
+        .describe("When set, ONLY these providers will be enabled. All other providers will be ignored"),
+      model: z.string().describe("Model to use in the format of provider/model, eg anthropic/claude-2").optional(),
+      small_model: z
+        .string()
+        .describe("Small model to use for tasks like title generation in the format of provider/model")
+        .optional(),
+      default_agent: z
+        .string()
+        .optional()
+        .describe(
+          "Default agent to use when none is specified. Must be a primary agent. Falls back to 'build' if not set or if the specified agent is invalid.",
+        ),
+      username: z
+        .string()
+        .optional()
+        .describe("Custom username to display in conversations instead of system username"),
+      mode: z
+        .object({
+          build: z.lazy(() => Agent.optional()),
+          plan: z.lazy(() => Agent.optional()),
+        })
+        .catchall(z.lazy(() => Agent))
+        .optional()
+        .describe("@deprecated Use `agent` field instead."),
+      agent: z
+        .object({
+          // primary
+          plan: z.lazy(() => Agent.optional()),
+          build: z.lazy(() => Agent.optional()),
+          // subagent
+          general: z.lazy(() => Agent.optional()),
+          explore: z.lazy(() => Agent.optional()),
+          // specialized
+          title: z.lazy(() => Agent.optional()),
+          summary: z.lazy(() => Agent.optional()),
+          compaction: z.lazy(() => Agent.optional()),
+        })
+        .catchall(z.lazy(() => Agent))
+        .optional()
+        .describe("Agent configuration, see https://opencode.ai/docs/agents"),
+      provider: z
+        .record(z.string(), Provider)
+        .optional()
+        .describe("Custom provider configurations and model overrides"),
+      mcp: z
+        .record(
+          z.string(),
+          z.union([
+            Mcp,
+            z
+              .object({
+                enabled: z.boolean(),
+              })
+              .strict(),
+          ]),
+        )
+        .optional()
+        .describe("MCP (Model Context Protocol) server configurations"),
+      formatter: z
+        .union([
+          z.literal(false),
+          z.record(
+            z.string(),
+            z.object({
+              disabled: z.boolean().optional(),
+              command: z.array(z.string()).optional(),
+              environment: z.record(z.string(), z.string()).optional(),
+              extensions: z.array(z.string()).optional(),
+            }),
+          ),
+        ])
+        .optional(),
+      lsp: z
+        .union([
+          z.literal(false),
+          z.record(
+            z.string(),
+            z.union([
+              z.object({
+                disabled: z.literal(true),
+              }),
+              z.object({
+                command: z.array(z.string()),
+                extensions: z.array(z.string()).optional(),
+                disabled: z.boolean().optional(),
+                env: z.record(z.string(), z.string()).optional(),
+                initialization: z.record(z.string(), z.any()).optional(),
+              }),
+            ]),
+          ),
+        ])
+        .optional()
+        .refine(
+          (data) => {
+            if (!data) return true
+            if (typeof data === "boolean") return true
+            const serverIds = new Set(Object.values(LSPServer).map((s) => s.id))
+
+            return Object.entries(data).every(([id, config]) => {
+              if (config.disabled) return true
+              if (serverIds.has(id)) return true
+              return Boolean(config.extensions)
+            })
+          },
+          {
+            error: "For custom LSP servers, 'extensions' array is required.",
+          },
+        ),
+      instructions: z.array(z.string()).optional().describe("Additional instruction files or patterns to include"),
+      layout: Layout.optional().describe("@deprecated Always uses stretch layout."),
+      permission: Permission.optional(),
+      tools: z.record(z.string(), z.boolean()).optional(),
+      favoriteTools: z.array(z.string()).optional(),
+      backgroundValidation: z
+        .object({
+          enabled: z.boolean().optional(),
+          commands: z.array(z.string()).optional(),
+          debounceMs: z.number().optional(),
+          include: z.array(z.string()).optional(),
+          exclude: z.array(z.string()).optional(),
+        })
+        .optional(),
+      prefetchWorker: z
+        .object({
+          enabled: z.boolean().optional(),
+          maxConcurrent: z.number().optional(),
+          maxCacheSize: z.number().optional(),
+          strategies: z.array(z.string()).optional(),
+        })
+        .optional(),
+      enterprise: z
+        .object({
+          url: z.string().optional().describe("Enterprise URL"),
+        })
+        .optional(),
+      compaction: z
+        .object({
+          auto: z.boolean().optional().describe("Enable automatic compaction when context is full (default: true)"),
+          prune: z.boolean().optional().describe("Enable pruning of old tool outputs (default: true)"),
+        })
+        .optional(),
+      experimental: z
+        .object({
+          disable_paste_summary: z.boolean().optional(),
+          batch_tool: z.boolean().optional().describe("Enable the batch tool"),
+          openTelemetry: z
+            .boolean()
+            .optional()
+            .describe("Enable OpenTelemetry spans for AI SDK calls (using the 'experimental_telemetry' flag)"),
+          primary_tools: z
+            .array(z.string())
+            .optional()
+            .describe("Tools that should only be available to primary agents."),
+          continue_loop_on_deny: z.boolean().optional().describe("Continue the agent loop when a tool call is denied"),
+          mcp_timeout: z
+            .number()
+            .int()
+            .positive()
+            .optional()
+            .describe("Timeout in milliseconds for model context protocol (MCP) requests"),
+        })
+        .optional(),
+    })
+    .strict()
+    .meta({
+      ref: "Config",
+    })
+  export type Info = z.output<typeof Info>
+
+  export const global = lazy(async () => {
+    let result: Info = pipe(
+      {},
+      mergeDeep(await loadFile(path.join(Global.Path.config, "config.json"))),
+      mergeDeep(await loadFile(path.join(Global.Path.config, "opencode.json"))),
+      mergeDeep(await loadFile(path.join(Global.Path.config, "opencode.jsonc"))),
+    )
+
+    await import(path.join(Global.Path.config, "config"), {
+      with: {
+        type: "toml",
+      },
+    })
+      .then(async (mod) => {
+        const { provider, model, ...rest } = mod.default
+        if (provider && model) result.model = `${provider}/${model}`
+        result["$schema"] = "https://opencode.ai/config.json"
+        result = mergeDeep(result, rest)
+        await Bun.write(path.join(Global.Path.config, "config.json"), JSON.stringify(result, null, 2))
+        await fs.unlink(path.join(Global.Path.config, "config"))
+      })
+      .catch(() => {})
+
+    return result
+  })
+
+  async function loadFile(filepath: string): Promise<Info> {
+    log.debug("loading config file", { path: filepath })
+    const text = await Bun.file(filepath)
+      .text()
+      .catch((err) => {
+        if (err.code === "ENOENT") return
+        throw new JsonError({ path: filepath }, { cause: err })
+      })
+    if (!text) return {}
+    return load(text, filepath)
+  }
+
+  async function load(text: string, configFilepath: string) {
+    const original = text
+    text = text.replace(/\{env:([^}]+)\}/g, (_, varName) => {
+      return process.env[varName] || ""
+    })
+
+    const fileMatches = text.match(/\{file:[^}]+\}/g)
+    if (fileMatches) {
+      const configDir = path.dirname(configFilepath)
+      const lines = text.split("\n")
+
+      for (const match of fileMatches) {
+        const lineIndex = lines.findIndex((line) => line.includes(match))
+        const column = lines[lineIndex].indexOf(match)
+        const file = match.slice(6, -1)
+        const filePath = path.resolve(configDir, file)
+
+        const content = await Bun.file(filePath)
+          .text()
+          .catch((err) => {
+            throw new JsonError({
+              path: configFilepath,
+              message: `failed to load file reference ${match} at line ${lineIndex + 1}, column ${column + 1}: ${err.message}`,
+            })
+          })
+
+        text = text.replace(match, content.trim())
+      }
+    }
+
+    let data: any
+    try {
+      const errors: JsoncParseError[] = []
+      data = parseJsonc(text, errors, { allowTrailingComma: true })
+      if (errors.length) {
+        throw new Error(errors.map((e) => printParseErrorCode(e.error)).join(", "))
+      }
+    } catch (err: any) {
+      throw new JsonError({
+        path: configFilepath,
+        message: err.message,
+      })
+    }
+
+    const parsed = Info.safeParse(data)
+    if (parsed.success) {
+      if (!parsed.data.$schema) {
+        parsed.data.$schema = "https://opencode.ai/config.json"
+        // Write the $schema to the original text to preserve variables like {env:VAR}
+        const updated = original.replace(/^\s*\{/, '{\n  "$schema": "https://opencode.ai/config.json",')
+        await Bun.write(configFilepath, updated).catch(() => {})
+      }
+      const data = parsed.data
+      if (data.plugin) {
+        for (let i = 0; i < data.plugin.length; i++) {
+          const plugin = data.plugin[i]
+          try {
+            data.plugin[i] = import.meta.resolve!(plugin, configFilepath)
+          } catch (err) {}
+        }
+      }
+      return data
+    }
+
+    throw new InvalidError({
+      path: configFilepath,
+      issues: parsed.error.issues,
+    })
+  }
+
+  export const JsonError = NamedError.create(
+    "ConfigJsonError",
+    z.object({
+      path: z.string(),
+      message: z.string().optional(),
+    }),
+  )
+
+  export const ConfigDirectoryTypoError = NamedError.create(
+    "ConfigDirectoryTypoError",
+    z.object({
+      path: z.string(),
+      dir: z.string(),
+      suggestion: z.string(),
+    }),
+  )
 
   export const InvalidError = NamedError.create(
     "ConfigInvalidError",
     z.object({
       path: z.string(),
-      issues: z.array(z.any()),
+      issues: z.custom<z.ZodIssue[]>().optional(),
+      message: z.string().optional(),
     }),
   )
 
-  async function loadFile(filepath: string): Promise<Info> {
-    const file = Bun.file(filepath)
-    if (!(await file.exists())) return {}
-
-    const content = await file.text()
-    if (!content.trim()) return {}
-
-    const errors: any[] = []
-    const parsed = parseJsonc(content, errors, { allowTrailingComma: true })
-
-    if (errors.length > 0) {
-      const error = errors[0]
-      const { line, column } = getLineColumn(content, error.offset)
-      throw new NamedError.ConfigParse({
-        path: filepath,
-        line,
-        column,
-        message: printParseErrorCode(error.error),
-      })
-    }
-
-    // Validate schema
-    const result = Info.safeParse(parsed)
-    if (!result.success) {
-      throw new InvalidError({
-        path: filepath,
-        issues: result.error.issues,
-      })
-    }
-
-    return result.data
-  }
-
-  async function load(content: string, source: string): Promise<Info> {
-    if (!content.trim()) return {}
-
-    const errors: any[] = []
-    const parsed = parseJsonc(content, errors, { allowTrailingComma: true })
-
-    if (errors.length > 0) {
-      const error = errors[0]
-      const { line, column } = getLineColumn(content, error.offset)
-      throw new NamedError.ConfigParse({
-        path: source,
-        line,
-        column,
-        message: printParseErrorCode(error.error),
-      })
-    }
-
-    const result = Info.safeParse(parsed)
-    if (!result.success) {
-      throw new InvalidError({
-        path: source,
-        issues: result.error.issues,
-      })
-    }
-
-    return result.data
-  }
-
-  function getLineColumn(text: string, offset: number) {
-    let line = 1
-    let column = 1
-    for (let i = 0; i < offset; i++) {
-      if (text[i] === "\n") {
-        line++
-        column = 1
-      } else {
-        column++
-      }
-    }
-    return { line, column }
-  }
-
-  async function global(): Promise<Info> {
-    const locations = [
-      path.join(Global.Path.config, "opencode.json"),
-      path.join(Global.Path.config, "opencode.jsonc"),
-    ]
-
-    for (const location of locations) {
-      if (await Bun.file(location).exists()) {
-        log.debug("loaded global config", { path: location })
-        return loadFile(location)
-      }
-    }
-
-    return {}
-  }
-
   export async function get() {
-    return (await state()).config
+    return state().then((x) => x.config)
   }
 
-  export const Info = z.object({
-    $schema: z.string().optional(),
-    username: z.string().optional(),
-    share: z.enum(["auto", "yes", "no"]).optional(),
-    autoshare: z.boolean().optional(), // deprecated
-    keybinds: z.record(z.string(), z.string()).optional(),
-    compaction: z
-      .object({
-        auto: z.boolean().optional(),
-        prune: z.boolean().optional(),
+  export async function getGlobal() {
+    return global()
+  }
+
+  export async function update(config: Info) {
+    const filepath = path.join(Instance.directory, "config.json")
+    const existing = await loadFile(filepath)
+    await Bun.write(filepath, JSON.stringify(mergeDeep(existing, config), null, 2))
+    await Instance.dispose()
+  }
+
+  function globalConfigFile() {
+    const candidates = ["opencode.jsonc", "opencode.json", "config.json"].map((file) =>
+      path.join(Global.Path.config, file),
+    )
+    for (const file of candidates) {
+      if (existsSync(file)) return file
+    }
+    return candidates[0]
+  }
+
+  function isRecord(value: unknown): value is Record<string, unknown> {
+    return !!value && typeof value === "object" && !Array.isArray(value)
+  }
+
+  function patchJsonc(input: string, patch: unknown, path: string[] = []): string {
+    if (!isRecord(patch)) {
+      const edits = modify(input, path, patch, {
+        formattingOptions: {
+          insertSpaces: true,
+          tabSize: 2,
+        },
       })
-      .optional(),
-    agent: z.record(z.string(), z.any()).optional(),
-    mode: z.record(z.string(), z.any()).optional(), // deprecated
-    plugin: z.array(z.string()).optional(),
-    instructions: z.array(z.string()).optional(),
-    permission: z.record(z.string(), z.union([z.literal("allow"), z.literal("deny")])).optional(),
-    tools: z.record(z.string(), z.boolean()).optional(), // deprecated
-    provider: z.record(z.string(), z.any()).optional(),
-  })
-  export type Info = z.infer<typeof Info>
+      return applyEdits(input, edits)
+    }
 
-  export const Command = z.object({
-    description: z.string().optional(),
-    parameters: z.any().optional(),
-    template: z.string(),
-  })
-  export type Command = z.infer<typeof Command>
+    return Object.entries(patch).reduce((result, [key, value]) => {
+      if (value === undefined) return result
+      return patchJsonc(result, value, [...path, key])
+    }, input)
+  }
 
-  export const Agent = z.object({
-    description: z.string().optional(),
-    model: z.string().optional(),
-    system: z.string(),
-    temperature: z.number().optional(),
-  })
-  export type Agent = z.infer<typeof Agent>
+  function parseConfig(text: string, filepath: string): Info {
+    const errors: JsoncParseError[] = []
+    const data = parseJsonc(text, errors, { allowTrailingComma: true })
+    if (errors.length) {
+      const lines = text.split("\n")
+      const errorDetails = errors
+        .map((e) => {
+          const beforeOffset = text.substring(0, e.offset).split("\n")
+          const line = beforeOffset.length
+          const column = beforeOffset[beforeOffset.length - 1].length + 1
+          const problemLine = lines[line - 1]
 
-  export type PermissionAction = "allow" | "deny"
+          const error = `${printParseErrorCode(e.error)} at line ${line}, column ${column}`
+          if (!problemLine) return error
+
+          return `${error}\n   Line ${line}: ${problemLine}\n${"".padStart(column + 9)}^`
+        })
+        .join("\n")
+
+      throw new JsonError({
+        path: filepath,
+        message: `\n--- JSONC Input ---\n${text}\n--- Errors ---\n${errorDetails}\n--- End ---`,
+      })
+    }
+
+    const parsed = Info.safeParse(data)
+    if (parsed.success) return parsed.data
+
+    throw new InvalidError({
+      path: filepath,
+      issues: parsed.error.issues,
+    })
+  }
+
+  export async function updateGlobal(config: Info) {
+    const filepath = globalConfigFile()
+    const before = await Bun.file(filepath)
+      .text()
+      .catch((err) => {
+        if (err.code === "ENOENT") return "{}"
+        throw new JsonError({ path: filepath }, { cause: err })
+      })
+
+    if (!filepath.endsWith(".jsonc")) {
+      const existing = parseConfig(before, filepath)
+      await Bun.write(filepath, JSON.stringify(mergeDeep(existing, config), null, 2))
+    } else {
+      const next = patchJsonc(before, config)
+      parseConfig(next, filepath)
+      await Bun.write(filepath, next)
+    }
+
+    global.reset()
+    await Instance.disposeAll()
+    GlobalBus.emit("event", {
+      directory: "global",
+      payload: {
+        type: Event.Disposed.type,
+        properties: {},
+      },
+    })
+  }
+
+  export async function directories() {
+    return state().then((x) => x.directories)
+  }
 }
