@@ -40,12 +40,8 @@ export namespace Skill {
     }),
   )
 
-  // External skill directories to search for (project-level and global)
-  // These follow the directory layout used by Claude Code and other agents.
-  const EXTERNAL_DIRS = [".claude", ".agents"]
-  const EXTERNAL_SKILL_GLOB = new Bun.Glob("skills/**/SKILL.md")
-
   const OPENCODE_SKILL_GLOB = new Bun.Glob("{skill,skills}/**/SKILL.md")
+  const CLAUDE_SKILL_GLOB = new Bun.Glob("skills/**/SKILL.md")
   const SKILL_GLOB = new Bun.Glob("**/SKILL.md")
 
   export const state = Instance.state(async () => {
@@ -105,18 +101,20 @@ export namespace Skill {
     // Scan external skill directories (.claude/skills/, .agents/skills/, etc.)
     // Load global (home) first, then project-level (so project-level overwrites)
     if (!Flag.OPENCODE_DISABLE_EXTERNAL_SKILLS) {
-      for (const dir of EXTERNAL_DIRS) {
+      const externalDirs = [".claude", ".agents"]
+      for (const dir of externalDirs) {
         const root = path.join(Global.Path.home, dir)
-        if (!(await Filesystem.isDir(root))) continue
-        await scanGlob(EXTERNAL_SKILL_GLOB, root, "global")
+        if (await Filesystem.isDir(root)) {
+          await scanGlob(CLAUDE_SKILL_GLOB, root, "global")
+        }
       }
 
       for await (const root of Filesystem.up({
-        targets: EXTERNAL_DIRS,
+        targets: externalDirs,
         start: Instance.directory,
         stop: Instance.worktree,
       })) {
-        await scanGlob(EXTERNAL_SKILL_GLOB, root, "project")
+        await scanGlob(CLAUDE_SKILL_GLOB, root, "project")
       }
     }
 
