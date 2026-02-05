@@ -8,14 +8,12 @@ import { initI18n, t } from "./i18n"
 import { commands } from "./bindings"
 
 export async function createMenu() {
+  const isTauri = !!(window as any).__TAURI_INTERNALS__
+  if (!isTauri) return
+
   try {
-    if (typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__) {
-      if (ostype() !== "macos") return
-    } else {
-      return
-    }
+    if (ostype() !== "macos") return
   } catch (e) {
-    console.warn("Failed to detect OS type in menu initialization:", e)
     return
   }
 

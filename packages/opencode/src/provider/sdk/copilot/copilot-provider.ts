@@ -50,7 +50,9 @@ export interface OpenaiCompatibleProvider {
  * Create an OpenAI Compatible provider instance.
  */
 export function createOpenaiCompatible(options: OpenaiCompatibleProviderSettings = {}): OpenaiCompatibleProvider {
-  const baseURL = withoutTrailingSlash(options.baseURL ?? "https://api.openai.com/v1")
+  const baseURL = withoutTrailingSlash(
+    options.baseURL && options.baseURL !== "undefined" ? options.baseURL : "https://api.openai.com/v1",
+  )
 
   if (!baseURL) {
     throw new Error("baseURL is required")
