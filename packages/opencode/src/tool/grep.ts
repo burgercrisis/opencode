@@ -19,7 +19,10 @@ export const GrepTool = Tool.define("grep", {
     include: z.string().optional().describe('File pattern to include in the search (e.g. "*.js", "*.{ts,tsx}")'),
   }),
   async execute(params, ctx) {
-    const pattern = params.pattern || (() => { throw new Error("pattern is required") })()
+    if (!params.pattern) {
+      throw new Error("pattern is required")
+    }
+    const pattern = params.pattern
 
     await ctx.ask({
       permission: "grep",
@@ -114,50 +117,53 @@ export const GrepTool = Tool.define("grep", {
     const errorOutput = await new Response(proc.stderr).text()
     const exitCode = await proc.exited
 
-    return ((exitCode === 1 && rawMatches.length === 0) || rawMatches.length === 0)
-      ? {
-          title: pattern,
-          metadata: { matches: 0, truncated: false },
-          output: "No files found",
-        }
-      : (exitCode !== 0 && exitCode !== 1 && exitCode !== 2 && !truncated)
-        ? (() => { throw new Error(`ripgrep failed: ${errorOutput}`) })()
-        : (async () => {
-            const hasErrors = exitCode === 2
-            const uniqueFiles = [...new Set(rawMatches.map((m) => m.path))]
-            
-            const fileStats = await uniqueFiles.reduce(async (accPromise, filePath) => {
-              const acc = await accPromise
-              const stats = await Bun.file(filePath).stat().catch(() => null)
-              return acc.set(filePath, stats?.mtime.getTime() ?? 0)
-            }, Promise.resolve(new Map<string, number>()))
+    if (rawMatches.length === 0) {
+      if (exitCode !== 0 && exitCode !== 1 && exitCode !== 2) {
+        throw new Error(`ripgrep failed: ${errorOutput}`)
+      }
+      return {
+        title: pattern,
+        metadata: { matches: 0, truncated: false },
+        output: "No files found",
+      }
+    }
 
-            const matches = rawMatches
-              .map((m) => ({ ...m, modTime: fileStats.get(m.path) ?? 0 }))
-              .sort((a, b) => b.modTime - a.modTime)
+    const hasErrors = exitCode === 2
+    const uniqueFiles = [...new Set(rawMatches.map((m) => m.path))]
+    
+    const statsEntries = await Promise.all(
+      uniqueFiles.map(async (filePath) => {
+        const stats = await Bun.file(filePath).stat().catch(() => null)
+        return [filePath, stats?.mtime.getTime() ?? 0] as [string, number]
+      })
+    )
+    const fileStats = new Map(statsEntries)
 
-            const formattedMatches = matches.reduce((acc, match, i) => {
-              const prev = matches[i - 1]
-              const fileHeader = !prev || prev.path !== match.path ? [`${acc.length > 0 ? "\n" : ""}${match.path}:`] : []
-              const truncatedLineText = match.lineText.length > MAX_LINE_LENGTH
-                ? match.lineText.substring(0, MAX_LINE_LENGTH) + "..."
-                : match.lineText
-              return acc.concat(fileHeader, `  Line ${match.lineNum}: ${truncatedLineText}`)
-            }, [] as string[])
+    const matches = rawMatches
+      .map((m) => ({ ...m, modTime: fileStats.get(m.path) ?? 0 }))
+      .sort((a, b) => b.modTime - a.modTime)
 
-            return {
-              title: pattern,
-              metadata: {
-                matches: matches.length,
-                truncated,
-              },
-              output: [
-                `Found ${matches.length} matches`,
-                ...formattedMatches,
-                ...(truncated ? ["", "(Results are truncated. Consider using a more specific path or pattern.)"] : []),
-                ...(hasErrors ? ["", "(Some paths were inaccessible and skipped)"] : []),
-              ].join("\n"),
-            }
-          })()
+    const formattedMatches = matches.reduce((acc, match, i) => {
+      const prev = matches[i - 1]
+      const fileHeader = !prev || prev.path !== match.path ? [`${acc.length > 0 ? "\n" : ""}${match.path}:`] : []
+      const truncatedLineText = match.lineText.length > MAX_LINE_LENGTH
+        ? match.lineText.substring(0, MAX_LINE_LENGTH) + "..."
+        : match.lineText
+      return acc.concat(fileHeader, `  Line ${match.lineNum}: ${truncatedLineText}`)
+    }, [] as string[])
+
+    return {
+      title: pattern,
+      metadata: {
+        matches: matches.length,
+        truncated,
+      },
+      output: [
+        `Found ${matches.length} matches`,
+        ...formattedMatches,
+        ...(truncated ? ["", "(Results are truncated. Consider using a more specific path or pattern.)"] : []),
+        ...(hasErrors ? ["", "(Some paths were inaccessible and skipped)"] : []),
+      ].join("\n"),
+    }
   },
 })
