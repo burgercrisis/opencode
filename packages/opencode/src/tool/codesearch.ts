@@ -74,7 +74,7 @@ export const CodeSearchTool = Tool.define("codesearch", {
       },
     }
 
-    const { signal, clearTimeout } = abortAfterAny(30000, ctx.abort)
+    const { signal, clearTimeout } = abortAfterAny(60000, ctx.abort)
 
     try {
       const headers: Record<string, string> = {
