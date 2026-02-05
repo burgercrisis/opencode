@@ -162,12 +162,22 @@ export function processPowerShellOutput(output: string, command: string): { outp
  * Process CMD command output to fix quote artifacts from variable expansion.
  * @param output The raw output from CMD command execution
  * @param command The original command that was executed
- * @returns Processed output with quote artifacts removed
+ * @returns Processed output and whether it contains errors
  */
-export function processCmdOutput(output: string, command: string): string {
+export function processCmdOutput(output: string, command: string): { output: string; hasErrors: boolean } {
   const hasVariables = /%[^%]+%/g.test(command)
-  if (hasVariables) return output.replace(/"$/, "")
-  return output
+  const processed = hasVariables ? output.replace(/"$/, "") : output
+
+  const errorPatterns = [
+    /is not recognized as an internal or external command/i,
+    /The system cannot find the path specified/i,
+    /Access is denied/i,
+    /The filename, directory name, or volume label syntax is incorrect/i,
+    /The system cannot find the file specified/i,
+  ]
+
+  const hasErrors = errorPatterns.some((p) => p.test(processed))
+  return { output: processed, hasErrors }
 }
 
 
@@ -331,6 +341,7 @@ export const BashTool = Tool.define("bash", async () => {
         stdout: "pipe",
         stderr: "pipe",
         windowsHide: true,
+        windowsVerbatimArguments: spawnConfig.windowsVerbatimArguments,
       })
 
       const decoder = new TextDecoder()
@@ -346,7 +357,7 @@ export const BashTool = Tool.define("bash", async () => {
             description: params.description,
           } as any,
         })
-        if (result.done) return acc
+        if (result.done) return newAcc
         return read(reader, newAcc)
       }
 
@@ -379,33 +390,34 @@ export const BashTool = Tool.define("bash", async () => {
 
       const { output: finalOutput, hasErrors } = iife(() => {
         if (Shell.isPowerShellCommand(processedCommand)) return processPowerShellOutput(output, processedCommand)
-        if (Shell.isCmdCommand(processedCommand)) return { output: processCmdOutput(output, processedCommand), hasErrors: false }
+        if (Shell.isCmdCommand(processedCommand)) return processCmdOutput(output, processedCommand)
         return { output, hasErrors: false }
       })
 
-      const afterTrigger = await Plugin.trigger(
+      const executionStatus = await Plugin.trigger(
         "tool.execute.after",
         { tool: "bash", sessionID: ctx.sessionID, callID: ctx.callID },
         {
           output: finalOutput,
           metadata: {
-            exit: Shell.normalizeExitCode(proc.exitCode, hasErrors),
-            timedOut: status.timedOut,
-            aborted: status.aborted,
+            exit: proc.exitCode,
+            aborted: ctx.abort.aborted,
+            timedOut: false, // TODO: support timeout
           },
         },
       )
 
+      const afterTrigger = executionStatus
       const resultOutput = afterTrigger.output ?? finalOutput
-      const resultExitCode = status.timedOut
+      const resultExitCode = executionStatus.timedOut
         ? 124
-        : (status.aborted
-            ? 130
-            : (afterTrigger.metadata?.exit ?? Shell.normalizeExitCode(proc.exitCode, hasErrors)))
+        : executionStatus.aborted
+          ? 130
+          : Shell.normalizeExitCode(afterTrigger.metadata?.exit ?? proc.exitCode, hasErrors, finalOutput)
 
       const resultMetadata = [
-        status.timedOut ? `bash tool terminated command after exceeding timeout ${timeout} ms` : null,
-        status.aborted ? "User aborted the command" : null,
+        executionStatus.timedOut ? `bash tool terminated command after exceeding timeout ${timeout} ms` : null,
+        executionStatus.aborted ? "User aborted the command" : null,
       ].filter((x): x is string => x !== null)
 
       const outputWithMetadata =
