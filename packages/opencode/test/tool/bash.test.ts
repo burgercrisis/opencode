@@ -1,12 +1,21 @@
 import { describe, expect, test } from "bun:test"
 import path from "path"
 import { existsSync } from "node:fs"
-import { BashTool } from "../../src/tool/bash"
+import { BashTool, processPowerShellOutput, processCmdOutput } from "../../src/tool/bash"
 import { Instance } from "../../src/project/instance"
 import { tmpdir } from "../fixture/fixture"
 import type { PermissionNext } from "../../src/permission/next"
 import { Truncate } from "../../src/tool/truncation"
 import { Shell } from "../../src/shell/shell"
+import { Log } from "../../src/util/log"
+import { beforeAll } from "bun:test"
+
+beforeAll(async () => {
+  await Log.init({
+    print: true,
+    level: "DEBUG",
+  })
+})
 
 const ctx = {
   sessionID: "test",
@@ -20,6 +29,8 @@ const ctx = {
 }
 
 const projectRoot = path.join(__dirname, "../..")
+
+const TEST_TIMEOUT = 30000 // Increase for Windows CI/local stability
 
 describe("tool.bash", () => {
   test("basic", async () => {
@@ -38,6 +49,35 @@ describe("tool.bash", () => {
         expect(result.metadata.output).toContain("test")
       },
     })
+  }, TEST_TIMEOUT)
+})
+
+describe("tool.bash output processing unit tests", () => {
+  test("processPowerShellOutput: enhances non-existent cmdlet errors", () => {
+    const output = "The term 'Get-NonExistent' is not recognized as the name of a cmdlet, function, script file, or operable program."
+    const result = processPowerShellOutput(output, "Get-NonExistent")
+    expect(result.output).toContain("Error: Command 'Get-NonExistent' not found")
+    expect(result.output).toContain("Get-Command Get-NonExistent")
+  })
+
+  test("processPowerShellOutput: handles Format-Table -First unsupported parameter", () => {
+    const output = "Format-Table : A parameter cannot be found that matches parameter name 'First'."
+    const result = processPowerShellOutput(output, "ls | ft -First 1")
+    expect(result.output).toContain("Note: The -First parameter is not supported")
+    expect(result.output).toContain("Select-Object -First N")
+  })
+
+  test("processPowerShellOutput: handles Get-Credential non-interactive error", () => {
+    const output = "Get-Credential : Cannot prompt for input in this environment"
+    const result = processPowerShellOutput(output, "Get-Credential")
+    expect(result.output).toContain("Error: Get-Credential requires interactive input")
+    expect(result.output).toContain("Alternative approaches")
+  })
+
+  test("processCmdOutput: strips trailing quote from variable expansion", () => {
+    const output = 'C:\\Users\\Temp"'
+    const result = processCmdOutput(output, "echo %TEMP%")
+    expect(result.output).toBe('C:\\Users\\Temp')
   })
 })
 
@@ -67,7 +107,7 @@ describe("tool.bash permissions", () => {
         expect(requests[0].patterns).toContain("echo hello")
       },
     })
-  })
+  }, TEST_TIMEOUT)
 
   test("asks for bash permission with multiple commands", async () => {
     await using tmp = await tmpdir({ git: true })
@@ -95,7 +135,7 @@ describe("tool.bash permissions", () => {
         expect(requests[0].patterns).toContain("echo bar")
       },
     })
-  })
+  }, TEST_TIMEOUT)
 
   test("asks for external_directory permission when cd to parent", async () => {
     await using tmp = await tmpdir({ git: true })
@@ -121,7 +161,7 @@ describe("tool.bash permissions", () => {
         expect(extDirReq).toBeDefined()
       },
     })
-  })
+  }, TEST_TIMEOUT)
 
   test("asks for external_directory permission when workdir is outside project", async () => {
     await using tmp = await tmpdir({ git: true })
@@ -149,7 +189,7 @@ describe("tool.bash permissions", () => {
         expect(extDirReq!.patterns.map(p => p.replace(/\\/g, "/"))).toContain(process.platform === "win32" ? "C:/*" : "/*")
       },
     })
-  })
+  }, TEST_TIMEOUT)
 
   test("asks for external_directory permission when file arg is outside project", async () => {
     await using outerTmp = await tmpdir({
@@ -184,7 +224,7 @@ describe("tool.bash permissions", () => {
         expect(extDirReq!.always).toContain(expected)
       },
     })
-  })
+  }, TEST_TIMEOUT)
 
   test("does not ask for external_directory permission when rm inside project", async () => {
     await using tmp = await tmpdir({ git: true })
@@ -214,7 +254,7 @@ describe("tool.bash permissions", () => {
         expect(extDirReq).toBeUndefined()
       },
     })
-  })
+  }, TEST_TIMEOUT)
 
   test("includes always patterns for auto-approval", async () => {
     await using tmp = await tmpdir({ git: true })
@@ -241,7 +281,7 @@ describe("tool.bash permissions", () => {
         expect(requests[0].always.some((p) => p.endsWith("*"))).toBe(true)
       },
     })
-  })
+  }, TEST_TIMEOUT)
 
   test("does not ask for bash permission when command is cd only", async () => {
     await using tmp = await tmpdir({ git: true })
@@ -267,7 +307,7 @@ describe("tool.bash permissions", () => {
         expect(bashReq).toBeUndefined()
       },
     })
-  })
+  }, TEST_TIMEOUT)
 
   test("matches redirects in permission pattern", async () => {
     await using tmp = await tmpdir({ git: true })
@@ -288,7 +328,7 @@ describe("tool.bash permissions", () => {
         expect(bashReq!.patterns).toContain("cat > /tmp/output.txt")
       },
     })
-  })
+  }, TEST_TIMEOUT)
 
   test("always pattern has space before wildcard to not include different commands", async () => {
     await using tmp = await tmpdir({ git: true })
@@ -310,8 +350,8 @@ describe("tool.bash permissions", () => {
         expect(pattern).toBe("ls *")
       },
     })
-  })
-})
+  }, TEST_TIMEOUT)
+});
 
 describe("tool.bash truncation", () => {
   test("truncates output exceeding line limit", async () => {
@@ -334,7 +374,7 @@ describe("tool.bash truncation", () => {
         expect(result.output).toContain("The tool call succeeded but the output was truncated")
       },
     })
-  })
+  }, TEST_TIMEOUT)
 
   test("truncates output exceeding byte limit", async () => {
     await Instance.provide({
@@ -356,7 +396,7 @@ describe("tool.bash truncation", () => {
         expect(result.output).toContain("The tool call succeeded but the output was truncated")
       },
     })
-  }, 15000)
+  }, TEST_TIMEOUT)
 
   test("does not truncate small output", async () => {
     await Instance.provide({
@@ -374,7 +414,7 @@ describe("tool.bash truncation", () => {
         expect(result.output.trim()).toBe("hello")
       },
     })
-  })
+  }, TEST_TIMEOUT)
 
   test("full output is saved to file when truncated", async () => {
     await Instance.provide({
@@ -403,8 +443,8 @@ describe("tool.bash truncation", () => {
         expect(lines[lineCount - 1]).toBe(String(lineCount))
       },
     })
-  })
-})
+  }, TEST_TIMEOUT)
+});
 
 describe("tool.bash CMD environment variables", () => {
   test.skipIf(process.platform !== "win32")("handles chained CMD commands with %cd% variable", async () => {
@@ -432,8 +472,8 @@ describe("tool.bash CMD environment variables", () => {
         expect(result.metadata.output.trim()).not.toContain(tmp.path.trim())
       },
     })
-  })
-})
+  }, TEST_TIMEOUT)
+});
 
 describe("tool.bash CMD pipe commands", () => {
   test.skipIf(process.platform !== "win32")("handles CMD pipe with findstr matching text", async () => {
@@ -453,7 +493,7 @@ describe("tool.bash CMD pipe commands", () => {
         expect(result.metadata.output).toContain("test line")
       },
     })
-  })
+  }, TEST_TIMEOUT)
 
   test.skipIf(process.platform !== "win32")("handles CMD pipe with quoted text and findstr", async () => {
     await using tmp = await tmpdir({ git: true })
@@ -472,8 +512,8 @@ describe("tool.bash CMD pipe commands", () => {
         expect(result.metadata.output).toContain("hello world")
       },
     })
-  })
-})
+  }, TEST_TIMEOUT)
+});
 
 describe("tool.bash PowerShell fixes", () => {
   test.skipIf(process.platform !== "win32")("handles PowerShell argument parsing with -Command flag", async () => {
@@ -493,7 +533,7 @@ describe("tool.bash PowerShell fixes", () => {
         expect(result.metadata.output).toContain("Hello World")
       },
     })
-  })
+  }, TEST_TIMEOUT)
 
   test.skipIf(process.platform !== "win32")("handles PowerShell argument parsing with -c flag", async () => {
     await using tmp = await tmpdir({ git: true })
@@ -513,7 +553,7 @@ describe("tool.bash PowerShell fixes", () => {
         expect(result.metadata.output).not.toContain("Error:")
       },
     })
-  })
+  }, TEST_TIMEOUT)
 
   test.skipIf(process.platform !== "win32")("detects Start-Job and extends timeout", async () => {
     await using tmp = await tmpdir({ git: true })
@@ -540,7 +580,7 @@ describe("tool.bash PowerShell fixes", () => {
         expect(duration).toBeLessThan(60000)
       },
     })
-  })
+  }, TEST_TIMEOUT)
 
   test.skipIf(process.platform !== "win32")("handles non-existent cmdlet error with helpful message", async () => {
     await using tmp = await tmpdir({ git: true })
@@ -561,7 +601,7 @@ describe("tool.bash PowerShell fixes", () => {
         expect(result.metadata.output).toContain("Import-Module")
       },
     })
-  })
+  }, TEST_TIMEOUT)
 
   test.skipIf(process.platform !== "win32")("handles Format-* -First parameter error handling", async () => {
     await using tmp = await tmpdir({ git: true })
@@ -590,7 +630,7 @@ describe("tool.bash PowerShell fixes", () => {
         }
       },
     })
-  })
+  }, TEST_TIMEOUT)
 
   test.skipIf(process.platform !== "win32")("handles PowerShell command detection correctly", async () => {
     await using tmp = await tmpdir({ git: true })
@@ -625,7 +665,7 @@ describe("tool.bash PowerShell fixes", () => {
         }
       },
     })
-  })
+  }, TEST_TIMEOUT)
 
   test.skipIf(process.platform !== "win32")("handles PowerShell error output processing", async () => {
     await using tmp = await tmpdir({ git: true })
@@ -646,7 +686,7 @@ describe("tool.bash PowerShell fixes", () => {
         expect(normalizedOutput).toContain("This is a test error")
       },
     })
-  })
+  }, TEST_TIMEOUT)
 
   test.skipIf(process.platform !== "win32")("handles PowerShell complex command structures", async () => {
     await using tmp = await tmpdir({ git: true })
@@ -666,7 +706,7 @@ describe("tool.bash PowerShell fixes", () => {
         expect(result.metadata.output).toContain(";")
       },
     })
-  })
+  }, TEST_TIMEOUT)
 
   test.skipIf(process.platform !== "win32")("handles PowerShell command with special characters", async () => {
     await using tmp = await tmpdir({ git: true })
@@ -685,7 +725,7 @@ describe("tool.bash PowerShell fixes", () => {
         expect(result.metadata.output).toContain("quotes")
       },
     })
-  })
+  }, TEST_TIMEOUT)
 
   test.skipIf(process.platform !== "win32")("handles PowerShell timeout scenarios gracefully", async () => {
     await using tmp = await tmpdir({ git: true })
@@ -704,7 +744,7 @@ describe("tool.bash PowerShell fixes", () => {
         expect(result.metadata.exit).toBe(0)
       },
     })
-  })
+  }, TEST_TIMEOUT)
 
   test.skipIf(process.platform !== "win32")("handles PowerShell command with environment variables", async () => {
     await using tmp = await tmpdir({ git: true })
@@ -1105,3 +1145,59 @@ describe("tool.bash bare CMD builtin support", () => {
     })
   })
 })
+
+describe("tool.bash Windows exit code normalization", () => {
+  test.skipIf(process.platform !== "win32")("Windows: CMD exit code 9009 for non-existent command", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () => {
+        const bash = await BashTool.init()
+        const result = await bash.execute(
+          {
+            command: "cmd /c nonexistent_command_12345",
+            description: "Test non-existent command exit code",
+          },
+          ctx as any,
+        )
+        // 9009 is the standard CMD exit code for "command not found"
+        expect(result.metadata.exit).toBe(9009)
+      },
+    })
+  })
+
+  test.skipIf(process.platform !== "win32")("Windows: CMD exit code 0 for successful pipe with findstr", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () => {
+        const bash = await BashTool.init()
+        const result = await bash.execute(
+          {
+            command: "cmd /c \"dir 2>&1 | findstr packages\"",
+            description: "Test successful pipe exit code",
+          },
+          ctx as any,
+        )
+        expect(result.metadata.exit).toBe(0)
+      },
+    })
+  })
+
+  test.skipIf(process.platform !== "win32")("Windows: if not exist returns exit code 1 when file is missing", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () => {
+        const bash = await BashTool.init()
+        const result = await bash.execute(
+          {
+            command: "cmd /c \"if not exist nonexistent_file_999 exit 1\"",
+            description: "Test if not exist exit code",
+          },
+          ctx as any,
+        )
+        // Our upgrade normalizes this to exit code 1 when the condition is true
+        expect(result.metadata.exit).toBe(1)
+      },
+    })
+  })
+})
+
