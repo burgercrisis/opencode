@@ -344,6 +344,7 @@ export namespace Shell {
           executable: process.env.COMSPEC || "cmd.exe",
           args: [...cmdArgs, finalToExecute],
           useShellFlag: false,
+          windowsVerbatimArguments: true,
         }
       }
     }
@@ -355,6 +356,7 @@ export namespace Shell {
         executable: process.env.COMSPEC || "cmd.exe",
         args: ["/c", finalCommand],
         useShellFlag: false,
+        windowsVerbatimArguments: true,
       }
     }
  
@@ -366,10 +368,21 @@ export namespace Shell {
     }
   }
 
-  /**
-   * Normalizes the exit code based on the raw exit code and error status
-   */
-  export function normalizeExitCode(exitCode: number | null | undefined, hasErrors: boolean): number {
+  export function normalizeExitCode(exitCode: number | null | undefined, hasErrors: boolean, output?: string): number {
+    if (exitCode === 1 && output) {
+      const normalizedOutput = output.replace(/\s+/g, " ")
+      const match1 = /is not recognized as an internal or external command/i.test(normalizedOutput)
+      const match2 = /The system cannot find the path specified/i.test(normalizedOutput)
+      if (match1 || match2) {
+        return 9009
+      }
+
+      const match3 = /The system cannot find the file specified/i.test(normalizedOutput)
+      if (match3) {
+        return 2
+      }
+    }
+    
     if (exitCode === 0 && hasErrors) return 1
     if (exitCode !== null && exitCode !== undefined) return exitCode
     return hasErrors ? 1 : 0
