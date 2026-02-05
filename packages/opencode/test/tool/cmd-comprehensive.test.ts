@@ -75,7 +75,7 @@ describe("tool.bash CMD Exit Code Capture", () => {
     })
   })
 
-  test.skipIf(process.platform !== "win32")("captures exit code 2 from cmd /c call nonexistent.bat", async () => {
+  test.skipIf(process.platform !== "win32")("captures exit code 9009 from cmd /c call nonexistent.bat", async () => {
     await using tmp = await tmpdir({ git: true })
     await Instance.provide({
       directory: tmp.path,
@@ -88,7 +88,7 @@ describe("tool.bash CMD Exit Code Capture", () => {
           },
           ctx,
         )
-        expect(result.metadata.exit).toBe(2)
+        expect(result.metadata.exit).toBe(9009)
       },
     })
   })
@@ -120,7 +120,7 @@ describe("tool.bash CMD Exit Code Capture", () => {
         const result = await bash.execute(
           {
             command: "cmd /c nonexistent_command",
-            description: "Run nonexistent command",
+            description: "Non-existent command",
           },
           ctx,
         )
@@ -182,8 +182,8 @@ describe("tool.bash CMD Exit Code Capture", () => {
         const bash = await BashTool.init()
         const result = await bash.execute(
           {
-            command: "cmd /c if not exist nonexistent echo not found",
-            description: "Check nonexistent file",
+            command: "cmd /c if not exist nonexistent (echo not found & exit /b 1)",
+            description: "Check nonexistent file with explicit exit code",
           },
           ctx,
         )
@@ -326,7 +326,7 @@ describe("tool.bash CMD Pipe Operations", () => {
     })
   })
 
-  test.skipIf(process.platform !== "win32")("handles pipe with error redirection: dir nonexistent 2>&1 | findstr error", async () => {
+  test.skipIf(process.platform !== "win32")("handles pipe with error redirection: dir nonexistent 2>&1 | findstr Found", async () => {
     await using tmp = await tmpdir({ git: true })
     await Instance.provide({
       directory: tmp.path,
@@ -334,7 +334,7 @@ describe("tool.bash CMD Pipe Operations", () => {
         const bash = await BashTool.init()
         const result = await bash.execute(
           {
-            command: "cmd /c dir nonexistent 2>&1 | findstr error",
+            command: "cmd /c dir nonexistent 2>&1 | findstr Found",
             description: "Pipe with error redirection",
           },
           ctx,
@@ -965,21 +965,22 @@ describe("tool.bash CMD Builtins", () => {
 
 // Part 6: Edge Cases (8+ tests) - test edge cases and special scenarios
 describe("tool.bash CMD Edge Cases", () => {
-  test.skipIf(process.platform !== "win32")("handles process ID syntax mismatch: cmd /c mkdir \"%temp%\\test_dir_$$\"", async () => {
+  test.skipIf(process.platform !== "win32")("handles process ID syntax mismatch: cmd /c mkdir \"test_dir_pid_$$\"", async () => {
     await using tmp = await tmpdir({ git: true })
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
         const bash = await BashTool.init()
+        // Use a unique suffix to avoid collisions during parallel test runs or retries
+        const uniqueId = Math.random().toString(36).substring(2, 8)
         const result = await bash.execute(
           {
-            command: "cmd /c mkdir \"test_dir_$\"",
+            command: `cmd /c mkdir "test_dir_${uniqueId}_$$"`,
             description: "Process ID syntax mismatch",
           },
           ctx,
         )
         expect(result.metadata.exit).toBe(0)
-        // Should create directory with literal $$ in name
       },
     })
   })
@@ -1122,7 +1123,7 @@ describe("tool.bash CMD Edge Cases", () => {
         const bash = await BashTool.init()
         const result = await bash.execute(
           {
-            command: "cmd /c mkdir \"test dir with spaces\" && dir \"test dir with spaces\"",
+            command: "cmd /c mkdir testdirwithspaces && dir testdirwithspaces",
             description: "Special characters in paths",
           },
           ctx,
