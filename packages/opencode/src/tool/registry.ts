@@ -36,21 +36,20 @@ export namespace ToolRegistry {
     const glob = new Bun.Glob("{tool,tools}/*.{js,ts}")
     const directories = await Config.directories()
 
-    const customToolsFromDirs = await directories.reduce(async (accPromise, dir) => {
-      const acc = await accPromise
-      const matches = await Array.fromAsync(glob.scan({ cwd: dir, absolute: true, followSymlinks: true, dot: true }))
-      
-      const dirTools = await matches.reduce(async (dirAccPromise, match) => {
-        const dirAcc = await dirAccPromise
-        const namespace = path.basename(match, path.extname(match))
-        const mod = await import(match)
-        const entries = Object.entries<ToolDefinition>(mod)
-        const matchedTools = entries.map(([id, def]) => fromPlugin(id === "default" ? namespace : `${namespace}_${id}`, def))
-        return dirAcc.concat(matchedTools)
-      }, Promise.resolve([] as Tool.Info[]))
+    const custom: Tool.Info[] = []
+    const matches = await Config.directories().then((dirs) =>
+      dirs.flatMap((dir) => [...glob.scanSync({ cwd: dir, absolute: true, followSymlinks: true, dot: true })]),
+    )
+    if (matches.length) await Config.waitForDependencies()
+    for (const match of matches) {
+      const namespace = path.basename(match, path.extname(match))
+      const mod = await import(match)
+      for (const [id, def] of Object.entries<ToolDefinition>(mod)) {
+        custom.push(fromPlugin(id === "default" ? namespace : `${namespace}_${id}`, def))
+      }
+    }
 
-      return acc.concat(dirTools)
-    }, Promise.resolve([] as Tool.Info[]))
+    const customToolsFromDirs = custom
 
     const plugins = await Plugin.list()
     const customToolsFromPlugins = plugins.reduce((acc, plugin) => {

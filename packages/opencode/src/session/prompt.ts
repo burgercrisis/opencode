@@ -157,8 +157,6 @@ export namespace SessionPrompt {
     const message = await createUserMessage(input)
     await Session.touch(input.sessionID)
 
-    // this is backwards compatibility for allowing `tools` to be specified when
-    // prompting
     const permissions: PermissionNext.Ruleset = []
     for (const [tool, enabled] of Object.entries(input.tools ?? {})) {
       permissions.push({
@@ -1313,20 +1311,11 @@ export namespace SessionPrompt {
               // have to normalize, symbol search returns absolute paths
               // Decode the pathname since URL constructor doesn't automatically decode it
               const filepath = fileURLToPath(part.url)
-              
-              // Type safety: Handle file stat errors gracefully
-              let stat: any
-              try {
-                stat = await Bun.file(filepath).stat()
-              } catch (fileError) {
-                log.error("Failed to stat file", { 
-                  filepath, 
-                  error: fileError instanceof Error ? fileError.message : String(fileError)
-                })
-                stat = { isDirectory: () => false }
-              }
+              const stat = await Bun.file(filepath)
+                .stat()
+                .catch(() => undefined)
 
-              if (stat.isDirectory()) {
+              if (stat?.isDirectory()) {
                 part.mime = "application/x-directory"
               }
 
@@ -1339,7 +1328,7 @@ export namespace SessionPrompt {
                 }
                 
                 // Type safety: Safely parse range values
-                if (range.start != null && range.start !== null) {
+                if (range.start != null) {
                   const filePathURI = part.url.split("?")[0]
                   let start = parseInt(range.start, 10)
                   let end = range.end ? parseInt(range.end, 10) : undefined
@@ -1349,7 +1338,7 @@ export namespace SessionPrompt {
                     // some LSP servers (eg, gopls) don't give full range in
                     // workspace/symbol searches, so we'll try to find the
                     // symbol in the document to get the full range
-                    if (start === end && end !== undefined) {
+                    if (start === end) {
                       try {
                         const symbols = await LSP.documentSymbol(filePathURI)
                         if (Array.isArray(symbols)) {
@@ -1372,6 +1361,8 @@ export namespace SessionPrompt {
                           filePathURI, 
                           error: symbolError instanceof Error ? symbolError.message : String(symbolError)
                         })
+                      }
+                    }
                       }
                     }
                   }

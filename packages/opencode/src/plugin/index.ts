@@ -43,10 +43,11 @@ export namespace Plugin {
       }),
     )
 
-    const initialPlugins = [...(config.plugin ?? [])]
+    const plugins = [...(config.plugin ?? [])]
+    if (plugins.length) await Config.waitForDependencies()
     const pluginList = Flag.OPENCODE_DISABLE_DEFAULT_PLUGINS
-      ? initialPlugins
-      : [...initialPlugins, ...BUILTIN]
+      ? plugins
+      : [...plugins, ...BUILTIN]
 
     const externalHooks = await pluginList.reduce(async (accPromise, rawPlugin) => {
       const acc = await accPromise
