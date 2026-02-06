@@ -54,16 +54,17 @@ export namespace Config {
   function mergeConfigConcatArrays(target: Info, source: Info): Info {
     const merged = mergeDeep(target, source)
     if (target.plugin && source.plugin) {
-      merged.plugin = Array.from(new Set([...target.plugin, ...source.plugin]))
+      merged.plugin = unique([...target.plugin, ...source.plugin])
     }
     if (target.instructions && source.instructions) {
-      merged.instructions = Array.from(new Set([...target.instructions, ...source.instructions]))
+      merged.instructions = unique([...target.instructions, ...source.instructions])
     }
     return merged
   }
 
   export const state = Instance.state(async () => {
     const auth = await Auth.all()
+    const { Session } = await import("@/session")
 
     // Config loading order (low -> high precedence): https://opencode.ai/docs/config#precedence-order
     // 1) Remote .well-known/opencode (org defaults)
@@ -80,7 +81,8 @@ export namespace Config {
         log.debug("fetching remote config", { url: `${key}/.well-known/opencode` })
         const response = await fetch(`${key}/.well-known/opencode`)
         if (!response.ok) {
-          throw new Error(`failed to fetch remote config from ${key}: ${response.status}`)
+          log.warn(`failed to fetch remote config from ${key}: ${response.status}`)
+          continue
         }
         const wellknown = (await response.json()) as any
         const remoteConfig = wellknown.config ?? {}
@@ -123,6 +125,7 @@ export namespace Config {
     result.plugin = result.plugin || []
     
     const base = result
+    const deps: Promise<void>[] = []
 
     const directories = [
       Global.Path.config,
@@ -157,21 +160,24 @@ export namespace Config {
       const acc = await accPromise
 
       log.debug("Scanning directory for config", { dir })
+      let dirConfig: Info = {}
       if (dir.endsWith(".opencode") || dir === Flag.OPENCODE_CONFIG_DIR) {
         for (const file of ["opencode.jsonc", "opencode.json"]) {
           log.debug(`loading config from ${path.join(dir, file)}`)
           const loaded = await loadFile(path.join(dir, file))
-          result = mergeConfigConcatArrays(result, loaded)
-          // to satisfy the type checker
-          result.agent ??= {}
-          result.mode ??= {}
-          result.plugin ??= []
+          dirConfig = mergeConfigConcatArrays(dirConfig, loaded)
         }
       }
 
-      const withDirConfig = result
+      const commands = await loadCommand(dir)
+      const agents = mergeDeep(await loadAgent(dir), await loadMode(dir))
+      const plugins = await loadPlugin(dir)
 
       const shouldInstall = await (async () => {
+        // Always install if OPENCODE_CONFIG_DIR is set (used in tests)
+        if (dir === Flag.OPENCODE_CONFIG_DIR) {
+          return await needsInstall(dir)
+        }
         // Only install in test if explicitly requested
         if (Installation.isTest() && !Flag.OPENCODE_FORCE_INSTALL) {
           return false
@@ -180,20 +186,50 @@ export namespace Config {
       })()
 
       if (shouldInstall) {
-        await installDependencies(dir)
+        const installPromise = installDependencies(dir)
+        deps.push(installPromise)
+        await installPromise
       }
 
-      return {
-        ...withDirConfig,
-        command: mergeDeep(withDirConfig.command ?? {}, await loadCommand(dir)),
+      const merged = mergeConfigConcatArrays(acc, {
+        ...dirConfig,
+        command: mergeDeep(dirConfig.command ?? {}, commands),
         // Merge agents and modes into agent for backwards compatibility
-        agent: mergeDeep(
-          withDirConfig.agent ?? {},
-          mergeDeep(await loadAgent(dir), await loadMode(dir)),
-        ),
-        plugin: [...(withDirConfig.plugin ?? []), ...(await loadPlugin(dir))],
-      } as any
-    }, Promise.resolve(base as any))
+        agent: mergeDeep(dirConfig.agent ?? {}, agents),
+        plugin: unique([...(dirConfig.plugin ?? []), ...plugins]),
+      } as any)
+
+      return deduplicatePluginsInConfig(merged)
+    }, Promise.resolve(result as any))
+
+    function deduplicatePluginsInConfig(config: Info): Info {
+      if (config.plugin) {
+        config.plugin = deduplicatePlugins(config.plugin)
+      }
+      return config
+    }
+
+    // Resolve npm plugins relative to the project directory if they aren't file URLs
+    if (finalResult.plugin) {
+      finalResult.plugin = await Promise.all(
+        finalResult.plugin.map(async (p: string) => {
+          if (p.startsWith("file://")) return p
+          try {
+            let baseUrl = pathToFileURL(Instance.directory).href
+            if (!baseUrl.endsWith("/")) baseUrl += "/"
+            return import.meta.resolve(p, baseUrl)
+          } catch (e) {
+            // Fallback to global resolve if project-local fails
+            try {
+              return import.meta.resolve(p)
+            } catch (e2) {
+              log.warn("failed to resolve plugin", { plugin: p, error: e2 })
+              return p
+            }
+          }
+        }),
+      )
+    }
 
     // Inline config content overrides all non-managed config sources.
     if (Flag.OPENCODE_CONFIG_CONTENT) {
@@ -201,11 +237,8 @@ export namespace Config {
       log.debug("loaded custom config from OPENCODE_CONFIG_CONTENT")
     }
 
-    // Load managed config files last (highest priority) - enterprise admin-controlled
-    // Kept separate from directories array to avoid write operations when installing plugins
-    // which would fail on system directories requiring elevated permissions
-    // This way it only loads config file and not skills/plugins/commands
-    if (existsSync(managedConfigDir)) {
+    // Managed settings (Enterprise) have highest precedence.
+    if (!Flag.OPENCODE_DISABLE_MANAGED_CONFIG && existsSync(managedConfigDir)) {
       for (const file of ["opencode.jsonc", "opencode.json"]) {
         finalResult = mergeConfigConcatArrays(finalResult, await loadFile(path.join(managedConfigDir, file)))
       }
@@ -362,8 +395,9 @@ export namespace Config {
   }
 
   function rel(item: string, patterns: string[]) {
-    const pattern = patterns.find((p) => item.includes(p))
-    return pattern ? item.slice(item.indexOf(pattern) + pattern.length) : undefined
+    const normalized = item.replaceAll("\\", "/")
+    const pattern = patterns.find((p) => normalized.includes(p))
+    return pattern ? normalized.slice(normalized.indexOf(pattern) + pattern.length) : undefined
   }
 
   function trim(file: string) {
@@ -463,6 +497,7 @@ export namespace Config {
                   ...md.data,
                   // TODO: This should be parsed by the agent schema
                   model: md.data.model,
+                  prompt: md.content.trim(),
                   system: md.content.trim(),
                 }
                 const parsed = Agent.safeParse(config)
@@ -511,7 +546,7 @@ export namespace Config {
     )
   }
 
-  const PLUGIN_GLOB = new Bun.Glob("{plugin,plugins}/**/*.json")
+  const PLUGIN_GLOB = new Bun.Glob("{plugin,plugins}/**/*.{json,js,ts}")
   async function loadPlugin(dir: string) {
     const items = await Array.fromAsync(
       PLUGIN_GLOB.scan({
@@ -653,7 +688,8 @@ export namespace Config {
   // Capture original key order before zod reorders, then rebuild in original order
   const permissionPreprocess = (val: unknown) => {
     if (typeof val === "object" && val !== null && !Array.isArray(val)) {
-      return { __originalKeys: Object.keys(val), ...val }
+      const keys = Object.keys(val)
+      return { ...val, __originalKeys: keys }
     }
     return val
   }
@@ -666,6 +702,10 @@ export namespace Config {
     const result: Record<string, PermissionRule> = {}
     for (const key of __originalKeys) {
       if (key in rest) result[key] = rest[key] as PermissionRule
+    }
+    // Also include any keys that might have been added by Zod defaults or catchall but weren't in originalKeys
+    for (const key of Object.keys(rest)) {
+      if (!(key in result)) result[key] = rest[key] as PermissionRule
     }
     return result
   }
