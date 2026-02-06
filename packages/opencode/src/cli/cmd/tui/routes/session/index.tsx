@@ -40,6 +40,7 @@ import { TodoWriteTool } from "@/tool/todo"
 import type { GrepTool } from "@/tool/grep"
 import type { ListTool } from "@/tool/ls"
 import type { EditTool } from "@/tool/edit"
+import type { PatchTool } from "@/tool/patch"
 import type { ApplyPatchTool } from "@/tool/apply_patch"
 import type { WebFetchTool } from "@/tool/webfetch"
 import type { TaskTool } from "@/tool/task"
@@ -62,13 +63,13 @@ import { DialogSessionRename } from "../../component/dialog-session-rename"
 import { Sidebar } from "./sidebar"
 import { Flag } from "@/flag/flag"
 import { LANGUAGE_EXTENSIONS } from "@/lsp/language"
-import parsers from "../../../../../../parsers-config.ts"
+import parsers from "../../../../../../parsers-config"
 import { Clipboard } from "../../util/clipboard"
 import { Toast, useToast } from "../../ui/toast"
-import { useKV } from "../../context/kv.tsx"
+import { useKV } from "../../context/kv"
 import { Editor } from "../../util/editor"
 import stripAnsi from "strip-ansi"
-import { Footer } from "./footer.tsx"
+import { Footer } from "./footer"
 import { usePromptRef } from "../../context/prompt"
 import { useExit } from "../../context/exit"
 import { Filesystem } from "@/util/filesystem"
@@ -77,7 +78,7 @@ import { PermissionPrompt } from "./permission"
 import { QuestionPrompt } from "./question"
 import { DialogExportOptions } from "../../ui/dialog-export-options"
 import { formatTranscript } from "../../util/transcript"
-import { UI } from "@/cli/ui.ts"
+import { UI } from "@/cli/ui"
 
 addDefaultParsers(parsers.parsers)
 
@@ -1455,6 +1456,9 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
         <Match when={props.part.tool === "task"}>
           <Task {...toolprops} />
         </Match>
+        <Match when={props.part.tool === "patch"}>
+          <Patch {...toolprops} />
+        </Match>
         <Match when={props.part.tool === "apply_patch"}>
           <ApplyPatch {...toolprops} />
         </Match>
@@ -1830,19 +1834,31 @@ function Task(props: ToolProps<typeof TaskTool>) {
   const local = useLocal()
   const sync = useSync()
 
+  const current = createMemo(() => {
+    const sessionID = props.metadata.sessionId
+    if (!sessionID) return undefined
+    const msgs = sync.data.message[sessionID] ?? []
+    return msgs
+      .flatMap((msg) =>
+        (sync.data.part[msg.id] ?? [])
+          .filter((part): part is ToolPart => part.type === "tool")
+          .map((part) => ({ tool: part.tool, state: part.state })),
+      )
+      .findLast((x) => x.state.status !== "pending")
+  })
+
+  const isRunning = createMemo(() => props.part.state.status === "running")
+
   const tools = createMemo(() => {
     const sessionID = props.metadata.sessionId
-    const msgs = sync.data.message[sessionID ?? ""] ?? []
+    if (!sessionID) return []
+    const msgs = sync.data.message[sessionID] ?? []
     return msgs.flatMap((msg) =>
       (sync.data.part[msg.id] ?? [])
         .filter((part): part is ToolPart => part.type === "tool")
         .map((part) => ({ tool: part.tool, state: part.state })),
     )
   })
-
-  const current = createMemo(() => tools().findLast((x) => x.state.status !== "pending"))
-
-  const isRunning = createMemo(() => props.part.state.status === "running")
 
   return (
     <Switch>
@@ -1881,8 +1897,15 @@ function Task(props: ToolProps<typeof TaskTool>) {
         </BlockTool>
       </Match>
       <Match when={true}>
-        <InlineTool icon="#" pending="Delegating..." complete={props.input.subagent_type} part={props.part}>
-          {props.input.subagent_type} Task {props.input.description}
+        <InlineTool
+          icon="◉"
+          iconColor={local.agent.color(props.input.subagent_type ?? "unknown")}
+          pending="Delegating..."
+          complete={props.input.subagent_type || props.input.description}
+          part={props.part}
+        >
+          <span style={{ fg: theme.text }}>{Locale.titlecase(props.input.subagent_type ?? "unknown")}</span> Task "
+          {props.input.description}"
         </InlineTool>
       </Match>
     </Switch>
@@ -1952,6 +1975,26 @@ function Edit(props: ToolProps<typeof EditTool>) {
       <Match when={true}>
         <InlineTool icon="←" pending="Preparing edit..." complete={props.input.filePath} part={props.part}>
           Edit {normalizePath(props.input.filePath!)} {input({ replaceAll: props.input.replaceAll })}
+        </InlineTool>
+      </Match>
+    </Switch>
+  )
+}
+
+function Patch(props: ToolProps<typeof PatchTool>) {
+  const { theme } = useTheme()
+  return (
+    <Switch>
+      <Match when={props.output !== undefined}>
+        <BlockTool title="# Patch" part={props.part}>
+          <box>
+            <text fg={theme.text}>{props.output?.trim()}</text>
+          </box>
+        </BlockTool>
+      </Match>
+      <Match when={true}>
+        <InlineTool icon="%" pending="Preparing patch..." complete={false} part={props.part}>
+          Patch
         </InlineTool>
       </Match>
     </Switch>
@@ -2066,10 +2109,10 @@ function Question(props: ToolProps<typeof QuestionTool>) {
     <Switch>
       <Match when={props.metadata.answers}>
         <BlockTool title="# Questions" part={props.part}>
-          <box gap={1}>
+          <box>
             <For each={props.input.questions ?? []}>
               {(q, i) => (
-                <box flexDirection="column">
+                <box flexDirection="row" gap={1}>
                   <text fg={theme.textMuted}>{q.question}</text>
                   <text fg={theme.text}>{format(props.metadata.answers?.[i()])}</text>
                 </box>
