@@ -1363,10 +1363,9 @@ export namespace SessionPrompt {
                         })
                       }
                     }
-                      }
-                    }
                   }
                 }
+
                 const args = { filePath: filepath, offset, limit }
 
                 const pieces: MessageV2.Part[] = [
