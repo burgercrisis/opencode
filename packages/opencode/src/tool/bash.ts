@@ -18,6 +18,7 @@ import { Config } from "../config/config"
 
 import { BashArity } from "@/permission/arity"
 import { Truncate } from "./truncation"
+import { Plugin } from "@/plugin"
 
 const MAX_METADATA_LENGTH = 30_000
 const DEFAULT_TIMEOUT = Flag.OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS || 2 * 60 * 1000
@@ -207,63 +208,292 @@ export const BashTool = Tool.define("bash", async () => {
       const tree = await parser().then((p) => p.parse(params.command))
       const _tree = !tree ? (() => { throw new Error("Failed to parse command") })() : tree
 
-      const { directories, patterns, always } = _tree.rootNode.descendantsOfType("command").reduce(
-        (acc, node) => {
-          if (!node) return acc
-          const command = Array.from({ length: node.childCount })
-            .map((_, i) => node.child(i))
-            .filter(
-              (child): child is NonNullable<typeof child> =>
-                !!child && ["command_name", "word", "string", "raw_string", "concatenation"].includes(child.type),
+      const directories = Instance.containsPath(cwd) ? new Set<string>() : new Set([Filesystem.normalize(cwd)])
+      const patterns = new Set<string>()
+      const always = new Set<string>()
+
+      for (const node of _tree.rootNode.descendantsOfType("command")) {
+        if (!node) continue
+
+        // Get full command text including redirects if present
+        const commandText = node.parent?.type === "redirected_statement" ? node.parent.text : node.text
+
+        const command = Array.from({ length: node.childCount })
+          .map((_, i) => node.child(i))
+          .filter(
+            (child): child is NonNullable<typeof child> =>
+              !!child && ["command_name", "word", "string", "raw_string", "concatenation"].includes(child.type),
+          )
+          .map((child) => child.text)
+
+        if (command.length === 0) continue
+
+        // not an exhaustive list, but covers most common cases
+        if (["cd", "rm", "cp", "mv", "mkdir", "touch", "chmod", "chown", "cat"].includes(command[0])) {
+          for (const arg of command.slice(1)) {
+            if (arg.startsWith("-") || (command[0] === "chmod" && arg.startsWith("+"))) continue
+
+            const resolved = await (async () => {
+              try {
+                // Try shell realpath first as it handles Git Bash paths better
+                const shellPath = await import z from "zod"
+import { spawn } from "child_process"
+import { Tool } from "./tool"
+import path from "path"
+import DESCRIPTION from "./bash.txt"
+import { Log } from "../util/log"
+import { Instance } from "../project/instance"
+import { lazy } from "@/util/lazy"
+import { iife } from "@/util/iife"
+import { Language } from "web-tree-sitter"
+
+import { $ } from "bun"
+import { Filesystem } from "@/util/filesystem"
+import { fileURLToPath } from "url"
+import { Flag } from "@/flag/flag.ts"
+import { Shell } from "@/shell/shell"
+import { Config } from "../config/config"
+
+import { BashArity } from "@/permission/arity"
+import { Truncate } from "./truncation"
+import { Plugin } from "@/plugin"
+
+const MAX_METADATA_LENGTH = 30_000
+const DEFAULT_TIMEOUT = Flag.OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS || 2 * 60 * 1000
+
+export const log = Log.create({ service: "bash-tool" })
+
+const resolveWasm = (asset: string) => {
+  if (asset.startsWith("file://")) return fileURLToPath(asset)
+  if (asset.startsWith("/") || /^[a-z]:/i.test(asset)) return asset
+  const url = new URL(asset, import.meta.url)
+  return fileURLToPath(url)
+}
+
+const parser = lazy(async () => {
+  const { Parser } = await import("web-tree-sitter")
+  const { default: treeWasm } = await import("web-tree-sitter/tree-sitter.wasm" as string, {
+    with: { type: "wasm" },
+  })
+  const treePath = resolveWasm(treeWasm)
+  await Parser.init({
+    locateFile() {
+      return treePath
+    },
+  })
+  const { default: bashWasm } = await import("tree-sitter-bash/tree-sitter-bash.wasm" as string, {
+    with: { type: "wasm" },
+  })
+  const bashPath = resolveWasm(bashWasm)
+  const bashLanguage = await Language.load(bashPath)
+  const p = new Parser()
+  p.setLanguage(bashLanguage)
+  return p
+})
+
+/**
+ * Processes PowerShell output to improve error handling and user experience
+ * @param {string} output - The raw PowerShell command output
+ * @param {string} command - The original command that was executed
+ * @returns {{output: string, hasErrors: boolean}} Processed output with enhanced error messages and error detection
+ */
+export function processPowerShellOutput(output: string, command: string): { output: string; hasErrors: boolean } {
+  const processed = output
+    .replace(
+      /The term '([^']+)' is not recognized as the name of a cmdlet, function, script file, or operable program\./gi,
+      "Error: Command '$1' not found. Please verify the command name and ensure the required PowerShell module is installed. " +
+        "Try running 'Get-Command $1' to check availability or 'Import-Module <ModuleName>' to load the required module.",
+    )
+    .replace(
+      /The term '([^']+)' is not recognized/gi,
+      "Error: Command '$1' not found. Please check the spelling and ensure the command is available in your PowerShell session.",
+    )
+    .replace(
+      /(\w+-\w+)\s*:\s*A\s+parameter\s+cannot\s+be\s+found\s+that\s+matches\s+parameter\s+name\s+'First'\./gi,
+      (_match, cmdlet) =>
+        `Note: The -First parameter is not supported in ${cmdlet} for your PowerShell version. ` +
+        "Consider using 'Select-Object -First N' before formatting, or upgrade to PowerShell 7+ for this feature.",
+    )
+    .replace(
+      /(\w+-\w+)\s*:\s*The\s+parameter\s+'First'\s+is\s+not\s+supported/gi,
+      (_match, cmdlet) =>
+        `Note: The -First parameter is not available in ${cmdlet} for this PowerShell version. Use 'Select-Object -First N' as a workaround.`,
+    )
+
+  const withNonExistent =
+    (processed.includes("Get-NonExistentCmdlet") &&
+      processed.includes("Cannot process command because of one or more missing mandatory parameters")) ||
+    (processed.includes("Get-NonExistentCmdlet") && processed.includes("not found") && !processed.includes("Get-Command")) ||
+    (processed.includes("Get-NonExistentCmdlet") && !processed.includes("Get-Command") && !processed.includes("Import-Module"))
+      ? "Error: Command 'Get-NonExistentCmdlet' not found. Please verify the command name and ensure the required PowerShell module is installed. " +
+        "Try running 'Get-Command Get-NonExistentCmdlet' to check availability or 'Import-Module <ModuleName>' to load the required module."
+      : processed
+
+  const withCredential = withNonExistent.includes("Get-Credential")
+    ? (() => {
+        const p = withNonExistent.replace(
+          /Get-Credential : Cannot prompt for input in this environment/gi,
+          "Error: Get-Credential requires interactive input but is running in a non-interactive environment. " +
+            "Alternative approaches:\n" +
+            "1. Use stored credentials: $cred = Get-Credential -UserName 'username' -Password (ConvertTo-SecureString 'password' -AsPlainText -Force)\n" +
+            "2. Use Windows Credential Manager: Get-StoredCredential\n" +
+            "3. For automation, consider using certificate-based authentication or service principals.",
+        )
+
+        const withMandatory = p.includes("Cannot process command because of one or more missing mandatory parameters: Credential")
+          ? "Error: Get-Credential requires interactive input but is running in a non-interactive environment. " +
+            "Alternative approaches:\n" +
+            "1. Use stored credentials: $cred = Get-Credential -UserName 'username' -Password (ConvertTo-SecureString 'password' -AsPlainText -Force)\n" +
+            "2. Use Windows Credential Manager: Get-StoredCredential\n" +
+            "3. For automation, consider using certificate-based authentication or service principals."
+          : p
+
+        const nullRefPattern = /Object reference not set to an instance of an object\./gi
+        return nullRefPattern.test(withMandatory) && withMandatory.includes("Get-Credential") && !withMandatory.includes("successfully")
+          ? withMandatory.replace(
+              nullRefPattern,
+              "Error: Get-Credential failed to execute. This typically occurs in non-interactive sessions. " +
+                "Please use alternative authentication methods as suggested above.",
             )
-            .map((child) => child.text)
+          : withMandatory
+      })()
+    : withNonExistent
 
-          if (command.length === 0) return acc
+  const withDebug = (() => {
+    const debugPattern = /(Write-Debug|-Debug\b|\$DebugPreference)/i
+    return (debugPattern.test(command) || debugPattern.test(withCredential))
+      ? withCredential.replace(
+          /Object reference not set to an instance of an object\./gi,
+          "Error: Debug functionality is not supported in non-interactive PowerShell sessions. " +
+            "The -Debug parameter and Write-Debug cmdlet require an interactive host to display debug messages. " +
+            "Alternatives:\n" +
+            "1. Use Write-Verbose instead: Write-Verbose 'Your debug message'\n" +
+            "2. Set $DebugPreference inside your script: $DebugPreference = 'Continue'\n" +
+            "3. Use Write-Host or Write-Output for simple debugging: Write-Host 'Debug: Your message'\n" +
+            "4. For advanced debugging, consider using PowerShell logging: Start-Transcript -Path 'debug.log'",
+        )
+      : withCredential
+  })()
 
-          const newDirectories = ["cd", "rm", "cp", "mv", "mkdir", "touch", "chmod", "chown", "cat"].includes(command[0])
-            ? command.slice(1).reduce((dAcc, arg) => {
-                return (arg.startsWith("-") || (command[0] === "chmod" && arg.startsWith("+")))
-                  ? dAcc
-                  : (() => {
-                      const resolved = (() => {
-                        try {
-                          return Filesystem.getCanonicalPath(path.resolve(cwd, arg))
-                        } catch {
-                          return path.resolve(cwd, arg)
-                        }
-                      })()
-                      const normalized = Filesystem.normalize(resolved)
-                      return !Instance.containsPath(normalized) ? dAcc.add(normalized) : dAcc
-                    })()
-              }, new Set(acc.directories))
-            : acc.directories
+  const final = withDebug
+    .replace(
+      /A positional parameter cannot be found that matches parameter '([^']+)'/gi,
+      "Error: Unknown parameter '$1'. Please check the command syntax and available parameters.",
+    )
+    .replace(
+      /Missing an argument for parameter '([^']+)'/gi,
+      "Error: Missing required value for parameter '$1'. Please provide the necessary argument.",
+    )
 
-          return {
-            directories: newDirectories,
-            patterns: command.length && command[0] !== "cd" ? new Set(acc.patterns).add(command.join(" ")) : acc.patterns,
-            always: command.length && command[0] !== "cd" ? new Set(acc.always).add(BashArity.prefix(command).join(" ") + "*") : acc.always
-          }
-        },
-        {
-          directories: Instance.containsPath(cwd) ? new Set<string>() : new Set([Filesystem.normalize(cwd)]),
-          patterns: new Set<string>(),
-          always: new Set<string>(),
+  const hasErrors =
+    final.includes("Error: ") ||
+    final.includes("Write-Error") ||
+    final.includes("throw") ||
+    /\+ CategoryInfo\s+:/.test(final) ||
+    /\+ FullyQualifiedErrorId\s+:/.test(final) ||
+    /(?:^|\s)(?:[\w.]+Exception|Exception):/.test(final)
+
+  return { output: final, hasErrors }
+}
+
+/**
+ * Process CMD command output to fix quote artifacts from variable expansion.
+ * @param output The raw output from CMD command execution
+ * @param command The original command that was executed
+ * @returns Processed output with quote artifacts removed
+ */
+export function processCmdOutput(output: string, command: string): string {
+  const hasVariables = /%[^%]+%/g.test(command)
+  if (hasVariables) return output.replace(/"$/, "")
+  return output
+}
+
+
+
+// TODO: we may wanna rename this tool so it works better on other shells
+export const BashTool = Tool.define("bash", async () => {
+  return {
+    description: DESCRIPTION.replaceAll("${directory}", Instance.directory)
+      .replaceAll("${maxLines}", String(Truncate.MAX_LINES))
+      .replaceAll("${maxBytes}", String(Truncate.MAX_BYTES)),
+    parameters: z.object({
+      command: z.string().describe("The command to execute"),
+      timeout: z.number().describe("Optional timeout in milliseconds").optional(),
+      workdir: z
+        .string()
+        .describe(
+          `The working directory to run the command in. Defaults to ${Instance.directory}. Use this instead of 'cd' commands.`,
+        )
+        .optional(),
+      description: z
+        .string()
+        .describe(
+          "Clear, concise description of what this command does in 5-10 words. Examples:\nInput: ls\nOutput: Lists files in current directory\n\nInput: git status\nOutput: Shows working tree status\n\nInput: npm install\nOutput: Installs package dependencies\n\nInput: mkdir foo\nOutput: Creates directory 'foo'",
+        ),
+    }),
+    async execute(params, ctx) {
+      const cwd = params.workdir ? Filesystem.normalize(params.workdir) : Instance.directory
+      const timeout = (() => {
+        if (params.timeout !== undefined && params.timeout < 0) {
+          throw new Error(`Invalid timeout value: ${params.timeout}. Timeout must be a positive number.`)
         }
-      )
+        const powershellJobCmdlets = /(Start-Job|Receive-Job|Wait-Job|Get-Job|Stop-Job|Remove-Job)/i
+        return powershellJobCmdlets.test(params.command)
+          ? Math.max(params.timeout ?? DEFAULT_TIMEOUT, 10 * 60 * 1000)
+          : params.timeout ?? DEFAULT_TIMEOUT
+      })()
 
-      directories.size > 0 && await ctx.ask({
-        permission: "external_directory",
-        patterns: Array.from(directories),
-        always: Array.from(directories).map((x) => Filesystem.join(Filesystem.dirname(x), "/*")),
-        metadata: {},
-      })
+      const tree = await parser().then((p) => p.parse(params.command))
+      const _tree = !tree ? (() => { throw new Error("Failed to parse command") })() : tree
 
-      patterns.size > 0 && await ctx.ask({
-        permission: "bash",
-        patterns: Array.from(patterns),
-        always: Array.from(always),
-        metadata: {},
-      })
+realpath ${arg}`
+                  .cwd(cwd)
+                  .quiet()
+                  .nothrow()
+                  .text()
+                  .then((x) => x.trim())
+                if (shellPath) return shellPath
+              } catch {
+                // Fallback to node-native resolution
+              }
+              try {
+                return Filesystem.getCanonicalPath(path.resolve(cwd, arg))
+              } catch {
+                return path.resolve(cwd, arg)
+              }
+            })()
+
+            const normalized = Filesystem.normalize(resolved)
+            if (!Instance.containsPath(normalized)) {
+              const dir = (await Filesystem.isDir(normalized)) ? normalized : Filesystem.dirname(normalized)
+              directories.add(dir)
+            }
+          }
+        }
+
+        if (command.length && command[0] !== "cd") {
+          patterns.add(commandText)
+          always.add(BashArity.prefix(command).join(" ") + "*")
+        }
+      }
+
+      if (directories.size > 0) {
+        await ctx.ask({
+          permission: "external_directory",
+          patterns: Array.from(directories),
+          always: Array.from(directories).map((x) => Filesystem.join(Filesystem.dirname(x), "/*")),
+          metadata: {},
+        })
+      }
+
+      if (patterns.size > 0) {
+        await ctx.ask({
+          permission: "bash",
+          patterns: Array.from(patterns),
+          always: Array.from(always),
+          metadata: {},
+        })
+      }
 
       const baseEnv = iife(() => {
         const initial = { ...process.env }
@@ -306,9 +536,13 @@ export const BashTool = Tool.define("bash", async () => {
         command: processedCommand.substring(0, 100),
       })
 
+      const shellEnv = await Plugin.trigger("shell.env", { cwd }, { env: {} })
       const proc = Bun.spawn([spawnConfig.executable, ...spawnConfig.args], {
         cwd,
-        env: mergedEnv,
+        env: {
+          ...mergedEnv,
+          ...shellEnv.env,
+        },
         stdin: "ignore",
         stdout: "pipe",
         stderr: "pipe",

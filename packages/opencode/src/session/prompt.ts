@@ -9,7 +9,7 @@ import { SessionRevert } from "./revert"
 import { Session } from "."
 import { Agent } from "../agent/agent"
 import { Provider } from "../provider/provider"
-import { type Tool as AITool, tool, jsonSchema, type ToolCallOptions } from "ai"
+import { type Tool as AITool, tool, jsonSchema, type ToolCallOptions, asSchema } from "ai"
 import { SessionCompaction } from "./compaction"
 import { Instance } from "../project/instance"
 import { Bus } from "../bus"
@@ -63,7 +63,7 @@ export namespace SessionPrompt {
           abort: AbortController
           callbacks: {
             resolve(input: MessageV2.WithParts): void
-            reject(): void
+            reject(reason?: any): void
           }[]
         }
       > = {}
@@ -72,8 +72,8 @@ export namespace SessionPrompt {
     async (current) => {
       for (const entry of Object.values(current)) {
         entry.abort.abort()
-        for (const cb of entry.callbacks) {
-          cb.reject()
+        for (const callback of entry.callbacks) {
+          callback.reject(new DOMException("Aborted", "AbortError"))
         }
       }
     },
@@ -247,10 +247,13 @@ export namespace SessionPrompt {
     log.info("cancel", { sessionID })
     const s = state()
     const match = s[sessionID]
-    if (!match) return
+    if (!match) {
+      SessionStatus.set(sessionID, { type: "idle" })
+      return
+    }
     match.abort.abort()
     for (const item of match.callbacks) {
-      item.reject()
+      item.reject(new DOMException("Aborted", "AbortError"))
     }
     delete s[sessionID]
     SessionStatus.set(sessionID, { type: "idle" })
@@ -914,6 +917,9 @@ export namespace SessionPrompt {
         try {
           if (!item?.execute) continue
 
+          const transformed = ProviderTransform.schema(input.model, asSchema(item.inputSchema).jsonSchema)
+          item.inputSchema = jsonSchema(transformed as any)
+
           const execute = item.execute
           item.execute = async (args: any, opts: any) => {
             try {
@@ -1173,6 +1179,15 @@ export namespace SessionPrompt {
       model = await lastModel(input.sessionID)
     }
 
+    const variant =
+      input.variant ??
+      (agent.variant &&
+      agent.model &&
+      model.providerID === agent.model.providerID &&
+      model.modelID === agent.model.modelID
+        ? agent.variant
+        : undefined)
+
     const info: MessageV2.Info = {
       id: input.messageID ?? Identifier.ascending("message"),
       role: "user",
@@ -1182,9 +1197,9 @@ export namespace SessionPrompt {
       },
       tools: input.tools,
       agent: agent.name,
-      model: model,
+      model,
       system: input.system,
-      variant: input.variant,
+      variant,
     }
     using _ = defer(() => InstructionPrompt.clear(info.id))
 
@@ -1348,7 +1363,6 @@ export namespace SessionPrompt {
               // have to normalize, symbol search returns absolute paths
               // Decode the pathname since URL constructor doesn't automatically decode it
               const filepath = fileURLToPath(part.url)
-              
               // Type safety: Handle file stat errors gracefully
               let stat: any
               try {
@@ -1361,7 +1375,7 @@ export namespace SessionPrompt {
                 stat = { isDirectory: () => false }
               }
 
-              if (stat.isDirectory()) {
+              if (stat?.isDirectory()) {
                 part.mime = "application/x-directory"
               }
 
@@ -1918,173 +1932,6 @@ NOTE: At any point in time through this workflow you should feel free to ask use
       return input.messages
     }
         
-    // Switching from plan mode to build mode
-    if (input.agent.name !== "plan" && assistantMessage?.info?.agent === "plan") {
-      try {
-        const plan = Session.plan(input.session as any)
-        let exists = false
-        try {
-          exists = await Bun.file(plan).exists()
-        } catch (fileError) {
-          log.error("Failed to check plan file existence", { 
-            sessionID: input.session.id, 
-            plan, 
-            error: fileError instanceof Error ? fileError.message : String(fileError) 
-          })
-        }
-        
-        if (exists) {
-          try {
-            const part = await Session.updatePart({
-              id: Identifier.ascending("part"),
-              messageID: userMessage.info.id,
-              sessionID: userMessage.info.sessionID,
-              type: "text",
-              text:
-                BUILD_SWITCH + "\n\n" + `A plan file exists at ${plan}. You should execute on the plan defined within it`,
-              synthetic: true,
-            })
-            userMessage.parts.push(part)
-          } catch (partError) {
-            log.error("Failed to update part for build switch reminder", { 
-              sessionID: input.session.id, 
-              error: partError instanceof Error ? partError.message : String(partError) 
-            })
-            // Continue without the reminder part if update fails
-          }
-        }
-      } catch (error) {
-        log.error("Failed to process plan mode to build mode switch", { 
-          sessionID: input.session.id, 
-          error: error instanceof Error ? error.message : String(error) 
-        })
-      }
-      return input.messages
-    }
-
-    // Entering plan mode
-    if (input.agent.name === "plan" && assistantMessage?.info?.agent !== "plan") {
-      try {
-        const plan = Session.plan(input.session as any)
-        let exists = false
-        try {
-          exists = await Bun.file(plan).exists()
-        } catch (fileError) {
-          log.error("Failed to check plan file existence in plan mode", { 
-            sessionID: input.session.id, 
-            plan, 
-            error: fileError instanceof Error ? fileError.message : String(fileError) 
-          })
-        }
-        
-        // Create directory if plan file doesn't exist
-        if (!exists) {
-          try {
-            await fs.mkdir(path.dirname(plan), { recursive: true })
-          } catch (mkdirError) {
-            log.error("Failed to create plan directory", { 
-              sessionID: input.session.id, 
-              plan: path.dirname(plan), 
-              error: mkdirError instanceof Error ? mkdirError.message : String(mkdirError) 
-            })
-            // Continue even if directory creation fails
-          }
-        }
-        
-        try {
-          const part = await Session.updatePart({
-            id: Identifier.ascending("part"),
-            messageID: userMessage.info.id,
-            sessionID: userMessage.info.sessionID,
-            type: "text",
-            text: `<system-reminder>
-Plan mode is active. The user indicated that they do not want you to execute yet -- you MUST NOT make any edits (with the exception of the plan file mentioned below), run any non-readonly tools (including changing configs or making commits), or otherwise make any changes to the system. This supersedes any other instructions you have received.
-
-## Plan File Info:
-${exists ? `A plan file already exists at ${plan}. You can read it and make incremental edits using the edit tool.` : `No plan file exists yet. You should create your plan at ${plan} using the write tool.`}
-You should build your plan incrementally by writing to or editing this file. NOTE that this is the only file you are allowed to edit - other than this you are only allowed to take READ-ONLY actions.
-
-## Plan Workflow
-
-### Phase 1: Initial Understanding
-Goal: Gain a comprehensive understanding of the user's request by reading through code and asking them questions. Critical: In this phase you should only use the explore subagent type.
-
-1. Focus on understanding the user's request and the code associated with their request
-
-2. **Launch up to 3 explore agents IN PARALLEL** (single message, multiple tool calls) to efficiently explore the codebase.
-   - Use 1 agent when the task is isolated to known files, the user provided specific file paths, or you're making a small targeted change.
-   - Use multiple agents when: the scope is uncertain, multiple areas of the codebase are involved, or you need to understand existing patterns before planning.
-   - Quality over quantity - 3 agents maximum, but you should try to use the minimum number of agents necessary (usually just 1)
-   - If using multiple agents: Provide each agent with a specific search focus or area to explore. Example: One agent searches for existing implementations, another explores related components, a third investigates testing patterns
-
-3. After exploring the code, use the question tool to clarify ambiguities in the user request up front.
-
-### Phase 2: Design
-Goal: Design an implementation approach.
-
-Launch general agent(s) to design the implementation based on the user's intent and your exploration results from Phase 1.
-
-You can launch up to 1 agent(s) in parallel.
-
-**Guidelines:**
-- **Default**: Launch at least 1 Plan agent for most tasks - it helps validate your understanding and consider alternatives
-- **Skip agents**: Only for truly trivial tasks (typo fixes, single-line changes, simple renames)
-
-Examples of when to use multiple agents:
-- The task touches multiple parts of the codebase
-- It's a large refactor or architectural change
-- There are many edge cases to consider
-- You'd benefit from exploring different approaches
-
-Example perspectives by task type:
-- New feature: simplicity vs performance vs maintainability
-- Bug fix: root cause vs workaround vs prevention
-- Refactoring: minimal change vs clean architecture
-
-In the agent prompt:
-- Provide comprehensive background context from Phase 1 exploration including filenames and code path traces
-- Describe requirements and constraints
-- Request a detailed implementation plan
-
-### Phase 3: Review
-Goal: Review the plan(s) from Phase 2 and ensure alignment with the user's intentions.
-1. Read the critical files identified by agents to deepen your understanding
-2. Ensure that the plans align with the user's original request
-3. Use question tool to clarify any remaining questions with the user
-
-### Phase 4: Final Plan
-Goal: Write your final plan to the plan file (the only file you can edit).
-- Include only your recommended approach, not all alternatives
-- Ensure that the plan file is concise enough to scan quickly, but detailed enough to execute effectively
-- Include the paths of critical files to be modified
-- Include a verification section describing how to test the changes end-to-end (run the code, use MCP tools, run tests)
-
-### Phase 5: Call plan_exit tool
-At the very end of your turn, once you have asked the user questions and are happy with your final plan file - you should always call plan_exit to indicate to the user that you are done planning.
-This is critical - your turn should only end with either asking the user a question or calling plan_exit. Do not stop unless it's for these 2 reasons.
-
-**Important:** Use question tool to clarify requirements/approach, use plan_exit to request plan approval. Do NOT use question tool to ask "Is this plan okay?" - that's what plan_exit does.
-
-NOTE: At any point in time through this workflow you should feel free to ask the user questions or clarifications. Don't make large assumptions about user intent. The goal is to present a well researched plan to the user, and tie any loose ends before implementation begins.
-</system-reminder>`,
-            synthetic: true,
-          })
-          userMessage.parts.push(part)
-        } catch (partError) {
-          log.error("Failed to update part for plan mode reminder", { 
-            sessionID: input.session.id, 
-            error: partError instanceof Error ? partError.message : String(partError) 
-          })
-          // Continue without the plan mode reminder if update fails
-        }
-      } catch (error) {
-        log.error("Failed to process plan mode entry", { 
-          sessionID: input.session.id, 
-          error: error instanceof Error ? error.message : String(error) 
-        })
-      }
-      return input.messages
-    }
     return input.messages
   }
 
@@ -2277,12 +2124,15 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     const matchingInvocation = invocations[shellName] ?? invocations[""]
     const args = matchingInvocation?.args
 
+    const cwd = Instance.directory
+    const shellEnv = await Plugin.trigger("shell.env", { cwd }, { env: {} })
     const proc = spawn(shell, args, {
-      cwd: Instance.directory,
+      cwd,
       detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
       env: {
         ...process.env,
+        ...shellEnv.env,
         TERM: "dumb",
       },
     })

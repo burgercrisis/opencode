@@ -24,10 +24,13 @@ import { LSPServer } from "../lsp/server"
 import { BunProc } from "@/bun"
 import { Installation } from "@/installation"
 import { ConfigMarkdown } from "./markdown"
-import { existsSync } from "fs"
+import { constants, existsSync } from "fs"
 import { Bus } from "@/bus"
 import { GlobalBus } from "@/bus/global"
 import { Event } from "../server/event"
+import { PackageRegistry } from "@/bun/registry"
+import { proxied } from "@/util/proxied"
+import { iife } from "@/util/iife"
 
 export namespace Config {
   const log = Log.create({ service: "config" })
@@ -62,71 +65,57 @@ export namespace Config {
   export const state = Instance.state(async () => {
     const auth = await Auth.all()
 
-    // Load remote/well-known config first as the base layer (lowest precedence)
-    // This allows organizations to provide default configs that users can override
-    const remote = await Object.entries(auth).reduce(async (accPromise, [key, value]) => {
-      const acc = await accPromise
-      return value.type === "wellknown"
-        ? await (async () => {
-            process.env[value.key] = value.token
-            log.debug("fetching remote config", { url: `${key}/.well-known/opencode` })
-            const response = await fetch(`${key}/.well-known/opencode`)
-            if (!response.ok) {
-              throw new Error(`failed to fetch remote config from ${key}: ${response.status}`)
-            }
-            const wellknown = (await response.json()) as any
-            const remoteConfig = wellknown.config ?? {}
-            // Add $schema to prevent load() from trying to write back to a non-existent file
-            const finalRemoteConfig = remoteConfig.$schema
-              ? remoteConfig
-              : { ...remoteConfig, $schema: "https://opencode.ai/config.json" }
-
-            const loaded = await load(JSON.stringify(finalRemoteConfig), `${key}/.well-known/opencode`)
-            log.debug("loaded remote config from well-known", { url: key })
-            return mergeConfigConcatArrays(acc, loaded)
-          })()
-        : acc
-    }, Promise.resolve({} as Info))
-
-    // Global user config overrides remote config
-    const globalConfig = await global()
-    const withGlobal = mergeConfigConcatArrays(remote, globalConfig)
-
-    // Custom config path overrides global
-    const withCustom = Flag.OPENCODE_CONFIG
-      ? await (async () => {
-          const custom = await loadFile(Flag.OPENCODE_CONFIG!)
-          log.debug("loaded custom config", { path: Flag.OPENCODE_CONFIG })
-          return mergeConfigConcatArrays(withGlobal, custom)
-        })()
-      : withGlobal
-
-    // Project config has highest precedence (overrides global and remote)
-    const withProject = Flag.OPENCODE_DISABLE_PROJECT_CONFIG
-      ? withCustom
-      : await ["opencode.jsonc", "opencode.json"].reduce(async (accPromise, file) => {
-          const acc = await accPromise
-          const found = await Filesystem.findUp(file, Instance.directory, Instance.worktree)
-          return found.toReversed().reduce(async (innerAccPromise, resolved) => {
-            const innerAcc = await innerAccPromise
-            return mergeConfigConcatArrays(innerAcc, await loadFile(resolved))
-          }, Promise.resolve(acc))
-        }, Promise.resolve(withCustom))
-
-    // Inline config content has highest precedence
-    const withContent = Flag.OPENCODE_CONFIG_CONTENT
-      ? (() => {
-          log.debug("loaded custom config from OPENCODE_CONFIG_CONTENT")
-          return mergeConfigConcatArrays(withProject, JSON.parse(Flag.OPENCODE_CONFIG_CONTENT))
-        })()
-      : withProject
-
-    const base = {
-      ...withContent,
-      agent: withContent.agent || {},
-      mode: withContent.mode || {},
-      plugin: withContent.plugin || [],
+    // Config loading order (low -> high precedence): https://opencode.ai/docs/config#precedence-order
+    // 1) Remote .well-known/opencode (org defaults)
+    // 2) Global config (~/.config/opencode/opencode.json{,c})
+    // 3) Custom config (OPENCODE_CONFIG)
+    // 4) Project config (opencode.json{,c})
+    // 5) .opencode directories (.opencode/agents/, .opencode/commands/, .opencode/plugins/, .opencode/opencode.json{,c})
+    // 6) Inline config (OPENCODE_CONFIG_CONTENT)
+    // Managed config directory is enterprise-only and always overrides everything above.
+    let result: Info = {}
+    for (const [key, value] of Object.entries(auth)) {
+      if (value.type === "wellknown") {
+        process.env[value.key] = value.token
+        log.debug("fetching remote config", { url: `${key}/.well-known/opencode` })
+        const response = await fetch(`${key}/.well-known/opencode`)
+        if (!response.ok) {
+          throw new Error(`failed to fetch remote config from ${key}: ${response.status}`)
+        }
+        const wellknown = (await response.json()) as any
+        const remoteConfig = wellknown.config ?? {}
+        // Add $schema to prevent load() from trying to write back to a non-existent file
+        if (!remoteConfig.$schema) remoteConfig.$schema = "https://opencode.ai/config.json"
+        result = mergeConfigConcatArrays(
+          result,
+          await load(JSON.stringify(remoteConfig), `${key}/.well-known/opencode`),
+        )
+        log.debug("loaded remote config from well-known", { url: key })
+      }
     }
+
+    // Global user config overrides remote config.
+    result = mergeConfigConcatArrays(result, await global())
+
+    // Custom config path overrides global config.
+    if (Flag.OPENCODE_CONFIG) {
+      result = mergeConfigConcatArrays(result, await loadFile(Flag.OPENCODE_CONFIG))
+      log.debug("loaded custom config", { path: Flag.OPENCODE_CONFIG })
+    }
+
+    // Project config overrides global and remote config.
+    if (!Flag.OPENCODE_DISABLE_PROJECT_CONFIG) {
+      for (const file of ["opencode.jsonc", "opencode.json"]) {
+        const found = await Filesystem.findUp(file, Instance.directory, Instance.worktree)
+        for (const resolved of found.toReversed()) {
+          result = mergeConfigConcatArrays(result, await loadFile(resolved))
+        }
+      }
+    }
+
+    result.agent = result.agent || {}
+    result.mode = result.mode || {}
+    result.plugin = result.plugin || []
 
     const directories = [
       Global.Path.config,
@@ -151,40 +140,50 @@ export namespace Config {
       ...(Flag.OPENCODE_CONFIG_DIR ? [Flag.OPENCODE_CONFIG_DIR] : []),
     ]
 
-    let result = await unique(directories).reduce(async (accPromise, dir) => {
-      const acc = await accPromise
+    // .opencode directory config overrides (project and global) config sources.
+    if (Flag.OPENCODE_CONFIG_DIR) {
+      directories.push(Flag.OPENCODE_CONFIG_DIR)
+      log.debug("loading config from OPENCODE_CONFIG_DIR", { path: Flag.OPENCODE_CONFIG_DIR })
+    }
 
-      const withDirConfig: any =
-        dir.endsWith(".opencode") || dir === Flag.OPENCODE_CONFIG_DIR
-          ? await ["opencode.jsonc", "opencode.json"].reduce(async (innerAccPromise, file) => {
-              const innerAcc = await innerAccPromise
-              const filePath = path.join(dir, file)
-              log.debug(`loading config from ${filePath}`)
-              const loaded = await loadFile(filePath)
-              return mergeConfigConcatArrays(innerAcc, {
-                ...loaded,
-                agent: loaded.agent ?? {},
-                mode: loaded.mode ?? {},
-                plugin: loaded.plugin ?? [],
-              })
-            }, Promise.resolve(acc))
-          : acc
+    const deps = []
 
-      const exists = existsSync(path.join(dir, "node_modules"))
-      const installing = installDependencies(dir)
-      if (!exists) await installing
+    for (const dir of unique(directories)) {
+      if (dir.endsWith(".opencode") || dir === Flag.OPENCODE_CONFIG_DIR) {
+        for (const file of ["opencode.jsonc", "opencode.json"]) {
+          log.debug(`loading config from ${path.join(dir, file)}`)
+          result = mergeConfigConcatArrays(result, await loadFile(path.join(dir, file)))
+          // to satisfy the type checker
+          result.agent ??= {}
+          result.mode ??= {}
+          result.plugin ??= []
+        }
+      }
 
-      return {
-        ...withDirConfig,
-        command: mergeDeep(withDirConfig.command ?? {}, await loadCommand(dir)),
+      deps.push(
+        iife(async () => {
+          const shouldInstall = await needsInstall(dir)
+          if (shouldInstall) await installDependencies(dir)
+        }),
+      )
+
+      result = {
+        ...result,
+        command: mergeDeep(result.command ?? {}, await loadCommand(dir)),
         // Merge agents and modes into agent for backwards compatibility
         agent: mergeDeep(
-          withDirConfig.agent ?? {},
+          result.agent ?? {},
           mergeDeep(await loadAgent(dir), await loadMode(dir)),
         ),
-        plugin: [...(withDirConfig.plugin ?? []), ...(await loadPlugin(dir))],
+        plugin: [...(result.plugin ?? []), ...(await loadPlugin(dir))],
       } as any
-    }, Promise.resolve(base as any))
+    }
+
+    // Inline config content overrides all non-managed config sources.
+    if (Flag.OPENCODE_CONFIG_CONTENT) {
+      result = mergeConfigConcatArrays(result, JSON.parse(Flag.OPENCODE_CONFIG_CONTENT))
+      log.debug("loaded custom config from OPENCODE_CONFIG_CONTENT")
+    }
 
     // Load managed config files last (highest priority) - enterprise admin-controlled
     // Kept separate from directories array to avoid write operations when installing plugins
@@ -255,30 +254,88 @@ export namespace Config {
     return {
       config: finalConfig,
       directories,
+      deps,
     }
   })
 
+  export async function waitForDependencies() {
+    const deps = await state().then((x) => x.deps)
+    await Promise.all(deps)
+  }
+
   export async function installDependencies(dir: string) {
     const pkg = path.join(dir, "package.json")
+    const targetVersion = Installation.isLocal() ? "*" : Installation.VERSION
 
-    if (!(await Bun.file(pkg).exists())) {
-      await Bun.write(pkg, "{}")
+    const json = await Bun.file(pkg)
+      .json()
+      .catch(() => ({}))
+    json.dependencies = {
+      ...json.dependencies,
+      "@opencode-ai/plugin": targetVersion,
     }
+    await Bun.write(pkg, JSON.stringify(json, null, 2))
+    await new Promise((resolve) => setTimeout(resolve, 3000))
 
     const gitignore = path.join(dir, ".gitignore")
     const hasGitIgnore = await Bun.file(gitignore).exists()
     if (!hasGitIgnore) await Bun.write(gitignore, ["node_modules", "package.json", "bun.lock", ".gitignore"].join("\n"))
 
-    await BunProc.run(
-      ["add", "@opencode-ai/plugin@" + (Installation.isLocal() ? "latest" : Installation.VERSION), "--exact"],
-      {
-        cwd: dir,
-      },
-    ).catch(() => {})
-
     // Install any additional dependencies defined in the package.json
     // This allows local plugins and custom tools to use external packages
-    await BunProc.run(["install"], { cwd: dir }).catch(() => {})
+    await BunProc.run(
+      [
+        "install",
+        // TODO: get rid of this case (see: https://github.com/oven-sh/bun/issues/19936)
+        ...(proxied() ? ["--no-cache"] : []),
+      ],
+      { cwd: dir },
+    ).catch(() => {})
+  }
+
+  async function isWritable(dir: string) {
+    try {
+      await fs.access(dir, constants.W_OK)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  async function needsInstall(dir: string) {
+    // Some config dirs may be read-only.
+    // Installing deps there will fail; skip installation in that case.
+    const writable = await isWritable(dir)
+    if (!writable) {
+      log.debug("config dir is not writable, skipping dependency install", { dir })
+      return false
+    }
+
+    const nodeModules = path.join(dir, "node_modules")
+    if (!existsSync(nodeModules)) return true
+
+    const pkg = path.join(dir, "package.json")
+    const pkgFile = Bun.file(pkg)
+    const pkgExists = await pkgFile.exists()
+    if (!pkgExists) return true
+
+    const parsed = await pkgFile.json().catch(() => null)
+    const dependencies = parsed?.dependencies ?? {}
+    const depVersion = dependencies["@opencode-ai/plugin"]
+    if (!depVersion) return true
+
+    const targetVersion = Installation.isLocal() ? "latest" : Installation.VERSION
+    if (targetVersion === "latest") {
+      const isOutdated = await PackageRegistry.isOutdated("@opencode-ai/plugin", depVersion, dir)
+      if (!isOutdated) return false
+      log.info("Cached version is outdated, proceeding with install", {
+        pkg: "@opencode-ai/plugin",
+        cachedVersion: depVersion,
+      })
+      return true
+    }
+    if (depVersion === targetVersion) return false
+    return true
   }
 
   function rel(item: string, patterns: string[]) {
@@ -657,6 +714,10 @@ export namespace Config {
   export const Agent = z
     .object({
       model: z.string().optional(),
+      variant: z
+        .string()
+        .optional()
+        .describe("Default model variant for this agent (applies only when using the agent's configured model)."),
       temperature: z.number().optional(),
       top_p: z.number().optional(),
       prompt: z.string().optional(),
@@ -670,10 +731,12 @@ export namespace Config {
         .describe("Hide this subagent from the @ autocomplete menu (default: false, only applies to mode: subagent)"),
       options: z.record(z.string(), z.any()).optional(),
       color: z
-        .string()
-        .regex(/^#[0-9a-fA-F]{6}$/, "Invalid hex color format")
+        .union([
+          z.string().regex(/^#[0-9a-fA-F]{6}$/, "Invalid hex color format"),
+          z.enum(["primary", "secondary", "accent", "success", "warning", "error", "info"]),
+        ])
         .optional()
-        .describe("Hex color code for the agent (e.g., #FF5733)"),
+        .describe("Hex color code (e.g., #FF5733) or theme color (e.g., primary)"),
       steps: z
         .number()
         .int()
@@ -688,6 +751,7 @@ export namespace Config {
       const knownKeys = new Set([
         "name",
         "model",
+        "variant",
         "prompt",
         "description",
         "temperature",
@@ -887,6 +951,7 @@ export namespace Config {
       terminal_suspend: z.string().optional().default("ctrl+z").describe("Suspend terminal"),
       terminal_title_toggle: z.string().optional().default("none").describe("Toggle terminal title"),
       tips_toggle: z.string().optional().default("<leader>h").describe("Toggle tips on home screen"),
+      display_thinking: z.string().optional().default("none").describe("Toggle thinking blocks visibility"),
     })
     .strict()
     .meta({
@@ -912,6 +977,7 @@ export namespace Config {
       port: z.number().int().positive().optional().describe("Port to listen on"),
       hostname: z.string().optional().describe("Hostname to listen on"),
       mdns: z.boolean().optional().describe("Enable mDNS service discovery"),
+      mdnsDomain: z.string().optional().describe("Custom domain name for mDNS service (default: opencode.local)"),
       cors: z.array(z.string()).optional().describe("Additional domains to allow for CORS"),
     })
     .strict()

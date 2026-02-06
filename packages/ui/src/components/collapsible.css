@@ -4,9 +4,7 @@
   flex-direction: column;
   background-color: var(--surface-inset-base);
   border: 1px solid var(--border-weaker-base);
-  transition-property: background-color, border-color;
-  transition-duration: var(--transition-duration);
-  transition-timing-function: var(--transition-easing);
+  transition: background-color 0.15s ease;
   border-radius: var(--radius-md);
   overflow: clip;
 
@@ -46,16 +44,14 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      color: var(--text-weak);
     }
   }
 
   [data-slot="collapsible-content"] {
     display: grid;
     grid-template-rows: 0fr;
-    transition-property: grid-template-rows, opacity;
-    transition-duration: var(--transition-duration);
-    transition-timing-function: var(--transition-easing);
+    transition: grid-template-rows 0.2s ease-out;
+    overflow: hidden;
 
     &[data-expanded] {
       grid-template-rows: 1fr;
@@ -91,5 +87,23 @@
     > [data-slot="collapsible-trigger"] {
       height: 24px;
     }
+  }
+}
+
+@keyframes slideDown {
+  from {
+    height: 0;
+  }
+  to {
+    height: var(--kb-collapsible-content-height);
+  }
+}
+
+@keyframes slideUp {
+  from {
+    height: var(--kb-collapsible-content-height);
+  }
+  to {
+    height: 0;
   }
 }

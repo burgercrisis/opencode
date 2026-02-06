@@ -1,4 +1,5 @@
 import z from "zod"
+import os from "os"
 import fuzzysort from "fuzzysort"
 import { Config } from "../config/config"
 import { mapValues, mergeDeep, omit, pickBy, sortBy } from "remeda"
@@ -13,9 +14,30 @@ import { Env } from "../env"
 import { Instance } from "../project/instance"
 import { Flag } from "../flag/flag"
 import { iife } from "@/util/iife"
+// Direct imports for bundled providers
+import { createAmazonBedrock, type AmazonBedrockProviderSettings } from "@ai-sdk/amazon-bedrock"
+import { createAnthropic } from "@ai-sdk/anthropic"
+import { createAzure } from "@ai-sdk/azure"
+import { createGoogleGenerativeAI } from "@ai-sdk/google"
+import { createVertex } from "@ai-sdk/google-vertex"
+import { createVertexAnthropic } from "@ai-sdk/google-vertex/anthropic"
+import { createOpenAI } from "@ai-sdk/openai"
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible"
+import { createOpenRouter, type LanguageModelV2 } from "@openrouter/ai-sdk-provider"
+import { createOpenaiCompatible as createGitHubCopilotOpenAICompatible } from "./sdk/copilot"
+import { createXai } from "@ai-sdk/xai"
+import { createMistral } from "@ai-sdk/mistral"
+import { createGroq } from "@ai-sdk/groq"
+import { createDeepInfra } from "@ai-sdk/deepinfra"
+import { createCerebras } from "@ai-sdk/cerebras"
+import { createCohere } from "@ai-sdk/cohere"
+import { createGateway } from "@ai-sdk/gateway"
+import { createTogetherAI } from "@ai-sdk/togetherai"
+import { createPerplexity } from "@ai-sdk/perplexity"
+import { createVercel } from "@ai-sdk/vercel"
+import { createGitLab, VERSION as GITLAB_PROVIDER_VERSION } from "@gitlab/gitlab-ai-provider"
 import { ProviderTransform } from "./transform"
-import type { AmazonBedrockProviderSettings } from "@ai-sdk/amazon-bedrock"
-import type { LanguageModelV2 } from "@openrouter/ai-sdk-provider"
+import { Installation } from "../installation"
 
 export namespace Provider {
   const log = Log.create({ service: "provider" })
@@ -32,92 +54,28 @@ export namespace Provider {
     return isGpt5OrLater(modelID) && !modelID.startsWith("gpt-5-mini")
   }
 
-// Bundled providers are loaded dynamically to improve cold-start performance
-  const BUNDLED_PROVIDERS: Record<string, (options: any) => Promise<SDK>> = {
-    "@ai-sdk/amazon-bedrock": async (options) => {
-      const { createAmazonBedrock } = await import("@ai-sdk/amazon-bedrock")
-      return createAmazonBedrock(options)
-    },
-    "@ai-sdk/anthropic": async (options) => {
-      const { createAnthropic } = await import("@ai-sdk/anthropic")
-      return createAnthropic(options)
-    },
-    "@ai-sdk/azure": async (options) => {
-      const { createAzure } = await import("@ai-sdk/azure")
-      return createAzure(options)
-    },
-    "@ai-sdk/google": async (options) => {
-      const { createGoogleGenerativeAI } = await import("@ai-sdk/google")
-      return createGoogleGenerativeAI(options)
-    },
-    "@ai-sdk/google-vertex": async (options) => {
-      const { createVertex } = await import("@ai-sdk/google-vertex")
-      return createVertex(options)
-    },
-    "@ai-sdk/google-vertex/anthropic": async (options) => {
-      const { createVertexAnthropic } = await import("@ai-sdk/google-vertex/anthropic")
-      return createVertexAnthropic(options)
-    },
-    "@ai-sdk/openai": async (options) => {
-      const { createOpenAI } = await import("@ai-sdk/openai")
-      return createOpenAI(options)
-    },
-    "@ai-sdk/openai-compatible": async (options) => {
-      const { createOpenAICompatible } = await import("@ai-sdk/openai-compatible")
-      return createOpenAICompatible(options)
-    },
-    "@openrouter/ai-sdk-provider": async (options) => {
-      const { createOpenRouter } = await import("@openrouter/ai-sdk-provider")
-      return createOpenRouter(options)
-    },
-    "@ai-sdk/xai": async (options) => {
-      const { createXai } = await import("@ai-sdk/xai")
-      return createXai(options)
-    },
-    "@ai-sdk/mistral": async (options) => {
-      const { createMistral } = await import("@ai-sdk/mistral")
-      return createMistral(options)
-    },
-    "@ai-sdk/groq": async (options) => {
-      const { createGroq } = await import("@ai-sdk/groq")
-      return createGroq(options)
-    },
-    "@ai-sdk/deepinfra": async (options) => {
-      const { createDeepInfra } = await import("@ai-sdk/deepinfra")
-      return createDeepInfra(options)
-    },
-    "@ai-sdk/cerebras": async (options) => {
-      const { createCerebras } = await import("@ai-sdk/cerebras")
-      return createCerebras(options)
-    },
-    "@ai-sdk/cohere": async (options) => {
-      const { createCohere } = await import("@ai-sdk/cohere")
-      return createCohere(options)
-    },
-    "@ai-sdk/gateway": async (options) => {
-      const { createGateway } = await import("@ai-sdk/gateway")
-      return createGateway(options)
-    },
-    "@ai-sdk/togetherai": async (options) => {
-      const { createTogetherAI } = await import("@ai-sdk/togetherai")
-      return createTogetherAI(options)
-    },
-    "@ai-sdk/perplexity": async (options) => {
-      const { createPerplexity } = await import("@ai-sdk/perplexity")
-      return createPerplexity(options)
-    },
-    "@ai-sdk/vercel": async (options) => {
-      const { createVercel } = await import("@ai-sdk/vercel")
-      return createVercel(options)
-    },
-    "@gitlab/gitlab-ai-provider": async (options) => {
-      const { createGitLab } = await import("@gitlab/gitlab-ai-provider")
-      return createGitLab(options)
-    },
-    "@ai-sdk/github-copilot": async (options) => {
-      const { createOpenaiCompatible } = await import("./sdk/openai-compatible/src")
-      return (createOpenaiCompatible as any)(options)
-    },
+  const BUNDLED_PROVIDERS: Record<string, (options: any) => SDK> = {
+    "@ai-sdk/amazon-bedrock": (options) => createAmazonBedrock(options),
+    "@ai-sdk/anthropic": (options) => createAnthropic(options),
+    "@ai-sdk/azure": (options) => createAzure(options),
+    "@ai-sdk/google": (options) => createGoogleGenerativeAI(options),
+    "@ai-sdk/google-vertex": (options) => createVertex(options),
+    "@ai-sdk/google-vertex/anthropic": (options) => createVertexAnthropic(options),
+    "@ai-sdk/openai": (options) => createOpenAI(options),
+    "@ai-sdk/openai-compatible": (options) => createOpenAICompatible(options),
+    "@openrouter/ai-sdk-provider": (options) => createOpenRouter(options),
+    "@ai-sdk/xai": (options) => createXai(options),
+    "@ai-sdk/mistral": (options) => createMistral(options),
+    "@ai-sdk/groq": (options) => createGroq(options),
+    "@ai-sdk/deepinfra": (options) => createDeepInfra(options),
+    "@ai-sdk/cerebras": (options) => createCerebras(options),
+    "@ai-sdk/cohere": (options) => createCohere(options),
+    "@ai-sdk/gateway": (options) => createGateway(options),
+    "@ai-sdk/togetherai": (options) => createTogetherAI(options),
+    "@ai-sdk/perplexity": (options) => createPerplexity(options),
+    "@ai-sdk/vercel": (options) => createVercel(options),
+    "@gitlab/gitlab-ai-provider": (options) => createGitLab(options),
+    "@ai-sdk/github-copilot": (options) => (createGitHubCopilotOpenAICompatible as any)(options),
   }
 
   type CustomModelLoader = (sdk: any, model: Model, options?: Record<string, any>) => Promise<any>
@@ -243,11 +201,13 @@ export namespace Provider {
 
       const awsAccessKeyId = Env.get("AWS_ACCESS_KEY_ID")
 
+      // TODO: Using process.env directly because Env.set only updates a process.env shallow copy,
+      // until the scope of the Env API is clarified (test only or runtime?)
       const awsBearerToken = iife(() => {
-        const envToken = Env.get("AWS_BEARER_TOKEN_BEDROCK")
+        const envToken = process.env.AWS_BEARER_TOKEN_BEDROCK
         if (envToken) return envToken
         if (auth?.type === "api") {
-          Env.set("AWS_BEARER_TOKEN_BEDROCK", auth.key)
+          process.env.AWS_BEARER_TOKEN_BEDROCK = auth.key
           return auth.key
         }
         return undefined
@@ -282,8 +242,12 @@ export namespace Provider {
         autoload: true,
         options: providerOptions,
         async getModel(sdk: any, model: Model, options?: Record<string, any>) {
-          if (model.api.id.startsWith("global.") || model.api.id.startsWith("jp.")) {
-            return sdk.languageModel(model.api.id)
+          const modelID = model.api.id
+          // Skip region prefixing if model already has a cross-region inference profile prefix
+          // Models from models.dev may already include prefixes like us., eu., global., etc.
+          const crossRegionPrefixes = ["global.", "us.", "eu.", "jp.", "apac.", "au."]
+          if (crossRegionPrefixes.some((prefix) => modelID.startsWith(prefix))) {
+            return sdk.languageModel(modelID)
           }
 
           // Region resolution precedence (highest to lowest):
@@ -428,17 +392,19 @@ export namespace Provider {
     },
     "sap-ai-core": async () => {
       const auth = await Auth.get("sap-ai-core")
+      // TODO: Using process.env directly because Env.set only updates a shallow copy (not process.env),
+      // until the scope of the Env API is clarified (test only or runtime?)
       const envServiceKey = iife(() => {
-        const envAICoreServiceKey = Env.get("AICORE_SERVICE_KEY")
+        const envAICoreServiceKey = process.env.AICORE_SERVICE_KEY
         if (envAICoreServiceKey) return envAICoreServiceKey
         if (auth?.type === "api") {
-          Env.set("AICORE_SERVICE_KEY", auth.key)
+          process.env.AICORE_SERVICE_KEY = auth.key
           return auth.key
         }
         return undefined
       })
-      const deploymentId = Env.get("AICORE_DEPLOYMENT_ID")
-      const resourceGroup = Env.get("AICORE_RESOURCE_GROUP")
+      const deploymentId = process.env.AICORE_DEPLOYMENT_ID
+      const resourceGroup = process.env.AICORE_RESOURCE_GROUP
 
       return {
         autoload: !!envServiceKey,
@@ -472,11 +438,17 @@ export namespace Provider {
       const config = await Config.get()
       const providerConfig = config.provider?.["gitlab"]
 
+      const aiGatewayHeaders = {
+        "User-Agent": `opencode/${Installation.VERSION} gitlab-ai-provider/${GITLAB_PROVIDER_VERSION} (${os.platform()} ${os.release()}; ${os.arch()})`,
+        ...(providerConfig?.options?.aiGatewayHeaders || {}),
+      }
+
       return {
         autoload: !!apiKey,
         options: {
           instanceUrl,
           apiKey,
+          aiGatewayHeaders,
           featureFlags: {
             duo_agent_platform_agentic_chat: true,
             duo_agent_platform: true,
@@ -485,6 +457,7 @@ export namespace Provider {
         },
         async getModel(sdk: any, model: Model) {
           return sdk.agenticChat(model.api.id, {
+            aiGatewayHeaders,
             featureFlags: {
               duo_agent_platform_agentic_chat: true,
               duo_agent_platform: true,
@@ -494,25 +467,63 @@ export namespace Provider {
         },
       }
     },
+    "cloudflare-workers-ai": async (input) => {
+      const accountId = Env.get("CLOUDFLARE_ACCOUNT_ID")
+      if (!accountId) return { autoload: false }
+
+      const apiKey = await iife(async () => {
+        const envToken = Env.get("CLOUDFLARE_API_KEY")
+        if (envToken) return envToken
+        const auth = await Auth.get(input.id)
+        if (auth?.type === "api") return auth.key
+        return undefined
+      })
+
+      return {
+        autoload: !!apiKey,
+        options: {
+          apiKey,
+          baseURL: `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/v1`,
+        },
+        async getModel(sdk: any, modelID: string) {
+          return sdk.languageModel(modelID)
+        },
+      }
+    },
     "cloudflare-ai-gateway": async (input) => {
       const accountId = Env.get("CLOUDFLARE_ACCOUNT_ID")
       const gateway = Env.get("CLOUDFLARE_GATEWAY_ID")
 
       if (!accountId || !gateway) return { autoload: false }
 
-      // Get API token from env or auth prompt
+      // Get API token from env or auth - required for authenticated gateways
       const apiToken = await (async () => {
-        const envToken = Env.get("CLOUDFLARE_API_TOKEN")
+        const envToken = Env.get("CLOUDFLARE_API_TOKEN") || Env.get("CF_AIG_TOKEN")
         if (envToken) return envToken
         const auth = await Auth.get(input.id)
         if (auth?.type === "api") return auth.key
         return undefined
       })()
 
+      if (!apiToken) {
+        throw new Error(
+          "CLOUDFLARE_API_TOKEN (or CF_AIG_TOKEN) is required for Cloudflare AI Gateway. " +
+            "Set it via environment variable or run `opencode auth cloudflare-ai-gateway`.",
+        )
+      }
+
+      // Use official ai-gateway-provider package (v2.x for AI SDK v5 compatibility)
+      const { createAiGateway } = await import("ai-gateway-provider")
+      const { createUnified } = await import("ai-gateway-provider/providers/unified")
+
+      const aigateway = createAiGateway({ accountId, gateway, apiKey: apiToken })
+      const unified = createUnified()
+
       return {
         autoload: true,
-        async getModel(sdk: any, model: Model, _options?: Record<string, any>) {
-          return sdk.languageModel(model.api.id)
+        async getModel(_sdk: any, model: Model, _options?: Record<string, any>) {
+          // Model IDs use Unified API format: provider/model (e.g., "anthropic/claude-sonnet-4-5")
+          return aigateway(unified(model.api.id))
         },
         options: {
           baseURL: `https://gateway.ai.cloudflare.com/v1/${accountId}/${gateway}/compat`,
@@ -1114,13 +1125,10 @@ export namespace Provider {
         })
       }
 
-      // Special case: google-vertex-anthropic uses a subpath import
-      const bundledKey =
-        model.providerID === "google-vertex-anthropic" ? "@ai-sdk/google-vertex/anthropic" : model.api.npm
-      const bundledFn = BUNDLED_PROVIDERS[bundledKey]
+      const bundledFn = BUNDLED_PROVIDERS[model.api.npm]
       if (bundledFn) {
-        log.info("using bundled provider", { providerID: model.providerID, pkg: bundledKey })
-        const loaded = await bundledFn({
+        log.info("using bundled provider", { providerID: model.providerID, pkg: model.api.npm })
+        const loaded = bundledFn({
           name: model.providerID,
           ...options,
         })

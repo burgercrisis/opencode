@@ -119,6 +119,8 @@ type ChildOptions = {
   bootstrap?: boolean
 }
 
+const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
+
 function normalizeProviderList(input: ProviderListResponse): ProviderListResponse {
   return {
     ...input,
@@ -296,7 +298,7 @@ function createGlobalSync() {
     const aUpdated = sessionUpdatedAt(a)
     const bUpdated = sessionUpdatedAt(b)
     if (aUpdated !== bUpdated) return bUpdated - aUpdated
-    return a.id.localeCompare(b.id)
+    return cmp(a.id, b.id)
   }
 
   function takeRecentSessions(sessions: Session[], limit: number, cutoff: number) {
@@ -324,7 +326,7 @@ function createGlobalSync() {
     const all = input
       .filter((s) => !!s?.id)
       .filter((s) => !s.time?.archived)
-      .sort((a, b) => a.id.localeCompare(b.id))
+      .sort((a, b) => cmp(a.id, b.id))
 
     const roots = all.filter((s) => !s.parentID)
     const children = all.filter((s) => !!s.parentID)
@@ -341,7 +343,7 @@ function createGlobalSync() {
       return sessionUpdatedAt(s) > cutoff
     })
 
-    return [...keepRoots, ...keepChildren].sort((a, b) => a.id.localeCompare(b.id))
+    return [...keepRoots, ...keepChildren].sort((a, b) => cmp(a.id, b.id))
   }
 
   function ensureChild(directory: string) {
@@ -462,7 +464,7 @@ function createGlobalSync() {
         const nonArchived = (x.data ?? [])
           .filter((s) => !!s?.id)
           .filter((s) => !s.time?.archived)
-          .sort((a, b) => a.id.localeCompare(b.id))
+          .sort((a, b) => cmp(a.id, b.id))
 
         // Read the current limit at resolve-time so callers that bump the limit while
         // a request is in-flight still get the expanded result.
@@ -564,7 +566,7 @@ function createGlobalSync() {
                 "permission",
                 sessionID,
                 reconcile(
-                  permissions.filter((p) => !!p?.id).sort((a, b) => a.id.localeCompare(b.id)),
+                  permissions.filter((p) => !!p?.id).sort((a, b) => cmp(a.id, b.id)),
                   { key: "id" },
                 ),
               )
@@ -593,7 +595,7 @@ function createGlobalSync() {
                 "question",
                 sessionID,
                 reconcile(
-                  questions.filter((q) => !!q?.id).sort((a, b) => a.id.localeCompare(b.id)),
+                  questions.filter((q) => !!q?.id).sort((a, b) => cmp(a.id, b.id)),
                   { key: "id" },
                 ),
               )
@@ -993,7 +995,7 @@ function createGlobalSync() {
             .filter((p) => !!p?.id)
             .filter((p) => !!p.worktree && !p.worktree.includes("opencode-test"))
             .slice()
-            .sort((a, b) => a.id.localeCompare(b.id))
+            .sort((a, b) => cmp(a.id, b.id))
           setGlobalStore("project", projects)
         }),
       ),
