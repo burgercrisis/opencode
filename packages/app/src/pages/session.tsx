@@ -2291,6 +2291,7 @@ export default function Page() {
                       </div>
                     }
                   >
+                    <>
                       <div
                         class="absolute left-1/2 -translate-x-1/2 bottom-[calc(var(--prompt-height,8rem)+32px)] z-[60] pointer-events-none transition-all duration-200 ease-out"
                         classList={{
@@ -2616,7 +2617,7 @@ export default function Page() {
                         </div>
                       </div>
                     </div>
-                  </div>
+                  </>
                 </Show>
               </Show>
             </Match>
@@ -3500,8 +3501,52 @@ export default function Page() {
                       </Show>
                     </DragOverlay>
                 </DragDropProvider>
+              </>
+            }
+          >
+            <div class="relative flex-1 min-h-0 overflow-hidden">
+              <Switch>
+                <Match when={hasReview()}>
+                  <Show
+                    when={diffsReady()}
+                    fallback={<div class="px-6 py-4 text-text-weak">Loading changes...</div>}
+                  >
+                    <SessionReviewTab
+                      diffs={diffs}
+                      view={view}
+                      diffStyle={layout.review.diffStyle()}
+                      onDiffStyleChange={layout.review.setDiffStyle}
+                      focusedFile={activeDiff()}
+                      onLineComment={(comment) => addCommentToContext({ ...comment, origin: "review" })}
+                      comments={comments.all()}
+                      focusedComment={comments.focus()}
+                      onFocusedCommentChange={comments.setFocus}
+                      onViewFile={(path) => {
+                        showAllFiles()
+                        const value = file.tab(path)
+                        tabs().open(value)
+                        file.load(path)
+                      }}
+                      classes={{
+                        root: "pb-[calc(var(--prompt-height,8rem)+32px)]",
+                        header: "px-6",
+                        container: "px-6",
+                      }}
+                    />
+                  </Show>
+                </Match>
+                <Match when={true}>
+                  <div class="h-full px-6 pb-30 flex flex-col items-center justify-center text-center gap-6">
+                    <Mark class="w-14 opacity-10" />
+                    <div class="text-13-regular text-text-weak max-w-56">{language.t("session.review.empty")}</div>
+                  </div>
+                </Match>
+              </Switch>
+            </div>
+          </Show>
+        </div>
 
-                <Show when={layout.fileTree.opened()}>
+        <Show when={layout.fileTree.opened()}>
                   <div
                     id="file-tree-panel"
                     class="relative shrink-0 h-full"
@@ -3549,22 +3594,6 @@ export default function Page() {
                               </Show>
                             </Match>
                             <Match when={true}>
-                              <div class="mt-8 text-center text-12-regular text-text-weak">
-                                {language.t("session.review.noChanges")}
-                              </div>
-                            }
-                          >
-                            <FileTree
-                              path=""
-                              allowed={diffFiles()}
-                              kinds={kinds()}
-                              draggable={false}
-                              active={tree.activeDiff}
-                              onFileClick={(node) => focusReviewDiff(node.path)}
-                            />
-                          </Show>
-                        </Match>
-                        <Match when={true}>
                           <div class="mt-8 text-center text-12-regular text-text-weak">
                             {language.t("session.review.noChanges")}
                           </div>
