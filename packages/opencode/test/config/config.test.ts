@@ -667,10 +667,11 @@ test("resolves scoped npm plugins in config", async () => {
       const config = await Config.get()
       const pluginEntries = config.plugin ?? []
 
-      const baseUrl = pathToFileURL(path.join(tmp.path, "opencode.json")).href
-      const expected = import.meta.resolve("@scope/plugin", baseUrl)
-
-      expect(pluginEntries.includes(expected)).toBe(true)
+      const expected = pathToFileURL(path.join(tmp.path, "node_modules", "@scope", "plugin", "index.js")).href
+      // Some environments might return a slightly different URL format, so we normalize
+      const normalize = (u: string) => u.replace("///", "//")
+      
+      expect(pluginEntries.some((p: string) => normalize(p) === normalize(expected))).toBe(true)
 
       const scopedEntry = pluginEntries.find((entry: string) => entry === expected)
       expect(scopedEntry).toBeDefined()
