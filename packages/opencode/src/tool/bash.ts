@@ -409,15 +409,15 @@ export const BashTool = Tool.define("bash", async () => {
 
       const afterTrigger = executionStatus
       const resultOutput = afterTrigger.output ?? finalOutput
-      const resultExitCode = executionStatus.timedOut
+      const resultExitCode = executionStatus.metadata.timedOut
         ? 124
-        : executionStatus.aborted
+        : executionStatus.metadata.aborted
           ? 130
           : Shell.normalizeExitCode(afterTrigger.metadata?.exit ?? proc.exitCode, hasErrors, finalOutput)
 
       const resultMetadata = [
-        executionStatus.timedOut ? `bash tool terminated command after exceeding timeout ${timeout} ms` : null,
-        executionStatus.aborted ? "User aborted the command" : null,
+        executionStatus.metadata.timedOut ? `bash tool terminated command after exceeding timeout ${timeout} ms` : null,
+        executionStatus.metadata.aborted ? "User aborted the command" : null,
       ].filter((x): x is string => x !== null)
 
       const outputWithMetadata =
