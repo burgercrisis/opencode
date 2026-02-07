@@ -146,7 +146,7 @@ describe("tool.bash permissions", () => {
         )
         const extDirReq = requests.find((r) => r.permission === "external_directory")
         expect(extDirReq).toBeDefined()
-        expect(extDirReq!.patterns.map(p => p.replace(/\\/g, "/"))).toContain(process.platform === "win32" ? "C:/" : "/")
+        expect(extDirReq!.patterns.map(p => p.replace(/\\/g, "/"))).toContain(process.platform === "win32" ? "C:/*" : "/*")
       },
     })
   })

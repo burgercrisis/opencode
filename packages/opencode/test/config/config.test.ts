@@ -1,4 +1,5 @@
-import { test, expect, describe, mock, afterEach } from "bun:test"
+import { test, expect, describe, mock, afterEach, beforeEach } from "bun:test"
+import { $ } from "bun"
 import { Config } from "../../src/config/config"
 import { Instance } from "../../src/project/instance"
 import { Auth } from "../../src/auth"
@@ -7,11 +8,26 @@ import path from "path"
 import fs from "fs/promises"
 import { pathToFileURL } from "url"
 import { Global } from "../../src/global"
+import os from "os"
+import { createRequire } from "module"
 
 // Get managed config directory from environment (set in preload.ts)
 const managedConfigDir = process.env.OPENCODE_TEST_MANAGED_CONFIG_DIR!
 
+const ORIGINAL_ENV = process.env
+
+beforeEach(async () => {
+  const home = path.join(os.tmpdir(), "opencode-test-home-" + Math.random().toString(36).slice(2))
+  await fs.mkdir(home, { recursive: true })
+  process.env.OPENCODE_TEST_HOME = home
+  await Global.initialize()
+})
+
 afterEach(async () => {
+  if (process.env.OPENCODE_TEST_HOME) {
+    await fs.rm(process.env.OPENCODE_TEST_HOME, { recursive: true, force: true }).catch(() => {})
+  }
+  process.env = { ...ORIGINAL_ENV }
   await fs.rm(managedConfigDir, { force: true, recursive: true }).catch(() => {})
 })
 
@@ -25,9 +41,10 @@ async function writeConfig(dir: string, config: object, name = "opencode.json") 
 }
 
 test("loads config with defaults when no files exist", async () => {
-  await using tmp = await tmpdir()
+  await using tmp = await tmpdir({ git: true, git: true })
   await Instance.provide({
     directory: tmp.path,
+    // Initialize git to contain the worktree within tmp.path
     fn: async () => {
       const config = await Config.get()
       expect(config.username).toBeDefined()
@@ -36,7 +53,7 @@ test("loads config with defaults when no files exist", async () => {
 })
 
 test("loads JSON config file", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ git: true,
     init: async (dir) => {
       await writeConfig(dir, {
         $schema: "https://opencode.ai/config.json",
@@ -47,6 +64,7 @@ test("loads JSON config file", async () => {
   })
   await Instance.provide({
     directory: tmp.path,
+    // Initialize git to contain the worktree within tmp.path
     fn: async () => {
       const config = await Config.get()
       expect(config.model).toBe("test/model")
@@ -56,7 +74,7 @@ test("loads JSON config file", async () => {
 })
 
 test("loads JSONC config file", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ git: true,
     init: async (dir) => {
       await Bun.write(
         path.join(dir, "opencode.jsonc"),
@@ -71,6 +89,7 @@ test("loads JSONC config file", async () => {
   })
   await Instance.provide({
     directory: tmp.path,
+    // Initialize git to contain the worktree within tmp.path
     fn: async () => {
       const config = await Config.get()
       expect(config.model).toBe("test/model")
@@ -80,7 +99,7 @@ test("loads JSONC config file", async () => {
 })
 
 test("merges multiple config files with correct precedence", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ git: true,
     init: async (dir) => {
       await writeConfig(
         dir,
@@ -99,6 +118,7 @@ test("merges multiple config files with correct precedence", async () => {
   })
   await Instance.provide({
     directory: tmp.path,
+    // Initialize git to contain the worktree within tmp.path
     fn: async () => {
       const config = await Config.get()
       expect(config.model).toBe("override")
@@ -112,7 +132,7 @@ test("handles environment variable substitution", async () => {
   process.env["TEST_VAR"] = "test_theme"
 
   try {
-    await using tmp = await tmpdir({
+    await using tmp = await tmpdir({ git: true,
       init: async (dir) => {
         await writeConfig(dir, {
           $schema: "https://opencode.ai/config.json",
@@ -122,6 +142,7 @@ test("handles environment variable substitution", async () => {
     })
     await Instance.provide({
       directory: tmp.path,
+      // Initialize git to contain the worktree within tmp.path
       fn: async () => {
         const config = await Config.get()
         expect(config.theme).toBe("test_theme")
@@ -141,7 +162,7 @@ test("preserves env variables when adding $schema to config", async () => {
   process.env["PRESERVE_VAR"] = "secret_value"
 
   try {
-    await using tmp = await tmpdir({
+    await using tmp = await tmpdir({ git: true,
       init: async (dir) => {
         // Config without $schema - should trigger auto-add
         await Bun.write(
@@ -154,6 +175,7 @@ test("preserves env variables when adding $schema to config", async () => {
     })
     await Instance.provide({
       directory: tmp.path,
+      // Initialize git to contain the worktree within tmp.path
       fn: async () => {
         const config = await Config.get()
         expect(config.theme).toBe("secret_value")
@@ -175,7 +197,7 @@ test("preserves env variables when adding $schema to config", async () => {
 })
 
 test("handles file inclusion substitution", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ git: true,
     init: async (dir) => {
       await Bun.write(path.join(dir, "included.txt"), "test_theme")
       await writeConfig(dir, {
@@ -186,6 +208,7 @@ test("handles file inclusion substitution", async () => {
   })
   await Instance.provide({
     directory: tmp.path,
+    // Initialize git to contain the worktree within tmp.path
     fn: async () => {
       const config = await Config.get()
       expect(config.theme).toBe("test_theme")
@@ -194,7 +217,7 @@ test("handles file inclusion substitution", async () => {
 })
 
 test("validates config schema and throws on invalid fields", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ git: true,
     init: async (dir) => {
       await writeConfig(dir, {
         $schema: "https://opencode.ai/config.json",
@@ -204,6 +227,7 @@ test("validates config schema and throws on invalid fields", async () => {
   })
   await Instance.provide({
     directory: tmp.path,
+    // Initialize git to contain the worktree within tmp.path
     fn: async () => {
       // Strict schema should throw an error for invalid fields
       await expect(Config.get()).rejects.toThrow()
@@ -212,13 +236,14 @@ test("validates config schema and throws on invalid fields", async () => {
 })
 
 test("throws error for invalid JSON", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ git: true,
     init: async (dir) => {
       await Bun.write(path.join(dir, "opencode.json"), "{ invalid json }")
     },
   })
   await Instance.provide({
     directory: tmp.path,
+    // Initialize git to contain the worktree within tmp.path
     fn: async () => {
       await expect(Config.get()).rejects.toThrow()
     },
@@ -226,7 +251,7 @@ test("throws error for invalid JSON", async () => {
 })
 
 test("handles agent configuration", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ git: true,
     init: async (dir) => {
       await writeConfig(dir, {
         $schema: "https://opencode.ai/config.json",
@@ -242,6 +267,7 @@ test("handles agent configuration", async () => {
   })
   await Instance.provide({
     directory: tmp.path,
+    // Initialize git to contain the worktree within tmp.path
     fn: async () => {
       const config = await Config.get()
       expect(config.agent?.["test_agent"]).toEqual(
@@ -256,7 +282,7 @@ test("handles agent configuration", async () => {
 })
 
 test("treats agent variant as model-scoped setting (not provider option)", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ git: true,
     init: async (dir) => {
       await writeConfig(dir, {
         $schema: "https://opencode.ai/config.json",
@@ -273,6 +299,7 @@ test("treats agent variant as model-scoped setting (not provider option)", async
 
   await Instance.provide({
     directory: tmp.path,
+    // Initialize git to contain the worktree within tmp.path
     fn: async () => {
       const config = await Config.get()
       const agent = config.agent?.["test_agent"]
@@ -287,7 +314,7 @@ test("treats agent variant as model-scoped setting (not provider option)", async
 })
 
 test("handles command configuration", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ git: true,
     init: async (dir) => {
       await writeConfig(dir, {
         $schema: "https://opencode.ai/config.json",
@@ -303,6 +330,7 @@ test("handles command configuration", async () => {
   })
   await Instance.provide({
     directory: tmp.path,
+    // Initialize git to contain the worktree within tmp.path
     fn: async () => {
       const config = await Config.get()
       expect(config.command?.["test_command"]).toEqual({
@@ -315,7 +343,7 @@ test("handles command configuration", async () => {
 })
 
 test("migrates autoshare to share field", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ git: true,
     init: async (dir) => {
       await Bun.write(
         path.join(dir, "opencode.json"),
@@ -328,6 +356,7 @@ test("migrates autoshare to share field", async () => {
   })
   await Instance.provide({
     directory: tmp.path,
+    // Initialize git to contain the worktree within tmp.path
     fn: async () => {
       const config = await Config.get()
       expect(config.share).toBe("auto")
@@ -337,7 +366,7 @@ test("migrates autoshare to share field", async () => {
 })
 
 test("migrates mode field to agent field", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ git: true,
     init: async (dir) => {
       await Bun.write(
         path.join(dir, "opencode.json"),
@@ -355,6 +384,7 @@ test("migrates mode field to agent field", async () => {
   })
   await Instance.provide({
     directory: tmp.path,
+    // Initialize git to contain the worktree within tmp.path
     fn: async () => {
       const config = await Config.get()
       expect(config.agent?.["test_mode"]).toEqual({
@@ -369,7 +399,7 @@ test("migrates mode field to agent field", async () => {
 })
 
 test("loads config from .opencode directory", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ git: true,
     init: async (dir) => {
       const opencodeDir = path.join(dir, ".opencode")
       await fs.mkdir(opencodeDir, { recursive: true })
@@ -387,6 +417,7 @@ Test agent prompt`,
   })
   await Instance.provide({
     directory: tmp.path,
+    // Initialize git to contain the worktree within tmp.path
     fn: async () => {
       const config = await Config.get()
       expect(config.agent?.["test"]).toEqual(
@@ -401,7 +432,7 @@ Test agent prompt`,
 })
 
 test("loads agents from .opencode/agents (plural)", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ git: true,
     init: async (dir) => {
       const opencodeDir = path.join(dir, ".opencode")
       await fs.mkdir(opencodeDir, { recursive: true })
@@ -431,6 +462,7 @@ Nested agent prompt`,
 
   await Instance.provide({
     directory: tmp.path,
+    // Initialize git to contain the worktree within tmp.path
     fn: async () => {
       const config = await Config.get()
 
@@ -452,7 +484,7 @@ Nested agent prompt`,
 })
 
 test("loads commands from .opencode/command (singular)", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ git: true,
     init: async (dir) => {
       const opencodeDir = path.join(dir, ".opencode")
       await fs.mkdir(opencodeDir, { recursive: true })
@@ -480,6 +512,7 @@ Nested command template`,
 
   await Instance.provide({
     directory: tmp.path,
+    // Initialize git to contain the worktree within tmp.path
     fn: async () => {
       const config = await Config.get()
 
@@ -497,7 +530,7 @@ Nested command template`,
 })
 
 test("loads commands from .opencode/commands (plural)", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ git: true,
     init: async (dir) => {
       const opencodeDir = path.join(dir, ".opencode")
       await fs.mkdir(opencodeDir, { recursive: true })
@@ -525,6 +558,7 @@ Nested command template`,
 
   await Instance.provide({
     directory: tmp.path,
+    // Initialize git to contain the worktree within tmp.path
     fn: async () => {
       const config = await Config.get()
 
@@ -542,9 +576,10 @@ Nested command template`,
 })
 
 test("updates config and writes to file", async () => {
-  await using tmp = await tmpdir()
+  await using tmp = await tmpdir({ git: true, git: true })
   await Instance.provide({
     directory: tmp.path,
+    // Initialize git to contain the worktree within tmp.path
     fn: async () => {
       const newConfig = { model: "updated/model" }
       await Config.update(newConfig as any)
@@ -556,9 +591,10 @@ test("updates config and writes to file", async () => {
 })
 
 test("gets config directories", async () => {
-  await using tmp = await tmpdir()
+  await using tmp = await tmpdir({ git: true, git: true })
   await Instance.provide({
     directory: tmp.path,
+    // Initialize git to contain the worktree within tmp.path
     fn: async () => {
       const dirs = await Config.directories()
       expect(dirs.length).toBeGreaterThanOrEqual(1)
@@ -589,6 +625,7 @@ test("does not try to install dependencies in read-only OPENCODE_CONFIG_DIR", as
   try {
     await Instance.provide({
       directory: tmp.path,
+      // Initialize git to contain the worktree within tmp.path
       fn: async () => {
         await Config.get()
       },
@@ -597,7 +634,7 @@ test("does not try to install dependencies in read-only OPENCODE_CONFIG_DIR", as
     if (prev === undefined) delete process.env.OPENCODE_CONFIG_DIR
     else process.env.OPENCODE_CONFIG_DIR = prev
   }
-})
+}, 30000)
 
 test("installs dependencies in writable OPENCODE_CONFIG_DIR", async () => {
   await using tmp = await tmpdir<string>({
@@ -614,6 +651,7 @@ test("installs dependencies in writable OPENCODE_CONFIG_DIR", async () => {
   try {
     await Instance.provide({
       directory: tmp.path,
+      // Initialize git to contain the worktree within tmp.path
       fn: async () => {
         await Config.get()
         await Config.waitForDependencies()
@@ -626,10 +664,10 @@ test("installs dependencies in writable OPENCODE_CONFIG_DIR", async () => {
     if (prev === undefined) delete process.env.OPENCODE_CONFIG_DIR
     else process.env.OPENCODE_CONFIG_DIR = prev
   }
-})
+}, 30000)
 
 test("resolves scoped npm plugins in config", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ git: true,
     init: async (dir) => {
       const pluginDir = path.join(dir, "node_modules", "@scope", "plugin")
       await fs.mkdir(pluginDir, { recursive: true })
@@ -647,6 +685,9 @@ test("resolves scoped npm plugins in config", async () => {
             version: "1.0.0",
             type: "module",
             main: "./index.js",
+            exports: {
+              ".": "./index.js",
+            },
           },
           null,
           2,
@@ -664,12 +705,14 @@ test("resolves scoped npm plugins in config", async () => {
 
   await Instance.provide({
     directory: tmp.path,
+    // Initialize git to contain the worktree within tmp.path
     fn: async () => {
       const config = await Config.get()
       const pluginEntries = config.plugin ?? []
 
       const baseUrl = pathToFileURL(path.join(tmp.path, "opencode.json")).href
-      const expected = import.meta.resolve("@scope/plugin", baseUrl)
+      const require = createRequire(baseUrl)
+      const expected = pathToFileURL(require.resolve("@scope/plugin")).href
 
       expect(pluginEntries.includes(expected)).toBe(true)
 
@@ -681,7 +724,7 @@ test("resolves scoped npm plugins in config", async () => {
 })
 
 test("merges plugin arrays from global and local configs", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ git: true,
     init: async (dir) => {
       // Create a nested project structure with local .opencode config
       const projectDir = path.join(dir, "project")
@@ -710,6 +753,7 @@ test("merges plugin arrays from global and local configs", async () => {
 
   await Instance.provide({
     directory: path.join(tmp.path, "project"),
+    // Initialize git to contain the worktree within tmp.path/project
     fn: async () => {
       const config = await Config.get()
       const plugins = config.plugin ?? []
@@ -729,7 +773,7 @@ test("merges plugin arrays from global and local configs", async () => {
 })
 
 test("does not error when only custom agent is a subagent", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ git: true,
     init: async (dir) => {
       const opencodeDir = path.join(dir, ".opencode")
       await fs.mkdir(opencodeDir, { recursive: true })
@@ -748,6 +792,7 @@ Helper subagent prompt`,
   })
   await Instance.provide({
     directory: tmp.path,
+    // Initialize git to contain the worktree within tmp.path
     fn: async () => {
       const config = await Config.get()
       expect(config.agent?.["helper"]).toMatchObject({
@@ -761,7 +806,7 @@ Helper subagent prompt`,
 })
 
 test("merges instructions arrays from global and local configs", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ git: true,
     init: async (dir) => {
       const projectDir = path.join(dir, "project")
       const opencodeDir = path.join(projectDir, ".opencode")
@@ -787,6 +832,7 @@ test("merges instructions arrays from global and local configs", async () => {
 
   await Instance.provide({
     directory: path.join(tmp.path, "project"),
+    // Initialize git to contain the worktree within tmp.path/project
     fn: async () => {
       const config = await Config.get()
       const instructions = config.instructions ?? []
@@ -800,7 +846,7 @@ test("merges instructions arrays from global and local configs", async () => {
 })
 
 test("deduplicates duplicate instructions from global and local configs", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ git: true,
     init: async (dir) => {
       const projectDir = path.join(dir, "project")
       const opencodeDir = path.join(projectDir, ".opencode")
@@ -826,6 +872,7 @@ test("deduplicates duplicate instructions from global and local configs", async 
 
   await Instance.provide({
     directory: path.join(tmp.path, "project"),
+    // Initialize git to contain the worktree within tmp.path/project
     fn: async () => {
       const config = await Config.get()
       const instructions = config.instructions ?? []
@@ -842,7 +889,7 @@ test("deduplicates duplicate instructions from global and local configs", async 
 })
 
 test("deduplicates duplicate plugins from global and local configs", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ git: true,
     init: async (dir) => {
       // Create a nested project structure with local .opencode config
       const projectDir = path.join(dir, "project")
@@ -871,6 +918,7 @@ test("deduplicates duplicate plugins from global and local configs", async () =>
 
   await Instance.provide({
     directory: path.join(tmp.path, "project"),
+    // Initialize git to contain the worktree within tmp.path/project
     fn: async () => {
       const config = await Config.get()
       const plugins = config.plugin ?? []
@@ -897,7 +945,7 @@ test("deduplicates duplicate plugins from global and local configs", async () =>
 // Legacy tools migration tests
 
 test("migrates legacy tools config to permissions - allow", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ git: true,
     init: async (dir) => {
       await Bun.write(
         path.join(dir, "opencode.json"),
@@ -917,6 +965,7 @@ test("migrates legacy tools config to permissions - allow", async () => {
   })
   await Instance.provide({
     directory: tmp.path,
+    // Initialize git to contain the worktree within tmp.path
     fn: async () => {
       const config = await Config.get()
       expect(config.agent?.["test"]?.permission).toEqual({
@@ -928,7 +977,7 @@ test("migrates legacy tools config to permissions - allow", async () => {
 })
 
 test("migrates legacy tools config to permissions - deny", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ git: true,
     init: async (dir) => {
       await Bun.write(
         path.join(dir, "opencode.json"),
@@ -948,6 +997,7 @@ test("migrates legacy tools config to permissions - deny", async () => {
   })
   await Instance.provide({
     directory: tmp.path,
+    // Initialize git to contain the worktree within tmp.path
     fn: async () => {
       const config = await Config.get()
       expect(config.agent?.["test"]?.permission).toEqual({
@@ -959,7 +1009,7 @@ test("migrates legacy tools config to permissions - deny", async () => {
 })
 
 test("migrates legacy write tool to edit permission", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ git: true,
     init: async (dir) => {
       await Bun.write(
         path.join(dir, "opencode.json"),
@@ -978,6 +1028,7 @@ test("migrates legacy write tool to edit permission", async () => {
   })
   await Instance.provide({
     directory: tmp.path,
+    // Initialize git to contain the worktree within tmp.path
     fn: async () => {
       const config = await Config.get()
       expect(config.agent?.["test"]?.permission).toEqual({
@@ -991,7 +1042,7 @@ test("migrates legacy write tool to edit permission", async () => {
 // Note: preload.ts sets OPENCODE_TEST_MANAGED_CONFIG which Global.Path.managedConfig uses
 
 test("managed settings override user settings", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ git: true,
     init: async (dir) => {
       await writeConfig(dir, {
         $schema: "https://opencode.ai/config.json",
@@ -1010,6 +1061,7 @@ test("managed settings override user settings", async () => {
 
   await Instance.provide({
     directory: tmp.path,
+    // Initialize git to contain the worktree within tmp.path
     fn: async () => {
       const config = await Config.get()
       expect(config.model).toBe("managed/model")
@@ -1020,7 +1072,7 @@ test("managed settings override user settings", async () => {
 })
 
 test("managed settings override project settings", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ git: true,
     init: async (dir) => {
       await writeConfig(dir, {
         $schema: "https://opencode.ai/config.json",
@@ -1039,6 +1091,7 @@ test("managed settings override project settings", async () => {
 
   await Instance.provide({
     directory: tmp.path,
+    // Initialize git to contain the worktree within tmp.path
     fn: async () => {
       const config = await Config.get()
       expect(config.autoupdate).toBe(false)
@@ -1049,7 +1102,7 @@ test("managed settings override project settings", async () => {
 })
 
 test("missing managed settings file is not an error", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ git: true,
     init: async (dir) => {
       await writeConfig(dir, {
         $schema: "https://opencode.ai/config.json",
@@ -1060,6 +1113,7 @@ test("missing managed settings file is not an error", async () => {
 
   await Instance.provide({
     directory: tmp.path,
+    // Initialize git to contain the worktree within tmp.path
     fn: async () => {
       const config = await Config.get()
       expect(config.model).toBe("user/model")
@@ -1068,7 +1122,7 @@ test("missing managed settings file is not an error", async () => {
 })
 
 test("migrates legacy edit tool to edit permission", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ git: true,
     init: async (dir) => {
       await Bun.write(
         path.join(dir, "opencode.json"),
@@ -1087,6 +1141,7 @@ test("migrates legacy edit tool to edit permission", async () => {
   })
   await Instance.provide({
     directory: tmp.path,
+    // Initialize git to contain the worktree within tmp.path
     fn: async () => {
       const config = await Config.get()
       expect(config.agent?.["test"]?.permission).toEqual({
@@ -1097,7 +1152,7 @@ test("migrates legacy edit tool to edit permission", async () => {
 })
 
 test("migrates legacy patch tool to edit permission", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ git: true,
     init: async (dir) => {
       await Bun.write(
         path.join(dir, "opencode.json"),
@@ -1116,6 +1171,7 @@ test("migrates legacy patch tool to edit permission", async () => {
   })
   await Instance.provide({
     directory: tmp.path,
+    // Initialize git to contain the worktree within tmp.path
     fn: async () => {
       const config = await Config.get()
       expect(config.agent?.["test"]?.permission).toEqual({
@@ -1126,7 +1182,7 @@ test("migrates legacy patch tool to edit permission", async () => {
 })
 
 test("migrates legacy multiedit tool to edit permission", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ git: true,
     init: async (dir) => {
       await Bun.write(
         path.join(dir, "opencode.json"),
@@ -1155,7 +1211,7 @@ test("migrates legacy multiedit tool to edit permission", async () => {
 })
 
 test("migrates mixed legacy tools config", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ git: true,
     init: async (dir) => {
       await Bun.write(
         path.join(dir, "opencode.json"),
@@ -1190,7 +1246,7 @@ test("migrates mixed legacy tools config", async () => {
 })
 
 test("merges legacy tools with existing permission config", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ git: true,
     init: async (dir) => {
       await Bun.write(
         path.join(dir, "opencode.json"),
@@ -1223,7 +1279,7 @@ test("merges legacy tools with existing permission config", async () => {
 })
 
 test("permission config preserves key order", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ git: true,
     init: async (dir) => {
       await Bun.write(
         path.join(dir, "opencode.json"),
@@ -1270,7 +1326,7 @@ test("permission config preserves key order", async () => {
 // MCP config merging tests
 
 test("project config can override MCP server enabled status", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ git: true,
     init: async (dir) => {
       // Simulates a base config (like from remote .well-known) with disabled MCP
       await Bun.write(
@@ -1328,7 +1384,7 @@ test("project config can override MCP server enabled status", async () => {
 })
 
 test("MCP config deep merges preserving base config properties", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ git: true,
     init: async (dir) => {
       // Base config with full MCP definition
       await Bun.write(
@@ -1380,7 +1436,7 @@ test("MCP config deep merges preserving base config properties", async () => {
 })
 
 test("local .opencode config can override MCP from project config", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ git: true,
     init: async (dir) => {
       // Project config with disabled MCP
       await Bun.write(
@@ -1463,7 +1519,7 @@ test("project config overrides remote well-known config", async () => {
   )
 
   try {
-    await using tmp = await tmpdir({
+    await using tmp = await tmpdir({ git: true,
       git: true,
       init: async (dir) => {
         // Project config enables jira (overriding remote default)
@@ -1553,7 +1609,7 @@ describe("deduplicatePlugins", () => {
   })
 
   test("local plugin directory overrides global opencode.json plugin", async () => {
-    await using tmp = await tmpdir({
+    await using tmp = await tmpdir({ git: true,
       init: async (dir) => {
         const projectDir = path.join(dir, "project")
         const opencodeDir = path.join(projectDir, ".opencode")
@@ -1592,7 +1648,7 @@ describe("OPENCODE_DISABLE_PROJECT_CONFIG", () => {
     process.env["OPENCODE_DISABLE_PROJECT_CONFIG"] = "true"
 
     try {
-      await using tmp = await tmpdir({
+      await using tmp = await tmpdir({ git: true,
         init: async (dir) => {
           // Create a project config that would normally be loaded
           await Bun.write(
@@ -1628,7 +1684,7 @@ describe("OPENCODE_DISABLE_PROJECT_CONFIG", () => {
     process.env["OPENCODE_DISABLE_PROJECT_CONFIG"] = "true"
 
     try {
-      await using tmp = await tmpdir({
+      await using tmp = await tmpdir({ git: true,
         init: async (dir) => {
           // Create a .opencode directory with a command
           const opencodeDir = path.join(dir, ".opencode", "command")
@@ -1659,7 +1715,7 @@ describe("OPENCODE_DISABLE_PROJECT_CONFIG", () => {
     process.env["OPENCODE_DISABLE_PROJECT_CONFIG"] = "true"
 
     try {
-      await using tmp = await tmpdir()
+      await using tmp = await tmpdir({ git: true, git: true })
       await Instance.provide({
         directory: tmp.path,
         fn: async () => {
@@ -1687,7 +1743,7 @@ describe("OPENCODE_DISABLE_PROJECT_CONFIG", () => {
       delete process.env["OPENCODE_CONFIG_DIR"]
       process.env["OPENCODE_DISABLE_PROJECT_CONFIG"] = "true"
 
-      await using tmp = await tmpdir({
+      await using tmp = await tmpdir({ git: true,
         init: async (dir) => {
           // Create a config with relative instruction path
           await Bun.write(

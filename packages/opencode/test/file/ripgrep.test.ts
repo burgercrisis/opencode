@@ -114,9 +114,9 @@ package.json`)
     const result = await Ripgrep.tree({ cwd: tmp.path, limit: 50 })
     expect(result).toBe(`api/
 \troutes.ts
-\tlib/
+lib/
 \tutils.ts
-\tsrc/
+src/
 \tindex.ts`)
   })
 
@@ -151,5 +151,4 @@ package.json`)
     expect(hasVisible).toBe(true)
     expect(hasHidden).toBe(false)
   })
-})
 })

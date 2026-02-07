@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Instance } from "../../src/project/instance"
 import { Session } from "../../src/session"
+import { MessageV2 } from "../../src/session/message-v2"
 import { SessionPrompt } from "../../src/session/prompt"
 import { tmpdir } from "../fixture/fixture"
 
@@ -31,7 +32,8 @@ describe("session.prompt agent variant", () => {
           parts: [{ type: "text", text: "hello" }],
         })
         if (other.info.role !== "user") throw new Error("expected user message")
-        expect(other.info.variant).toBeUndefined()
+        const otherInfo = other.info as MessageV2.User
+        expect(otherInfo.variant).toBeUndefined()
 
         const match = await SessionPrompt.prompt({
           sessionID: session.id,
@@ -40,8 +42,9 @@ describe("session.prompt agent variant", () => {
           parts: [{ type: "text", text: "hello again" }],
         })
         if (match.info.role !== "user") throw new Error("expected user message")
-        expect(match.info.model).toEqual({ providerID: "openai", modelID: "gpt-5.2" })
-        expect(match.info.variant).toBe("xhigh")
+        const matchInfo = match.info as MessageV2.User
+        expect(matchInfo.model).toEqual({ providerID: "openai", modelID: "gpt-5.2" })
+        expect(matchInfo.variant).toBe("xhigh")
 
         const override = await SessionPrompt.prompt({
           sessionID: session.id,
@@ -51,7 +54,8 @@ describe("session.prompt agent variant", () => {
           parts: [{ type: "text", text: "hello third" }],
         })
         if (override.info.role !== "user") throw new Error("expected user message")
-        expect(override.info.variant).toBe("high")
+        const overrideInfo = override.info as MessageV2.User
+        expect(overrideInfo.variant).toBe("high")
 
         await Session.remove(session.id)
       },

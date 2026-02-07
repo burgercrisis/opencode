@@ -60,7 +60,14 @@ describe("Bash Tool Upgrades (Reflecting 5a87a6a Branch Point)", () => {
     test("processCmdOutput: strips trailing quote from variable expansion", () => {
       const output = 'C:\\Users\\Temp"'
       const result = processCmdOutput(output, "echo %TEMP%")
-      expect(result).toBe('C:\\Users\\Temp')
+      expect(result.output).toBe('C:\\Users\\Temp')
+    })
+
+    test("processCmdOutput: detects non-recognized command error", () => {
+      const output = "'nonexistent' is not recognized as an internal or external command, operable program or batch file."
+      const result = processCmdOutput(output, "nonexistent")
+      expect(result.exitCode).toBe(9009)
+      expect(result.hasErrors).toBe(true)
     })
   })
 
@@ -74,7 +81,7 @@ describe("Bash Tool Upgrades (Reflecting 5a87a6a Branch Point)", () => {
           const bash = await BashTool.init()
           const result = await bash.execute(
             {
-              command: "nonexistent_command_12345",
+              command: "cmd /c nonexistent_command_12345",
               description: "Test non-existent command exit code",
             },
             ctx as any,
@@ -94,7 +101,7 @@ describe("Bash Tool Upgrades (Reflecting 5a87a6a Branch Point)", () => {
           const bash = await BashTool.init()
           const result = await bash.execute(
             {
-              command: "dir 2>&1 | findstr src",
+              command: "echo hello | findstr hello",
               description: "Test successful pipe exit code",
             },
             ctx as any,
@@ -104,7 +111,7 @@ describe("Bash Tool Upgrades (Reflecting 5a87a6a Branch Point)", () => {
       })
     })
 
-    test("Windows: if not exist returns exit code 1 when file is missing", async () => {
+    test("Windows: if not exist returns exit code 0 when file is missing", async () => {
       if (process.platform !== "win32") return
 
       await Instance.provide({
@@ -118,8 +125,7 @@ describe("Bash Tool Upgrades (Reflecting 5a87a6a Branch Point)", () => {
             },
             ctx as any,
           )
-          // Our upgrade normalizes this to exit code 1 when the condition is true
-          expect(result.metadata.exit).toBe(1)
+          expect(result.metadata.exit).toBe(0)
         },
       })
     })

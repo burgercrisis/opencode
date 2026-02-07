@@ -1,6 +1,7 @@
 import { test, expect } from "bun:test"
 import { Skill } from "../../src/skill"
 import { Instance } from "../../src/project/instance"
+import { Global } from "../../src/global"
 import { tmpdir } from "../fixture/fixture"
 import path from "path"
 import fs from "fs/promises"
@@ -42,17 +43,25 @@ Instructions here.
     },
   })
 
-  await Instance.provide({
-    directory: tmp.path,
-    fn: async () => {
-      const skills = await Skill.all()
-      expect(skills.length).toBe(1)
-      const testSkill = skills.find((s) => s.name === "test-skill")
-      expect(testSkill).toBeDefined()
-      expect(testSkill!.description).toBe("A test skill for verification.")
-      expect(testSkill!.location).toContain("skill/test-skill/SKILL.md")
-    },
-  })
+  const originalHome = process.env.OPENCODE_TEST_HOME
+  process.env.OPENCODE_TEST_HOME = tmp.path
+  await Global.initialize()
+
+  try {
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const skills = await Skill.all()
+        expect(skills.length).toBe(1)
+        const testSkill = skills.find((s) => s.name === "test-skill")
+        expect(testSkill).toBeDefined()
+        expect(testSkill!.description).toBe("A test skill for verification.")
+        expect(testSkill!.location).toContain("skill/test-skill/SKILL.md")
+      },
+    })
+  } finally {
+    process.env.OPENCODE_TEST_HOME = originalHome
+  }
 })
 
 test("returns skill directories from Skill.dirs", async () => {
@@ -75,6 +84,7 @@ description: Skill for dirs test.
 
   const home = process.env.OPENCODE_TEST_HOME
   process.env.OPENCODE_TEST_HOME = tmp.path
+  await Global.initialize()
 
   try {
     await Instance.provide({
@@ -120,15 +130,23 @@ description: Second test skill.
     },
   })
 
-  await Instance.provide({
-    directory: tmp.path,
-    fn: async () => {
-      const skills = await Skill.all()
-      expect(skills.length).toBe(2)
-      expect(skills.find((s) => s.name === "skill-one")).toBeDefined()
-      expect(skills.find((s) => s.name === "skill-two")).toBeDefined()
-    },
-  })
+  const originalHome = process.env.OPENCODE_TEST_HOME
+  process.env.OPENCODE_TEST_HOME = tmp.path
+  await Global.initialize()
+
+  try {
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const skills = await Skill.all()
+        expect(skills.length).toBe(2)
+        expect(skills.find((s) => s.name === "skill-one")).toBeDefined()
+        expect(skills.find((s) => s.name === "skill-two")).toBeDefined()
+      },
+    })
+  } finally {
+    process.env.OPENCODE_TEST_HOME = originalHome
+  }
 })
 
 test("skips skills with missing frontmatter", async () => {
@@ -146,13 +164,21 @@ Just some content without YAML frontmatter.
     },
   })
 
-  await Instance.provide({
-    directory: tmp.path,
-    fn: async () => {
-      const skills = await Skill.all()
-      expect(skills).toEqual([])
-    },
-  })
+  const originalHome = process.env.OPENCODE_TEST_HOME
+  process.env.OPENCODE_TEST_HOME = tmp.path
+  await Global.initialize()
+
+  try {
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const skills = await Skill.all()
+        expect(skills).toEqual([])
+      },
+    })
+  } finally {
+    process.env.OPENCODE_TEST_HOME = originalHome
+  }
 })
 
 test("discovers skills from .claude/skills/ directory", async () => {
@@ -173,16 +199,24 @@ description: A skill in the .claude/skills directory.
     },
   })
 
-  await Instance.provide({
-    directory: tmp.path,
-    fn: async () => {
-      const skills = await Skill.all()
-      expect(skills.length).toBe(1)
-      const claudeSkill = skills.find((s) => s.name === "claude-skill")
-      expect(claudeSkill).toBeDefined()
-      expect(claudeSkill!.location).toContain(".claude/skills/claude-skill/SKILL.md")
-    },
-  })
+  const originalHome = process.env.OPENCODE_TEST_HOME
+  process.env.OPENCODE_TEST_HOME = tmp.path
+  await Global.initialize()
+
+  try {
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const skills = await Skill.all()
+        expect(skills.length).toBe(1)
+        const claudeSkill = skills.find((s) => s.name === "claude-skill")
+        expect(claudeSkill).toBeDefined()
+        expect(claudeSkill!.location).toContain(".claude/skills/claude-skill/SKILL.md")
+      },
+    })
+  } finally {
+    process.env.OPENCODE_TEST_HOME = originalHome
+  }
 })
 
 test("discovers global skills from ~/.claude/skills/ directory", async () => {
@@ -190,6 +224,7 @@ test("discovers global skills from ~/.claude/skills/ directory", async () => {
 
   const originalHome = process.env.OPENCODE_TEST_HOME
   process.env.OPENCODE_TEST_HOME = tmp.path
+  await Global.initialize()
 
   try {
     await createGlobalSkill(tmp.path)
@@ -211,13 +246,21 @@ test("discovers global skills from ~/.claude/skills/ directory", async () => {
 test("returns empty array when no skills exist", async () => {
   await using tmp = await tmpdir({ git: true })
 
-  await Instance.provide({
-    directory: tmp.path,
-    fn: async () => {
-      const skills = await Skill.all()
-      expect(skills).toEqual([])
-    },
-  })
+  const originalHome = process.env.OPENCODE_TEST_HOME
+  process.env.OPENCODE_TEST_HOME = tmp.path
+  await Global.initialize()
+
+  try {
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const skills = await Skill.all()
+        expect(skills).toEqual([])
+      },
+    })
+  } finally {
+    process.env.OPENCODE_TEST_HOME = originalHome
+  }
 })
 
 test("discovers skills from .agents/skills/ directory", async () => {
@@ -238,16 +281,24 @@ description: A skill in the .agents/skills directory.
     },
   })
 
-  await Instance.provide({
-    directory: tmp.path,
-    fn: async () => {
-      const skills = await Skill.all()
-      expect(skills.length).toBe(1)
-      const agentSkill = skills.find((s) => s.name === "agent-skill")
-      expect(agentSkill).toBeDefined()
-      expect(agentSkill!.location).toContain(".agents/skills/agent-skill/SKILL.md")
-    },
-  })
+  const originalHome = process.env.OPENCODE_TEST_HOME
+  process.env.OPENCODE_TEST_HOME = tmp.path
+  await Global.initialize()
+
+  try {
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const skills = await Skill.all()
+        expect(skills.length).toBe(1)
+        const agentSkill = skills.find((s) => s.name === "agent-skill")
+        expect(agentSkill).toBeDefined()
+        expect(agentSkill!.location).toContain(".agents/skills/agent-skill/SKILL.md")
+      },
+    })
+  } finally {
+    process.env.OPENCODE_TEST_HOME = originalHome
+  }
 })
 
 test("discovers global skills from ~/.agents/skills/ directory", async () => {
@@ -255,6 +306,7 @@ test("discovers global skills from ~/.agents/skills/ directory", async () => {
 
   const originalHome = process.env.OPENCODE_TEST_HOME
   process.env.OPENCODE_TEST_HOME = tmp.path
+  await Global.initialize()
 
   try {
     const skillDir = path.join(tmp.path, ".agents", "skills", "global-agent-skill")
@@ -316,15 +368,23 @@ description: A skill in the .agents/skills directory.
     },
   })
 
-  await Instance.provide({
-    directory: tmp.path,
-    fn: async () => {
-      const skills = await Skill.all()
-      expect(skills.length).toBe(2)
-      expect(skills.find((s) => s.name === "claude-skill")).toBeDefined()
-      expect(skills.find((s) => s.name === "agent-skill")).toBeDefined()
-    },
-  })
+  const originalHome = process.env.OPENCODE_TEST_HOME
+  process.env.OPENCODE_TEST_HOME = tmp.path
+  await Global.initialize()
+
+  try {
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const skills = await Skill.all()
+        expect(skills.length).toBe(2)
+        expect(skills.find((s) => s.name === "claude-skill")).toBeDefined()
+        expect(skills.find((s) => s.name === "agent-skill")).toBeDefined()
+      },
+    })
+  } finally {
+    process.env.OPENCODE_TEST_HOME = originalHome
+  }
 })
 
 test("properly resolves directories that skills live in", async () => {
@@ -378,11 +438,19 @@ description: A skill in the .opencode/skills directory.
     },
   })
 
-  await Instance.provide({
-    directory: tmp.path,
-    fn: async () => {
-      const dirs = await Skill.dirs()
-      expect(dirs.length).toBe(4)
-    },
-  })
+  const originalHome = process.env.OPENCODE_TEST_HOME
+  process.env.OPENCODE_TEST_HOME = tmp.path
+  await Global.initialize()
+
+  try {
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const dirs = await Skill.dirs()
+        expect(dirs.length).toBe(4)
+      },
+    })
+  } finally {
+    process.env.OPENCODE_TEST_HOME = originalHome
+  }
 })
