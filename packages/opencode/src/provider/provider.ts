@@ -485,8 +485,8 @@ export namespace Provider {
           apiKey,
           baseURL: `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/v1`,
         },
-        async getModel(sdk: any, modelID: string) {
-          return sdk.languageModel(modelID)
+        async getModel(sdk: any, model: Model) {
+          return sdk.languageModel(model.api.id)
         },
       }
     },
