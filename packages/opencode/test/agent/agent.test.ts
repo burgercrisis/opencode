@@ -4,6 +4,7 @@ import { tmpdir } from "../fixture/fixture"
 import { Instance } from "../../src/project/instance"
 import { Agent } from "../../src/agent/agent"
 import { PermissionNext } from "../../src/permission/next"
+import { Global } from "../../src/global"
 
 // Helper to evaluate permission for a tool with wildcard pattern
 function evalPerm(agent: Agent.Info | undefined, permission: string): PermissionNext.Action | undefined {
@@ -534,6 +535,7 @@ description: Permission skill.
 
   const home = process.env.OPENCODE_TEST_HOME
   process.env.OPENCODE_TEST_HOME = tmp.path
+  await Global.initialize()
 
   try {
     await Instance.provide({
@@ -670,6 +672,21 @@ test("defaultAgent throws when all primary agents are disabled", async () => {
     fn: async () => {
       // build and plan are disabled, no primary-capable agents remain
       await expect(Agent.defaultAgent()).rejects.toThrow("no primary visible agent found")
+    },
+  })
+})
+
+test("build agent defaults *.env to ask", async () => {
+  await using tmp = await tmpdir()
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const build = await Agent.get("build")
+      const target = path.join(tmp.path, ".env")
+      expect(PermissionNext.evaluate("read", target, build!.permission).action).toBe("ask")
+      
+      const targetExample = path.join(tmp.path, ".env.example")
+      expect(PermissionNext.evaluate("read", targetExample, build!.permission).action).toBe("allow")
     },
   })
 })
