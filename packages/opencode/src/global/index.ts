@@ -14,24 +14,44 @@ export namespace Global {
   export const Path = {
     // Allow override via OPENCODE_TEST_HOME for test isolation
     get home() {
-      return process.env.OPENCODE_TEST_HOME || os.homedir()
+        const home = process.env.OPENCODE_TEST_HOME || os.homedir()
+        return home
+      },
+    get data() {
+      if (process.env.OPENCODE_TEST_HOME) return path.join(process.env.OPENCODE_TEST_HOME, ".local", "share", app)
+      return data
     },
-    data,
-    bin: path.join(data, "bin"),
-    log: path.join(data, "log"),
-    cache,
-    config,
-    state,
+    get bin() {
+      return path.join(this.data, "bin")
+    },
+    get log() {
+      return path.join(this.data, "log")
+    },
+    get cache() {
+      if (process.env.OPENCODE_TEST_HOME) return path.join(process.env.OPENCODE_TEST_HOME, ".cache", app)
+      return cache
+    },
+    get config() {
+      if (process.env.OPENCODE_TEST_HOME) return path.join(process.env.OPENCODE_TEST_HOME, ".config", app)
+      return config
+    },
+    get state() {
+      if (process.env.OPENCODE_TEST_HOME) return path.join(process.env.OPENCODE_TEST_HOME, ".local", "state", app)
+      return state
+    },
+  }
+  export async function initialize() {
+    await Promise.all([
+      fs.mkdir(Global.Path.data, { recursive: true }),
+      fs.mkdir(Global.Path.config, { recursive: true }),
+      fs.mkdir(Global.Path.state, { recursive: true }),
+      fs.mkdir(Global.Path.log, { recursive: true }),
+      fs.mkdir(Global.Path.bin, { recursive: true }),
+    ])
   }
 }
 
-await Promise.all([
-  fs.mkdir(Global.Path.data, { recursive: true }),
-  fs.mkdir(Global.Path.config, { recursive: true }),
-  fs.mkdir(Global.Path.state, { recursive: true }),
-  fs.mkdir(Global.Path.log, { recursive: true }),
-  fs.mkdir(Global.Path.bin, { recursive: true }),
-])
+await Global.initialize()
 
 const CACHE_VERSION = "21"
 

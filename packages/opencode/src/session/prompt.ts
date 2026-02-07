@@ -150,7 +150,7 @@ export namespace SessionPrompt {
   })
   export type PromptInput = z.infer<typeof PromptInput>
 
-  export const prompt = fn(PromptInput, async (input) => {
+  export const prompt = fn(PromptInput, async (input): Promise<MessageV2.WithParts> => {
     const session = await Session.get(input.sessionID)
     await SessionRevert.cleanup(session)
 
@@ -711,7 +711,7 @@ export namespace SessionPrompt {
         finish: "error",
       })
       
-      await Session.updatePart({
+      const fallbackPart = await Session.updatePart({
         id: Identifier.ascending("part"),
         messageID: fallbackMessage.id,
         sessionID,
@@ -720,7 +720,10 @@ export namespace SessionPrompt {
         synthetic: true,
       })
       
-      return fallbackMessage
+      return {
+        info: fallbackMessage,
+        parts: [fallbackPart as MessageV2.Part],
+      }
     }
   }
 
