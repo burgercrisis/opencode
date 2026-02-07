@@ -145,7 +145,6 @@ export const WebSearchTool = Tool.define("websearch", async () => {
 
         throw error
       }
-      }
     },
   }
 })
