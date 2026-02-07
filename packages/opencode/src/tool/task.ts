@@ -168,7 +168,7 @@ export const TaskTool = Tool.define("task", async (ctx) => {
 
       const messages = await Session.messages({ sessionID: session.id })
       const summary = messages
-        .filter((x) => x.info.role === "assistant")
+        .filter((x): x is MessageV2.WithParts & { info: MessageV2.Assistant } => x.info.role === "assistant")
         .flatMap((msg) => (msg.parts as MessageV2.Part[]).filter((x) => x.type === "tool") as MessageV2.ToolPart[])
         .map((part) => ({
           id: part.id,
@@ -178,7 +178,8 @@ export const TaskTool = Tool.define("task", async (ctx) => {
             title: part.state.status === "completed" ? part.state.title : undefined,
           },
         }))
-      const text = result.parts.findLast((x) => x.type === "text")?.text ?? ""
+      const textPart = result.parts.findLast((x) => x.type === "text") as MessageV2.TextPart | undefined
+      const text = textPart?.text ?? ""
 
       const output = [
         `task_id: ${session.id} (for resuming to continue this task if needed)`,
