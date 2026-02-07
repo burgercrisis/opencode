@@ -3,6 +3,7 @@ import path from "path"
 import { pathToFileURL } from "url"
 import os from "os"
 import z from "zod"
+import { createRequire } from "module"
 import { Filesystem } from "../util/filesystem"
 import { ModelsDev } from "../provider/models"
 import { mergeDeep, pipe, unique } from "remeda"
@@ -49,6 +50,7 @@ export namespace Config {
   }
 
   const managedConfigDir = process.env.OPENCODE_TEST_MANAGED_CONFIG_DIR || getManagedConfigDir()
+
 
   // Custom merge function that concatenates array fields instead of replacing them
   function mergeConfigConcatArrays(target: Info, source: Info): Info {
@@ -139,6 +141,7 @@ export namespace Config {
       )),
       ...(Flag.OPENCODE_CONFIG_DIR ? [Flag.OPENCODE_CONFIG_DIR] : []),
     ]
+
 
     // .opencode directory config overrides (project and global) config sources.
     if (Flag.OPENCODE_CONFIG_DIR) {
@@ -380,7 +383,9 @@ export namespace Config {
                   "/command/",
                   "/commands/",
                 ]
-                const file = rel(item, patterns) ?? path.basename(item)
+                // Normalize path separators for cross-platform compatibility
+                const itemNormalized = item.replace(/\\/g, "/")
+                const file = rel(itemNormalized, patterns) ?? path.basename(item)
                 const name = trim(file)
                 const config = {
                   name,
@@ -433,7 +438,9 @@ export namespace Config {
           return md
             ? (() => {
                 const patterns = ["/.opencode/agent/", "/.opencode/agents/", "/agent/", "/agents/"]
-                const file = rel(item, patterns) ?? path.basename(item)
+                // Normalize path separators for cross-platform compatibility
+                const itemNormalized = item.replace(/\\/g, "/")
+                const file = rel(itemNormalized, patterns) ?? path.basename(item)
                 const agentName = trim(file)
                 const config = {
                   name: agentName,
@@ -1245,6 +1252,7 @@ export namespace Config {
         })
         .optional(),
     })
+    .strict()
     .meta({
       ref: "Config",
     })
@@ -1376,8 +1384,16 @@ export namespace Config {
         for (let i = 0; i < data.plugin.length; i++) {
           const plugin = data.plugin[i]
           try {
-            data.plugin[i] = import.meta.resolve!(plugin, configFilepath)
-          } catch (err) {}
+            // import.meta.resolve is not fully reliable for "alien" node_modules in Bun/tests
+            // so we fallback to createRequire which mimics Node's resolution behavior
+            const require = createRequire(pathToFileURL(configFilepath).href)
+            data.plugin[i] = pathToFileURL(require.resolve(plugin)).href
+          } catch (err) {
+            // If resolution fails, keep the original string.
+            // This is important for tests that use dummy plugin names,
+            // and allows the error to be handled later during actual plugin loading/importing.
+            log.debug(`Failed to resolve plugin ${plugin} from ${configFilepath}`, { err })
+          }
         }
       }
       return data
