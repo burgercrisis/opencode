@@ -344,6 +344,7 @@ export namespace Shell {
           executable: process.env.COMSPEC || "cmd.exe",
           args: [...cmdArgs, finalToExecute],
           useShellFlag: false,
+          windowsVerbatimArguments: true,
         }
       }
     }
@@ -355,6 +356,7 @@ export namespace Shell {
         executable: process.env.COMSPEC || "cmd.exe",
         args: ["/c", finalCommand],
         useShellFlag: false,
+        windowsVerbatimArguments: true,
       }
     }
  
