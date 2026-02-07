@@ -41,7 +41,7 @@ async function writeConfig(dir: string, config: object, name = "opencode.json") 
 }
 
 test("loads config with defaults when no files exist", async () => {
-  await using tmp = await tmpdir({ git: true, git: true })
+  await using tmp = await tmpdir({ git: true })
   await Instance.provide({
     directory: tmp.path,
     // Initialize git to contain the worktree within tmp.path
@@ -53,7 +53,8 @@ test("loads config with defaults when no files exist", async () => {
 })
 
 test("loads JSON config file", async () => {
-  await using tmp = await tmpdir({ git: true,
+  await using tmp = await tmpdir({
+    git: true,
     init: async (dir) => {
       await writeConfig(dir, {
         $schema: "https://opencode.ai/config.json",
@@ -576,7 +577,7 @@ Nested command template`,
 })
 
 test("updates config and writes to file", async () => {
-  await using tmp = await tmpdir({ git: true, git: true })
+  await using tmp = await tmpdir({ git: true })
   await Instance.provide({
     directory: tmp.path,
     // Initialize git to contain the worktree within tmp.path
@@ -591,7 +592,7 @@ test("updates config and writes to file", async () => {
 })
 
 test("gets config directories", async () => {
-  await using tmp = await tmpdir({ git: true, git: true })
+  await using tmp = await tmpdir({ git: true })
   await Instance.provide({
     directory: tmp.path,
     // Initialize git to contain the worktree within tmp.path
@@ -1519,7 +1520,7 @@ test("project config overrides remote well-known config", async () => {
   )
 
   try {
-    await using tmp = await tmpdir({ git: true,
+    await using tmp = await tmpdir({
       git: true,
       init: async (dir) => {
         // Project config enables jira (overriding remote default)
@@ -1715,7 +1716,7 @@ describe("OPENCODE_DISABLE_PROJECT_CONFIG", () => {
     process.env["OPENCODE_DISABLE_PROJECT_CONFIG"] = "true"
 
     try {
-      await using tmp = await tmpdir({ git: true, git: true })
+      await using tmp = await tmpdir({ git: true })
       await Instance.provide({
         directory: tmp.path,
         fn: async () => {
