@@ -220,8 +220,10 @@ function levenshtein(a: string, b: string): number {
  * @param _content - The content (unused)
  * @param find - The string to find
  */
-export const SimpleReplacer: Replacer = function* (_content, find) {
-  yield find
+export const SimpleReplacer: Replacer = function* (content, find) {
+  if (content.includes(find)) {
+    yield find
+  }
 }
 
 /**
@@ -613,7 +615,7 @@ export function replace(
   ]
 
   const matches = replacers.reduce<string[]>((acc, replacer) => {
-    return (acc.length > 0 && !replaceAll) ? acc : [...acc, ...Array.from(replacer(content, oldString))]
+    return acc.length > 0 ? acc : [...acc, ...Array.from(replacer(content, oldString))]
   }, [])
 
   const uniqueMatches = Array.from(new Set(matches))
