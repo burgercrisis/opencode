@@ -3382,22 +3382,7 @@ export default function Page() {
                                 />
                               </Show>
                             </Match>
-                            <Match when={true}>
-                              <div class="mt-8 text-center text-12-regular text-text-weak">
-                                {language.t("session.review.noChanges")}
-                              </div>
-                            }
-                          >
-                            <FileTree
-                              path=""
-                              allowed={diffFiles()}
-                              kinds={kinds()}
-                              draggable={false}
-                              active={tree.activeDiff}
-                              onFileClick={(node) => focusReviewDiff(node.path)}
-                            />
-                          </Show>
-                        </Match>
+
                         <Match when={true}>
                           <div class="mt-8 text-center text-12-regular text-text-weak">
                             {language.t("session.review.noChanges")}
