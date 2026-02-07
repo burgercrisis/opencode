@@ -171,7 +171,11 @@ export function processCmdOutput(output: string, command: string): { output: str
   // Check for standard CMD "not recognized" error
   if (cleanOutput.includes("is not recognized as an internal or external command") ||
     cleanOutput.includes("is not recognized as the name of a cmdlet")) {
-    return { output: cleanOutput, hasErrors: true, exitCode: 9009 }
+    const processed = cleanOutput.replace(
+      /'([^']+)' is not recognized as an internal or external command, operable program or batch file\./gi,
+      "Error: Command '$1' not found. Please check the spelling and ensure the command is available in your PATH.",
+    )
+    return { output: processed, hasErrors: true, exitCode: 9009 }
   }
 
   // Check for "The system cannot find the path specified"
@@ -396,7 +400,7 @@ export const BashTool = Tool.define("bash", async () => {
         }),
       ])
 
-      const { output: finalOutput, hasErrors, exitCode: overrideExitCode } = iife(() => {
+      const { output: finalOutput, hasErrors, exitCode: overrideExitCode } = iife((): { output: string; hasErrors: boolean; exitCode?: number } => {
         if (Shell.isPowerShellCommand(processedCommand)) return processPowerShellOutput(output, processedCommand)
         if (Shell.isCmdCommand(processedCommand)) return processCmdOutput(output, processedCommand)
         return { output, hasErrors: false }
