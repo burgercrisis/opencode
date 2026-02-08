@@ -114,7 +114,8 @@ Use this skill.
         },
       })
     } finally {
-      process.env.OPENCODE_TEST_HOME = home
+      if (home === undefined) delete process.env.OPENCODE_TEST_HOME
+      else process.env.OPENCODE_TEST_HOME = home
     }
   })
 })

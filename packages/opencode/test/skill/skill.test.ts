@@ -60,7 +60,8 @@ Instructions here.
       },
     })
   } finally {
-    process.env.OPENCODE_TEST_HOME = originalHome
+    if (originalHome === undefined) delete process.env.OPENCODE_TEST_HOME
+    else process.env.OPENCODE_TEST_HOME = originalHome
   }
 })
 
@@ -97,7 +98,8 @@ description: Skill for dirs test.
       },
     })
   } finally {
-    process.env.OPENCODE_TEST_HOME = home
+    if (home === undefined) delete process.env.OPENCODE_TEST_HOME
+    else process.env.OPENCODE_TEST_HOME = home
   }
 })
 
@@ -145,7 +147,8 @@ description: Second test skill.
       },
     })
   } finally {
-    process.env.OPENCODE_TEST_HOME = originalHome
+    if (originalHome === undefined) delete process.env.OPENCODE_TEST_HOME
+    else process.env.OPENCODE_TEST_HOME = originalHome
   }
 })
 
@@ -177,7 +180,8 @@ Just some content without YAML frontmatter.
       },
     })
   } finally {
-    process.env.OPENCODE_TEST_HOME = originalHome
+    if (originalHome === undefined) delete process.env.OPENCODE_TEST_HOME
+    else process.env.OPENCODE_TEST_HOME = originalHome
   }
 })
 
@@ -215,7 +219,8 @@ description: A skill in the .claude/skills directory.
       },
     })
   } finally {
-    process.env.OPENCODE_TEST_HOME = originalHome
+    if (originalHome === undefined) delete process.env.OPENCODE_TEST_HOME
+    else process.env.OPENCODE_TEST_HOME = originalHome
   }
 })
 
@@ -239,7 +244,8 @@ test("discovers global skills from ~/.claude/skills/ directory", async () => {
       },
     })
   } finally {
-    process.env.OPENCODE_TEST_HOME = originalHome
+    if (originalHome === undefined) delete process.env.OPENCODE_TEST_HOME
+    else process.env.OPENCODE_TEST_HOME = originalHome
   }
 })
 
@@ -259,7 +265,8 @@ test("returns empty array when no skills exist", async () => {
       },
     })
   } finally {
-    process.env.OPENCODE_TEST_HOME = originalHome
+    if (originalHome === undefined) delete process.env.OPENCODE_TEST_HOME
+    else process.env.OPENCODE_TEST_HOME = originalHome
   }
 })
 
@@ -297,7 +304,8 @@ description: A skill in the .agents/skills directory.
       },
     })
   } finally {
-    process.env.OPENCODE_TEST_HOME = originalHome
+    if (originalHome === undefined) delete process.env.OPENCODE_TEST_HOME
+    else process.env.OPENCODE_TEST_HOME = originalHome
   }
 })
 
@@ -335,7 +343,8 @@ This skill is loaded from the global home directory.
       },
     })
   } finally {
-    process.env.OPENCODE_TEST_HOME = originalHome
+    if (originalHome === undefined) delete process.env.OPENCODE_TEST_HOME
+    else process.env.OPENCODE_TEST_HOME = originalHome
   }
 })
 
@@ -383,7 +392,8 @@ description: A skill in the .agents/skills directory.
       },
     })
   } finally {
-    process.env.OPENCODE_TEST_HOME = originalHome
+    if (originalHome === undefined) delete process.env.OPENCODE_TEST_HOME
+    else process.env.OPENCODE_TEST_HOME = originalHome
   }
 })
 
@@ -451,6 +461,7 @@ description: A skill in the .opencode/skills directory.
       },
     })
   } finally {
-    process.env.OPENCODE_TEST_HOME = originalHome
+    if (originalHome === undefined) delete process.env.OPENCODE_TEST_HOME
+    else process.env.OPENCODE_TEST_HOME = originalHome
   }
 })
