@@ -8,7 +8,8 @@ import { Filesystem } from "../util/filesystem"
 import { ModelsDev } from "../provider/models"
 import { mergeDeep, pipe, unique } from "remeda"
 import { Global } from "../global"
-import fs from "fs/promises"
+import fs from "fs"
+import fsp from "fs/promises"
 import { lazy } from "../util/lazy"
 import { NamedError } from "@opencode-ai/util/error"
 import { Flag } from "../flag/flag"
@@ -270,6 +271,11 @@ export namespace Config {
     const pkg = path.join(dir, "package.json")
     const targetVersion = Installation.isLocal() ? "*" : Installation.VERSION
 
+    // Ensure directory exists before writing
+    if (!existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true })
+    }
+
     const json = await Bun.file(pkg)
       .json()
       .catch(() => ({}))
@@ -277,12 +283,15 @@ export namespace Config {
       ...json.dependencies,
       "@opencode-ai/plugin": targetVersion,
     }
-    await Bun.write(pkg, JSON.stringify(json, null, 2))
-    await new Promise((resolve) => setTimeout(resolve, 3000))
+
+    // Use synchronous write to ensure file is on disk before bun install
+    fs.writeFileSync(pkg, JSON.stringify(json, null, 2))
 
     const gitignore = path.join(dir, ".gitignore")
     const hasGitIgnore = await Bun.file(gitignore).exists()
-    if (!hasGitIgnore) await Bun.write(gitignore, ["node_modules", "package.json", "bun.lock", ".gitignore"].join("\n"))
+    if (!hasGitIgnore) {
+      fs.writeFileSync(gitignore, ["node_modules", "package.json", "bun.lock", ".gitignore"].join("\n"))
+    }
 
     // Install any additional dependencies defined in the package.json
     // This allows local plugins and custom tools to use external packages
@@ -293,12 +302,14 @@ export namespace Config {
         ...(proxied() ? ["--no-cache"] : []),
       ],
       { cwd: dir },
-    ).catch(() => {})
+    ).catch((err) => {
+      log.error("failed to install dependencies", { dir, error: err })
+    })
   }
 
   async function isWritable(dir: string) {
     try {
-      await fs.access(dir, constants.W_OK)
+      await fsp.access(dir, constants.W_OK)
       return true
     } catch {
       return false
@@ -1280,7 +1291,7 @@ export namespace Config {
           result["$schema"] = "https://opencode.ai/config.json"
           result = mergeDeep(result, rest)
           await Bun.write(path.join(Global.Path.config, "config.json"), JSON.stringify(result, null, 2))
-          await fs.unlink(legacy)
+          await fsp.unlink(legacy)
         })
         .catch(() => {})
     }
