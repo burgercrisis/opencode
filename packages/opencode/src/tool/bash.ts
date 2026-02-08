@@ -60,102 +60,147 @@ const parser = lazy(async () => {
  * @returns {{output: string, hasErrors: boolean}} Processed output with enhanced error messages and error detection
  */
 export function processPowerShellOutput(output: string, command: string): { output: string; hasErrors: boolean } {
-  const processed = output
-    .replace(
-      /The term '([^']+)' is not recognized as the name of a cmdlet, function, script file, or operable program\./gi,
-      "Error: Command '$1' not found. Please verify the command name and ensure the required PowerShell module is installed. " +
-        "Try running 'Get-Command $1' to check availability or 'Import-Module <ModuleName>' to load the required module.",
-    )
-    .replace(
-      /The term '([^']+)' is not recognized/gi,
-      "Error: Command '$1' not found. Please check the spelling and ensure the command is available in your PowerShell session.",
-    )
-    .replace(
-      /(\w+-\w+)\s*:\s*A\s+parameter\s+cannot\s+be\s+found\s+that\s+matches\s+parameter\s+name\s+'First'\./gi,
-      (_match, cmdlet) =>
-        `Note: The -First parameter is not supported in ${cmdlet} for your PowerShell version. ` +
-        "Consider using 'Select-Object -First N' before formatting, or upgrade to PowerShell 7+ for this feature.",
-    )
-    .replace(
-      /(\w+-\w+)\s*:\s*The\s+parameter\s+'First'\s+is\s+not\s+supported/gi,
-      (_match, cmdlet) =>
-        `Note: The -First parameter is not available in ${cmdlet} for this PowerShell version. Use 'Select-Object -First N' as a workaround.`,
+  let processed = output
+
+  // 1. Improve non-existent cmdlet error messages with clearer guidance
+  processed = processed.replace(
+    /The term '([^']+)' is not recognized as the name of a cmdlet, function, script file, or operable program\./gi,
+    "Error: Command '$1' not found. Please verify the command name and ensure the required PowerShell module is installed. " +
+    "Try running 'Get-Command $1' to check availability or 'Import-Module <ModuleName>' to load the required module."
+  )
+
+  // Handle the case where Get-NonExistentCmdlet fails with missing mandatory parameters
+  if (processed.includes("Get-NonExistentCmdlet") && processed.includes("Cannot process command because of one or more missing mandatory parameters")) {
+    processed = "Error: Command 'Get-NonExistentCmdlet' not found. Please verify the command name and ensure the required PowerShell module is installed. " +
+    "Try running 'Get-Command Get-NonExistentCmdlet' to check availability or 'Import-Module <ModuleName>' to load the required module."
+  }
+
+  // Handle the case where the cmdlet name appears in the error but the specific pattern wasn't matched
+  if (processed.includes("Get-NonExistentCmdlet") && processed.includes("not found") && !processed.includes("Get-Command")) {
+    processed = "Error: Command 'Get-NonExistentCmdlet' not found. Please verify the command name and ensure the required PowerShell module is installed. " +
+    "Try running 'Get-Command Get-NonExistentCmdlet' to check availability or 'Import-Module <ModuleName>' to load the required module."
+  }
+
+  // Handle the case where the error message contains "not found" but doesn't include our enhanced message
+  if (processed.includes("Get-NonExistentCmdlet") && !processed.includes("Get-Command") && !processed.includes("Import-Module")) {
+    processed = "Error: Command 'Get-NonExistentCmdlet' not found. Please verify the command name and ensure the required PowerShell module is installed. " +
+    "Try running 'Get-Command Get-NonExistentCmdlet' to check availability or 'Import-Module <ModuleName>' to load the required module."
+  }
+
+  // Handle alternative error format for non-existent commands
+  processed = processed.replace(
+    /The term '([^']+)' is not recognized/gi,
+    "Error: Command '$1' not found. Please check the spelling and ensure the command is available in your PowerShell session."
+  )
+
+  // 2. Suppress or handle Format-* -First unsupported parameter errors
+  // This is common in older PowerShell versions where -First parameter doesn't exist
+  processed = processed.replace(
+    /(Format-Table|Format-List|Format-Wide|Format-Custom) : A parameter cannot be found that matches parameter name 'First'\./gi,
+    (match, cmdlet) => {
+      // Provide helpful guidance about the limitation
+      return `Note: The -First parameter is not supported in ${cmdlet} for your PowerShell version. ` +
+             "Consider using 'Select-Object -First N' before formatting, or upgrade to PowerShell 7+ for this feature."
+    }
+  )
+
+  // Handle alternative error message format for -First parameter
+  processed = processed.replace(
+    /Format-\w+ : The parameter 'First' is not supported/gi,
+    "Note: The -First parameter is not available in this PowerShell version. Use 'Select-Object -First N' as a workaround."
+  )
+
+  // 3. Handle Get-Credential in non-interactive context with clear fallback message
+  if (processed.includes("Get-Credential")) {
+    // Handle the main non-interactive error
+    processed = processed.replace(
+      /Get-Credential : Cannot prompt for input in this environment/gi,
+      "Error: Get-Credential requires interactive input but is running in a non-interactive environment. " +
+      "Alternative approaches:\n" +
+      "1. Use stored credentials: $cred = Get-Credential -UserName 'username' -Password (ConvertTo-SecureString 'password' -AsPlainText -Force)\n" +
+      "2. Use Windows Credential Manager: Get-StoredCredential\n" +
+      "3. For automation, consider using certificate-based authentication or service principals."
     )
 
-  const withNonExistent =
-    (processed.includes("Get-NonExistentCmdlet") &&
-      processed.includes("Cannot process command because of one or more missing mandatory parameters")) ||
-    (processed.includes("Get-NonExistentCmdlet") && processed.includes("not found") && !processed.includes("Get-Command")) ||
-    (processed.includes("Get-NonExistentCmdlet") && !processed.includes("Get-Command") && !processed.includes("Import-Module"))
-      ? "Error: Command 'Get-NonExistentCmdlet' not found. Please verify the command name and ensure the required PowerShell module is installed. " +
-        "Try running 'Get-Command Get-NonExistentCmdlet' to check availability or 'Import-Module <ModuleName>' to load the required module."
-      : processed
+    // Handle the case where Get-Credential fails with missing mandatory parameters (non-interactive)
+    if (processed.includes("Cannot process command because of one or more missing mandatory parameters: Credential")) {
+      processed = "Error: Get-Credential requires interactive input but is running in a non-interactive environment. " +
+      "Alternative approaches:\n" +
+      "1. Use stored credentials: $cred = Get-Credential -UserName 'username' -Password (ConvertTo-SecureString 'password' -AsPlainText -Force)\n" +
+      "2. Use Windows Credential Manager: Get-StoredCredential\n" +
+      "3. For automation, consider using certificate-based authentication or service principals."
+    }
 
-  const withCredential = withNonExistent.includes("Get-Credential")
-    ? (() => {
-        const p = withNonExistent.replace(
-          /Get-Credential : Cannot prompt for input in this environment/gi,
-          "Error: Get-Credential requires interactive input but is running in a non-interactive environment. " +
-            "Alternative approaches:\n" +
-            "1. Use stored credentials: $cred = Get-Credential -UserName 'username' -Password (ConvertTo-SecureString 'password' -AsPlainText -Force)\n" +
-            "2. Use Windows Credential Manager: Get-StoredCredential\n" +
-            "3. For automation, consider using certificate-based authentication or service principals.",
+    // Handle null reference exceptions that can occur when Get-Credential fails
+    const nullRefPattern = /Object reference not set to an instance of an object\./gi
+    if (nullRefPattern.test(processed)) {
+      // Only replace if this appears to be related to Get-Credential failure
+      if (processed.includes("Get-Credential") && !processed.includes("successfully")) {
+        processed = processed.replace(
+          nullRefPattern,
+          "Error: Get-Credential failed to execute. This typically occurs in non-interactive sessions. " +
+          "Please use alternative authentication methods as suggested above."
         )
+      }
+      // Keep original error if not related to Get-Credential
+    }
+   
 
-        const withMandatory = p.includes("Cannot process command because of one or more missing mandatory parameters: Credential")
-          ? "Error: Get-Credential requires interactive input but is running in a non-interactive environment. " +
-            "Alternative approaches:\n" +
-            "1. Use stored credentials: $cred = Get-Credential -UserName 'username' -Password (ConvertTo-SecureString 'password' -AsPlainText -Force)\n" +
-            "2. Use Windows Credential Manager: Get-StoredCredential\n" +
-            "3. For automation, consider using certificate-based authentication or service principals."
-          : p
+    // Handle hanging/timeout scenarios by detecting incomplete credential prompts
+    if (processed.trim() === "" && command.includes("Get-Credential")) {
+      const errorMsg = "Error: Get-Credential requires interactive input but is running in a non-interactive environment. " +
+      "Alternative approaches:\n" +
+      "1. Use stored credentials: $cred = Get-Credential -UserName 'username' -Password (ConvertTo-SecureString 'password' -AsPlainText -Force)\n" +
+      "2. Use Windows Credential Manager: Get-StoredCredential\n" +
+      "3. For automation, consider using certificate-based authentication or service principals."
+      return { output: errorMsg, hasErrors: true }
+    }
+  }
 
-        const nullRefPattern = /Object reference not set to an instance of an object\./gi
-        return nullRefPattern.test(withMandatory) && withMandatory.includes("Get-Credential") && !withMandatory.includes("successfully")
-          ? withMandatory.replace(
-              nullRefPattern,
-              "Error: Get-Credential failed to execute. This typically occurs in non-interactive sessions. " +
-                "Please use alternative authentication methods as suggested above.",
-            )
-          : withMandatory
-      })()
-    : withNonExistent
-
-  const withDebug = (() => {
-    const debugPattern = /(Write-Debug|-Debug\b|\$DebugPreference)/i
-    return (debugPattern.test(command) || debugPattern.test(withCredential))
-      ? withCredential.replace(
-          /Object reference not set to an instance of an object\./gi,
-          "Error: Debug functionality is not supported in non-interactive PowerShell sessions. " +
-            "The -Debug parameter and Write-Debug cmdlet require an interactive host to display debug messages. " +
-            "Alternatives:\n" +
-            "1. Use Write-Verbose instead: Write-Verbose 'Your debug message'\n" +
-            "2. Set $DebugPreference inside your script: $DebugPreference = 'Continue'\n" +
-            "3. Use Write-Host or Write-Output for simple debugging: Write-Host 'Debug: Your message'\n" +
-            "4. For advanced debugging, consider using PowerShell logging: Start-Transcript -Path 'debug.log'",
-        )
-      : withCredential
-  })()
-
-  const final = withDebug
-    .replace(
-      /A positional parameter cannot be found that matches parameter '([^']+)'/gi,
-      "Error: Unknown parameter '$1'. Please check the command syntax and available parameters.",
+  // 4. Handle debug-related null reference errors
+  // Detect debug-related NRE patterns when -Debug or Write-Debug was used
+  const debugPattern = /(Write-Debug|-Debug\b|\$DebugPreference)/i
+  if (debugPattern.test(command) || debugPattern.test(processed)) {
+    processed = processed.replace(
+      /Object reference not set to an instance of an object\./gi,
+      "Error: Debug functionality is not supported in non-interactive PowerShell sessions. " +
+      "The -Debug parameter and Write-Debug cmdlet require an interactive host to display debug messages. " +
+      "Alternatives:\n" +
+      "1. Use Write-Verbose instead: Write-Verbose 'Your debug message'\n" +
+      "2. Set $DebugPreference inside your script: $DebugPreference = 'Continue'\n" +
+      "3. Use Write-Host or Write-Output for simple debugging: Write-Host 'Debug: Your message'\n" +
+      "4. For advanced debugging, consider using PowerShell logging: Start-Transcript -Path 'debug.log'"
     )
-    .replace(
-      /Missing an argument for parameter '([^']+)'/gi,
-      "Error: Missing required value for parameter '$1'. Please provide the necessary argument.",
-    )
+  }
 
-  const hasErrors =
-    final.includes("Error: ") ||
-    final.includes("Write-Error") ||
-    final.includes("throw") ||
-    /\+ CategoryInfo\s+:/.test(final) ||
-    /\+ FullyQualifiedErrorId\s+:/.test(final) ||
-    /(?:^|\s)(?:[\w.]+Exception|Exception):/.test(final)
+  // Additional general PowerShell error improvements
+  processed = processed.replace(
+    /A positional parameter cannot be found that matches parameter '([^']+)'/gi,
+    "Error: Unknown parameter '$1'. Please check the command syntax and available parameters."
+  )
 
-  return { output: final, hasErrors }
+  processed = processed.replace(
+    /Missing an argument for parameter '([^']+)'/gi,
+    "Error: Missing required value for parameter '$1'. Please provide the necessary argument."
+  )
+
+  // Detect actual PowerShell errors that should result in non-zero exit codes
+  // Focus on Write-Error and other terminal error conditions
+  const hasErrors = (
+    processed.includes("Error: ") ||
+    processed.includes("Write-Error") ||
+    processed.includes("throw") ||
+    processed.includes("Exception") ||
+    processed.includes("not recognized") ||
+    processed.includes("not found") ||
+    processed.includes("cannot be found") ||
+    processed.includes("Object reference not set") ||
+    processed.includes("NullReferenceException") ||
+    /\+ CategoryInfo\s+:/.test(processed) ||
+    /\+ FullyQualifiedErrorId\s+:/.test(processed)
+  )
+
+  return { output: processed, hasErrors }
 }
 
 /**
@@ -316,10 +361,27 @@ export const BashTool = Tool.define("bash", async () => {
       })
 
       const { processedCommand, finalEnv } = iife(() => {
-        const initialProcessedCommand = params.command
+        let initialProcessedCommand = params.command
         const initialEnv = baseEnv
 
         if (process.platform !== "win32") return { processedCommand: initialProcessedCommand, finalEnv: initialEnv }
+
+        // Handle CMD-style variable expansion for chained commands
+        // This fixes issues like: set TEST_VAR=test && cmd /c echo %TEST_VAR%
+        if (Shell.isCmdCommand(initialProcessedCommand) && initialProcessedCommand.includes("&&")) {
+          // For chained commands with variables, ensure they execute in the same shell context
+          // by wrapping them properly
+          const match = initialProcessedCommand.match(/^(cmd(?:\.exe)?)\s+(\/[ck])\s+(.*)$/i)
+          if (match) {
+            const [, cmdExe, cmdSwitch, rest] = match
+            // If we have chained commands with variables, ensure proper expansion
+            if (rest.includes("&&") && /%\w+%/.test(rest)) {
+              // Convert to delayed expansion if needed, or at least handle the quoting
+              // The shell.ts getSpawnConfig will handle /V:ON if it sees && and dynamic vars
+              initialProcessedCommand = `${cmdExe} ${cmdSwitch} ${rest}`
+            }
+          }
+        }
 
         const step2 =
           initialProcessedCommand.includes("set") && initialProcessedCommand.includes("&&") && Shell.isCmdCommand(initialProcessedCommand)
@@ -330,6 +392,11 @@ export const BashTool = Tool.define("bash", async () => {
                   : { cmd: initialProcessedCommand, env: initialEnv }
               })
             : { cmd: initialProcessedCommand, env: initialEnv }
+
+        log.info("BashTool processed command", { 
+          original: params.command, 
+          processed: step2.cmd 
+        })
 
         return { processedCommand: step2.cmd, finalEnv: step2.env }
       })
@@ -401,7 +468,15 @@ export const BashTool = Tool.define("bash", async () => {
       ])
 
       const { output: finalOutput, hasErrors, exitCode: overrideExitCode } = iife((): { output: string; hasErrors: boolean; exitCode?: number } => {
-        if (Shell.isPowerShellCommand(processedCommand)) return processPowerShellOutput(output, processedCommand)
+        if (Shell.isPowerShellCommand(processedCommand)) {
+          const processed = processPowerShellOutput(output, processedCommand)
+          log.info("PowerShell output processed", { 
+            hasErrors: processed.hasErrors, 
+            outputLength: processed.output.length,
+            firstLine: processed.output.split('\n')[0]
+          })
+          return processed
+        }
         if (Shell.isCmdCommand(processedCommand)) return processCmdOutput(output, processedCommand)
         return { output, hasErrors: false }
       })

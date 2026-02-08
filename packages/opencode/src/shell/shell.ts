@@ -136,8 +136,9 @@ export namespace Shell {
     errorAction?: string
     warningAction?: string
   } {
-    const hasDebug = /-(?:Debug|d)(?:\s+|$)/i.test(argsString)
-    const hasVerbose = /-(?:Verbose|v)(?:\s+|$)/i.test(argsString)
+    // Check for -Debug and -Verbose flags in the arguments string
+    const debugMatch = argsString.match(/(^|\s)-Debug(\s|$)/i)
+    const verboseMatch = argsString.match(/(^|\s)-Verbose(\s|$)/i)
 
     const errorActionMatch = argsString.match(/-ErrorAction\s+(\w+)/i)
     const errorAction = errorActionMatch ? errorActionMatch[1] : undefined
@@ -145,7 +146,12 @@ export namespace Shell {
     const warningActionMatch = argsString.match(/-WarningAction\s+(\w+)/i)
     const warningAction = warningActionMatch ? warningActionMatch[1] : undefined
 
-    return { hasDebug, hasVerbose, errorAction, warningAction }
+    return { 
+      hasDebug: !!debugMatch, 
+      hasVerbose: !!verboseMatch, 
+      errorAction, 
+      warningAction 
+    }
   }
 
   /**
@@ -237,9 +243,6 @@ export namespace Shell {
   function getPowerShellArgs(argsString: string): string[] {
     const { hasDebug, hasVerbose, errorAction, warningAction } = detectCommonPreferences(argsString)
     
-    // Find the -Command or -c flag and its content
-    const commandMatch = argsString.match(/(-Command|-c)(?:\s+|$)(.*)$/i)
-    
     const preferences = [
       hasDebug ? "$DebugPreference='Continue';" : "",
       hasVerbose ? "$VerbosePreference='Continue';" : "",
@@ -247,45 +250,84 @@ export namespace Shell {
       warningAction ? `$WarningActionPreference='${warningAction}';` : "",
     ].filter(Boolean).join(" ")
 
-    if (commandMatch) {
-      const flag = commandMatch[1]
-      const rawBody = commandMatch[2].trim()
-      
-      // Remove surrounding quotes if present to inject preferences inside
-      const body = ((rawBody.startsWith('"') && rawBody.endsWith('"')) ||
-                    (rawBody.startsWith("'") && rawBody.endsWith("'")))
-        ? rawBody.slice(1, -1)
-        : rawBody
+    const args: string[] = ["-NoProfile"]
+    let current = argsString.trim()
 
-      // Extract flags BEFORE the -Command flag
-      const beforeCommand = argsString.slice(0, commandMatch.index).trim()
-      const resultArgs: string[] = ["-NoProfile"]
-      
-      if (beforeCommand) {
-        // Clean and split flags. This is a simple split, but usually enough for PS flags
-        const cleanedBefore = beforeCommand
-          .replace(/-(?:Debug|d)(?:\s+|$)/gi, " ")
-          .replace(/-(?:Verbose|v)(?:\s+|$)/gi, " ")
-          .replace(/-ErrorAction\s+\w+/gi, " ")
-          .replace(/-WarningAction\s+\w+/gi, " ")
-          .split(/\s+/)
-          .filter(Boolean)
-        resultArgs.push(...cleanedBefore)
+    // Robust parsing loop for PowerShell arguments
+    while (current.length > 0) {
+      // Check for -Command or -c flag - everything after is a single argument
+      const commandFlagMatch = current.match(/^(-Command|-c)(?:\s+|$)/i)
+      if (commandFlagMatch) {
+        const flag = commandFlagMatch[1]
+        args.push(flag)
+        current = current.slice(commandFlagMatch[0].length).trim()
+        
+        // Everything remaining is the command argument
+        if (current.length > 0) {
+          let commandArg = current
+          // Remove surrounding quotes if present to inject preferences inside
+          if ((commandArg.startsWith('"') && commandArg.endsWith('"')) ||
+              (commandArg.startsWith("'") && commandArg.endsWith("'"))) {
+            commandArg = commandArg.slice(1, -1)
+          }
+
+          args.push(preferences ? `${preferences} ${commandArg}` : commandArg)
+        }
+        break
       }
 
-      resultArgs.push(flag, preferences ? `${preferences} ${body}` : body)
-      return resultArgs
+      // Match other flags (starts with -)
+      const flagMatch = current.match(/^(-\w+)(?:\s+|$)/)
+      if (flagMatch) {
+        args.push(flagMatch[1])
+        current = current.slice(flagMatch[0].length).trim()
+        continue
+      }
+
+      // Match quoted string (double quotes)
+      const quotedMatch = current.match(/^"((?:[^"\\]|\\.)*)"/s)
+      if (quotedMatch) {
+        args.push(quotedMatch[1])
+        current = current.slice(quotedMatch[0].length).trim()
+        continue
+      }
+
+      // Match single quoted string
+      const singleQuotedMatch = current.match(/^'((?:[^'\\]|\\.)*)'/s)
+      if (singleQuotedMatch) {
+        args.push(singleQuotedMatch[1])
+        current = current.slice(singleQuotedMatch[0].length).trim()
+        continue
+      }
+
+      // Match unquoted word
+      const wordMatch = current.match(/^(\S+)/)
+      if (wordMatch) {
+        args.push(wordMatch[1])
+        current = current.slice(wordMatch[0].length).trim()
+        continue
+      }
+
+      break
     }
 
-    // If no -Command flag found, wrap everything in -Command
-    const cleaned = argsString
-      .replace(/-(?:Debug|d)(?:\s+|$)/gi, " ")
-      .replace(/-(?:Verbose|v)(?:\s+|$)/gi, " ")
-      .replace(/-ErrorAction\s+\w+/gi, " ")
-      .replace(/-WarningAction\s+\w+/gi, " ")
-      .trim()
+    // If no arguments were parsed (empty string), but we have preferences,
+    // we might need to add a default -Command if that's what was intended.
+    // However, if we didn't find a -Command and didn't find other args,
+    // we should check if the original string was actually a command that should have been wrapped.
+    if (args.length === 1 && args[0] === "-NoProfile" && argsString.trim().length > 0) {
+      // Fallback for simple commands that don't start with a flag
+      const cleaned = argsString
+        .replace(/-(?:Debug|d)(?:\s+|$)/gi, " ")
+        .replace(/-(?:Verbose|v)(?:\s+|$)/gi, " ")
+        .replace(/-ErrorAction\s+\w+/gi, " ")
+        .replace(/-WarningAction\s+\w+/gi, " ")
+        .trim()
+      
+      args.push("-Command", preferences ? `${preferences} ${cleaned}` : cleaned)
+    }
 
-    return ["-NoProfile", "-Command", preferences ? `${preferences} ${cleaned}` : cleaned]
+    return args
   }
 
   /**
@@ -315,11 +357,33 @@ export namespace Shell {
           ? (Bun.which("pwsh.exe") || Bun.which("pwsh") || "powershell.exe")
           : "powershell.exe"
 
+        const psArgs = getPowerShellArgs(argsString)
+
+        // Ensure UTF-8 output by prepending [Console]::OutputEncoding = [System.Text.Encoding]::UTF8;
+        // to the command if it's a -Command or -c
+        const commandArgIndex = psArgs.findIndex(arg => arg === "-Command" || arg === "-c")
+        if (commandArgIndex !== -1 && commandArgIndex + 1 < psArgs.length) {
+          const originalCmd = psArgs[commandArgIndex + 1]
+          if (!originalCmd.includes("[Console]::OutputEncoding")) {
+            psArgs[commandArgIndex + 1] = `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${originalCmd}`
+          }
+        }
+
         return {
           executable,
-          args: getPowerShellArgs(argsString),
+          args: psArgs,
           useShellFlag: false,
-          windowsVerbatimArguments: false,
+          windowsVerbatimArguments: true,
+        }
+      }
+
+      // Handle cases where powershell.exe is missing but arguments look like PowerShell
+      if (command.startsWith("-ExecutionPolicy") || command.startsWith("-Command") || command.startsWith("-File")) {
+        return {
+          executable: "powershell.exe",
+          args: getPowerShellArgs(command),
+          useShellFlag: false,
+          windowsVerbatimArguments: true,
         }
       }
     }
@@ -338,11 +402,39 @@ export namespace Shell {
         const useVOn = isChained && hasDynamicEnvVars(rawToExecute) && !hasVOn
         
         const cmdArgs = useVOn ? ["/V:ON", ...initialArgs] : initialArgs
-        const finalToExecute = useVOn ? convertToDelayedExpansion(rawToExecute) : rawToExecute
+        let finalToExecute = useVOn ? convertToDelayedExpansion(rawToExecute) : rawToExecute
+
+        // After extracting commandToExecute (around line 258)
+        // For CMD commands, ensure the entire command string is passed correctly
+        // Do NOT parse pipes, quotes, or other shell syntax - CMD.exe handles that
+
+        // Verify proper quoting for echo commands
+        if (/^\s*echo\s+/i.test(finalToExecute)) {
+          // Push the full command as a single argument
+          cmdArgs.push(finalToExecute)
+          return {
+            executable: process.env.COMSPEC || "cmd.exe",
+            args: cmdArgs,
+            useShellFlag: false,
+            windowsVerbatimArguments: true,
+          }
+        }
+        
+        if (finalToExecute.includes('|') || finalToExecute.includes('"')) {
+          cmdArgs.push(finalToExecute);
+          return {
+            executable: process.env.COMSPEC || "cmd.exe",
+            args: cmdArgs,
+            useShellFlag: false,
+            windowsVerbatimArguments: true,
+          };
+        }
+
+        cmdArgs.push(finalToExecute)
 
         return {
           executable: process.env.COMSPEC || "cmd.exe",
-          args: [...cmdArgs, finalToExecute],
+          args: cmdArgs,
           useShellFlag: false,
           windowsVerbatimArguments: true,
         }

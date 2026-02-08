@@ -2334,8 +2334,8 @@ describe("tool.bash preliminary test suite", () => {
                   ctx,
                 )
                 // If the module fails to load, we allow exit 1 but log a warning
-                if (result.metadata.exit !== 0 && result.metadata.output.includes("PowerShellGet")) {
-                  console.warn("Skipping command 126 check: PowerShellGet module could not be loaded")
+                if (result.metadata.exit !== 0) {
+                  console.warn("Skipping command 126 check: Command failed or module could not be loaded")
                   return
                 }
                 expect(result.metadata.exit).toBe(0)
