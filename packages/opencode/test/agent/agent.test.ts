@@ -1,10 +1,20 @@
-import { test, expect } from "bun:test"
+import { test, expect, beforeAll } from "bun:test"
 import path from "path"
+import os from "os"
 import { tmpdir } from "../fixture/fixture"
 import { Instance } from "../../src/project/instance"
 import { Agent } from "../../src/agent/agent"
 import { PermissionNext } from "../../src/permission/next"
 import { Global } from "../../src/global"
+import { Config } from "../../src/config/config"
+
+beforeAll(async () => {
+  const tmp = path.join(os.tmpdir(), "opencode-test-home-" + Math.random().toString(36).slice(2))
+  process.env.OPENCODE_TEST_HOME = tmp
+  await Global.initialize()
+  // Reset lazy caches to ensure they use the new home
+  Config.global.reset()
+})
 
 // Helper to evaluate permission for a tool with wildcard pattern
 function evalPerm(agent: Agent.Info | undefined, permission: string): PermissionNext.Action | undefined {
