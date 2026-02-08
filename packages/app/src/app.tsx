@@ -72,7 +72,9 @@ export function AppBaseProviders(props: ParentProps) {
               <DialogProvider>
                 <MarkedProviderWithNativeParser>
                   <DiffComponentProvider component={Diff}>
-                    <CodeComponentProvider component={Code}>{props.children}</CodeComponentProvider>
+                    <CodeComponentProvider component={Code}>
+                      <SettingsProvider>{props.children}</SettingsProvider>
+                    </CodeComponentProvider>
                   </DiffComponentProvider>
                 </MarkedProviderWithNativeParser>
               </DialogProvider>
@@ -121,21 +123,19 @@ export function AppInterface(props: { defaultUrl?: string }) {
           <GlobalSyncProvider>
             <Router
               root={(props) => (
-                <SettingsProvider>
-                  <PermissionProvider>
-                    <LayoutProvider>
-                      <NotificationProvider>
-                        <ModelsProvider>
-                          <CommandProvider>
-                            <HighlightsProvider>
-                              <Layout>{props.children}</Layout>
-                            </HighlightsProvider>
-                          </CommandProvider>
-                        </ModelsProvider>
-                      </NotificationProvider>
-                    </LayoutProvider>
-                  </PermissionProvider>
-                </SettingsProvider>
+                <PermissionProvider>
+                  <LayoutProvider>
+                    <NotificationProvider>
+                      <ModelsProvider>
+                        <CommandProvider>
+                          <HighlightsProvider>
+                            <Layout>{props.children}</Layout>
+                          </HighlightsProvider>
+                        </CommandProvider>
+                      </ModelsProvider>
+                    </NotificationProvider>
+                  </LayoutProvider>
+                </PermissionProvider>
               )}
             >
               <Route
@@ -152,8 +152,8 @@ export function AppInterface(props: { defaultUrl?: string }) {
                   path="/session/:id?"
                   component={(p) => (
                     <Show when={p.params.id ?? "new"}>
-                      <TerminalProvider>
-                        <FileProvider>
+                      <FileProvider>
+                        <TerminalProvider>
                           <PromptProvider>
                             <CommentsProvider>
                               <Suspense fallback={<Loading />}>
@@ -161,8 +161,8 @@ export function AppInterface(props: { defaultUrl?: string }) {
                               </Suspense>
                             </CommentsProvider>
                           </PromptProvider>
-                        </FileProvider>
-                      </TerminalProvider>
+                        </TerminalProvider>
+                      </FileProvider>
                     </Show>
                   )}
                 />
