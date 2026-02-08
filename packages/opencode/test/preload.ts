@@ -68,9 +68,20 @@ delete process.env["SAMBANOVA_API_KEY"]
 
 // Now safe to import from src/
 const { Log } = await import("../src/util/log")
+const { Instance } = await import("../src/project/instance")
+const { Snapshot } = await import("../src/snapshot/index")
+const { Global } = await import("../src/global/index")
+const { afterEach } = await import("bun:test")
 
 Log.init({
-  print: false,
+  print: true,
   dev: true,
   level: "DEBUG",
+})
+
+afterEach(async () => {
+  await Instance.resetForTest()
+  Snapshot.resetForTest()
+  Global.resetForTest()
+  Log.resetForTest()
 })

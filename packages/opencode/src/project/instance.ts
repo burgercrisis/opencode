@@ -114,4 +114,14 @@ export const Instance = {
 
     return disposal.all
   },
+  /**
+   * Internal test helper to clear all instances and caches.
+   * @internal
+   */
+  async resetForTest() {
+    await Instance.disposeAll()
+    cache.clear()
+    disposal.all = undefined
+    State.resetForTest()
+  },
 }

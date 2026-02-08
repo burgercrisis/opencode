@@ -38,6 +38,14 @@ export namespace Log {
 
   const loggers = new Map<string, Logger>()
 
+  /**
+   * Internal test helper to clear all loggers.
+   * @internal
+   */
+  export function resetForTest() {
+    loggers.clear()
+  }
+
   export const Default = create({ service: "default" })
 
   export interface Options {

@@ -10,6 +10,8 @@ const cache = path.join(xdgCache!, app)
 const config = path.join(xdgConfig!, app)
 const state = path.join(xdgState!, app)
 
+let configOverride: string | undefined
+
 export namespace Global {
   export const Path = {
     // Allow override via OPENCODE_TEST_HOME for test isolation
@@ -32,13 +34,22 @@ export namespace Global {
       return cache
     },
     get config() {
+      if (configOverride) return configOverride
       if (process.env.OPENCODE_TEST_HOME) return path.join(process.env.OPENCODE_TEST_HOME, ".config", app)
       return config
+    },
+    set config(v: string) {
+      if (!process.env.OPENCODE_TEST_HOME) throw new Error("Cannot override Global.Path.config outside of tests")
+      configOverride = v
     },
     get state() {
       if (process.env.OPENCODE_TEST_HOME) return path.join(process.env.OPENCODE_TEST_HOME, ".local", "state", app)
       return state
     },
+  }
+  
+  export function resetForTest() {
+    configOverride = undefined
   }
   export async function initialize() {
     await Promise.all([
