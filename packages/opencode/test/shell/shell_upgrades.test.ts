@@ -35,7 +35,8 @@ describe("Shell Upgrades (Reflecting 5a87a6a Branch Point)", () => {
       const config = Shell.getSpawnConfig("powershell -Command \"echo 1\"")
       expect(config.executable).toMatch(/powershell\.exe$/i)
       expect(config.args).toContain("-Command")
-      expect(config.args).toContain("echo 1")
+      // Check if any argument contains the command, accounting for preference injection
+      expect(config.args.some(arg => arg.includes("echo 1"))).toBe(true)
     })
 
     test("routes cmd commands with correct args", () => {
