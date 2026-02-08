@@ -8,14 +8,7 @@ import { initI18n, t } from "./i18n"
 import { commands } from "./bindings"
 
 export async function createMenu() {
-  const isTauri = !!(window as any).__TAURI_INTERNALS__
-  if (!isTauri) return
-
-  try {
-    if (ostype() !== "macos") return
-  } catch (e) {
-    return
-  }
+  if (ostype() !== "macos") return
 
   await initI18n()
 

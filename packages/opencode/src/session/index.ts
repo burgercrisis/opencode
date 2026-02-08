@@ -170,14 +170,20 @@ export namespace Session {
         title,
       })
       const msgs = await messages({ sessionID: input.sessionID })
-      const idMap = new Map<string, string>()
 
-      for (const msg of msgs) {
-        if (input.messageID && msg.info.id >= input.messageID) break
+      const processMessages = async (
+        remaining: MessageV2.WithParts[],
+        idMap: Map<string, string>,
+      ): Promise<void> => {
+        const msg = remaining[0]
+        if (!msg || (input.messageID && msg.info.id >= input.messageID)) return
+
         const newID = Identifier.ascending("message")
-        idMap.set(msg.info.id, newID)
+        const nextIdMap = new Map(idMap).set(msg.info.id, newID)
 
-        const parentID = msg.info.role === "assistant" && msg.info.parentID ? idMap.get(msg.info.parentID) : undefined
+        const parentID =
+          msg.info.role === "assistant" && msg.info.parentID ? nextIdMap.get(msg.info.parentID) : undefined
+
         const cloned = await updateMessage({
           ...msg.info,
           sessionID: session.id,
@@ -185,16 +191,21 @@ export namespace Session {
           ...(parentID && { parentID }),
         })
 
-        for (const part of msg.parts) {
-          await updatePart({
-            ...part,
-            id: Identifier.ascending("part"),
-            messageID: cloned.id,
-            sessionID: session.id,
-          })
-        }
+        await Promise.all(
+          msg.parts.map((part) =>
+            updatePart({
+              ...part,
+              id: Identifier.ascending("part"),
+              messageID: cloned.id,
+              sessionID: session.id,
+            }),
+          ),
+        )
+
+        return processMessages(remaining.slice(1), nextIdMap)
       }
 
+      await processMessages(msgs, new Map())
       return session
     },
   )
@@ -325,13 +336,14 @@ export namespace Session {
       limit: z.number().optional(),
     }),
     async (input) => {
-      const result = [] as MessageV2.WithParts[]
-      for await (const msg of MessageV2.stream(input.sessionID)) {
-        if (input.limit && result.length >= input.limit) break
-        result.push(msg)
+      const stream = MessageV2.stream(input.sessionID)
+      const processStream = async (acc: MessageV2.WithParts[]): Promise<MessageV2.WithParts[]> => {
+        const next = await stream.next()
+        if (next.done || (input.limit && acc.length >= input.limit)) return acc
+        return processStream([...acc, next.value])
       }
-      result.reverse()
-      return result
+      const result = await processStream([])
+      return result.reverse()
     },
   )
 
@@ -530,14 +542,14 @@ export namespace Session {
       return {
         cost: safe(
           new Decimal(0)
-          .add(new Decimal(tokens.input).mul(costInfo?.input ?? 0).div(1_000_000))
-          .add(new Decimal(tokens.output).mul(costInfo?.output ?? 0).div(1_000_000))
-          .add(new Decimal(tokens.cache.read).mul(costInfo?.cache?.read ?? 0).div(1_000_000))
-          .add(new Decimal(tokens.cache.write).mul(costInfo?.cache?.write ?? 0).div(1_000_000))
-          // TODO: update models.dev to have better pricing model, for now:
-          // charge reasoning tokens at the same rate as output tokens
-          .add(new Decimal(tokens.reasoning).mul(costInfo?.output ?? 0).div(1_000_000))
-          .toNumber(),
+            .add(new Decimal(tokens.input).mul(costInfo?.input ?? 0).div(1_000_000))
+            .add(new Decimal(tokens.output).mul(costInfo?.output ?? 0).div(1_000_000))
+            .add(new Decimal(tokens.cache.read).mul(costInfo?.cache?.read ?? 0).div(1_000_000))
+            .add(new Decimal(tokens.cache.write).mul(costInfo?.cache?.write ?? 0).div(1_000_000))
+            // TODO: update models.dev to have better pricing model, for now:
+            // charge reasoning tokens at the same rate as output tokens
+            .add(new Decimal(tokens.reasoning).mul(costInfo?.output ?? 0).div(1_000_000))
+            .toNumber(),
         ),
         tokens,
       }

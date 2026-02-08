@@ -24,7 +24,6 @@ import { IconButton } from "@opencode-ai/ui/icon-button"
 import { Button } from "@opencode-ai/ui/button"
 import { Icon } from "@opencode-ai/ui/icon"
 import { Tooltip, TooltipKeybind } from "@opencode-ai/ui/tooltip"
-import { DiffChanges } from "@opencode-ai/ui/diff-changes"
 import { DropdownMenu } from "@opencode-ai/ui/dropdown-menu"
 import { Dialog } from "@opencode-ai/ui/dialog"
 import { InlineInput } from "@opencode-ai/ui/inline-input"
@@ -61,7 +60,6 @@ import type { FileDiff } from "@opencode-ai/sdk/v2"
 import { useSDK } from "@/context/sdk"
 import { usePrompt } from "@/context/prompt"
 import { useComments, type LineComment } from "@/context/comments"
-import { usePlatform } from "@/context/platform"
 import { extractPromptFromParts } from "@/utils/prompt"
 import { ConstrainDragYAxis, getDraggableId } from "@/utils/solid-dnd"
 import { usePermission } from "@/context/permission"
@@ -148,23 +146,18 @@ function StickyAddButton(props: { children: JSX.Element }) {
     scroll.addEventListener("scroll", handler, { passive: true })
     const observer = new ResizeObserver(handler)
     observer.observe(scroll)
-
+    handler()
     onCleanup(() => {
       scroll.removeEventListener("scroll", handler)
       observer.disconnect()
     })
-
-    handler()
   })
 
   return (
     <div
       ref={button}
-      classList={{
-        "sticky right-0 h-full flex items-center justify-center px-3 border-l transition-colors": true,
-        "bg-background-base border-border-weak-base": stuck(),
-        "bg-transparent border-transparent": !stuck(),
-      }}
+      class="bg-background-base h-full shrink-0 sticky right-0 z-10 flex items-center justify-center border-b border-border-weak-base px-3"
+      classList={{ "border-l": stuck() }}
     >
       {props.children}
     </div>
@@ -185,18 +178,12 @@ function SessionReviewTab(props: SessionReviewTabProps) {
       .catch(() => undefined)
   }
 
-  const restoreScroll = (retries = 0) => {
+  const restoreScroll = () => {
     const el = scroll
     if (!el) return
 
     const s = props.view().scroll("review")
     if (!s) return
-
-    // Wait for content to be scrollable - content may not have rendered yet
-    if (el.scrollHeight <= el.clientHeight && retries < 10) {
-      requestAnimationFrame(() => restoreScroll(retries + 1))
-      return
-    }
 
     if (el.scrollTop !== s.y) el.scrollTop = s.y
     if (el.scrollLeft !== s.x) el.scrollLeft = s.x
@@ -224,7 +211,7 @@ function SessionReviewTab(props: SessionReviewTabProps) {
     on(
       () => props.diffs().length,
       () => {
-        requestAnimationFrame(() => restoreScroll())
+        requestAnimationFrame(restoreScroll)
       },
       { defer: true },
     ),
@@ -245,7 +232,7 @@ function SessionReviewTab(props: SessionReviewTabProps) {
         restoreScroll()
       }}
       onScroll={handleScroll}
-      onDiffRendered={() => requestAnimationFrame(() => restoreScroll())}
+      onDiffRendered={() => requestAnimationFrame(restoreScroll)}
       open={props.view().review.open()}
       onOpenChange={props.view().review.setOpen}
       classes={{
@@ -277,7 +264,6 @@ export default function Page() {
   const codeComponent = useCodeComponent()
   const command = useCommand()
   const language = useLanguage()
-  const platform = usePlatform()
   const params = useParams()
   const navigate = useNavigate()
   const sdk = useSDK()
@@ -465,6 +451,15 @@ export default function Page() {
 
   const info = createMemo(() => (params.id ? sync.session.get(params.id) : undefined))
   const diffs = createMemo(() => (params.id ? (sync.data.session_diff[params.id] ?? []) : []))
+
+  const DiffChanges = (props: { changes: FileDiff[]; variant: "bars" | "text" }) => {
+    return (
+      <div class="flex items-center gap-1 text-12-medium">
+        <span class="text-success">{props.changes.reduce((a, b) => a + b.additions, 0)}</span>
+        <span class="text-error">{props.changes.reduce((a, b) => a + b.deletions, 0)}</span>
+      </div>
+    )
+  }
 
   const reviewCount = createMemo(() => Math.max(info()?.summary?.files ?? 0, diffs().length))
   const hasReview = createMemo(() => reviewCount() > 0)
@@ -1426,7 +1421,7 @@ export default function Page() {
       .filter((tab) => tab !== "context"),
   )
 
-  const mobileReview = createMemo(() => !isDesktop() && store.mobileTab === "review")
+  const mobileChanges = createMemo(() => !isDesktop() && store.mobileTab === "changes")
 
   const fileTreeTab = () => layout.fileTree.tab()
   const setFileTreeTab = (value: "changes" | "all") => layout.fileTree.setTab(value)
@@ -2188,10 +2183,10 @@ export default function Page() {
                 {language.t("session.tab.session")}
               </Tabs.Trigger>
               <Tabs.Trigger
-                value="review"
+                value="changes"
                 class="w-1/2 !border-r-0"
                 classes={{ button: "w-full" }}
-                onClick={() => setStore("mobileTab", "review")}
+                onClick={() => setStore("mobileTab", "changes")}
               >
                 <Switch>
                   <Match when={hasReview()}>{reviewCount()} Files Changed</Match>
@@ -2219,7 +2214,7 @@ export default function Page() {
               <Match when={params.id}>
                 <Show when={activeMessage()}>
                   <Show
-                    when={!mobileReview()}
+                    when={!mobileChanges()}
                     fallback={
                       <div class="relative h-full overflow-hidden">
                         <Switch>
@@ -2284,14 +2279,14 @@ export default function Page() {
                           <Match when={true}>
                             <div class="h-full px-4 pb-30 flex flex-col items-center justify-center text-center gap-6">
                               <Mark class="w-14 opacity-10" />
-                              <div class="text-13-regular text-text-weak max-w-56">{language.t("session.review.empty")}</div>
+                              <div class="text-13-regular text-text-weak max-w-56">No changes in this session yet</div>
                             </div>
                           </Match>
                         </Switch>
                       </div>
                     }
                   >
-                    <>
+                    <div class="relative w-full h-full min-w-0">
                       <div
                         class="absolute left-1/2 -translate-x-1/2 bottom-[calc(var(--prompt-height,8rem)+32px)] z-[60] pointer-events-none transition-all duration-200 ease-out"
                         classList={{
@@ -2307,84 +2302,83 @@ export default function Page() {
                           <Icon name="arrow-down-to-line" />
                         </button>
                       </div>
-                        <div class="flex h-full overflow-hidden">
-                          <div
-                            ref={setScrollRef}
-                          onWheel={(e) => {
-                            const root = e.currentTarget
-                            const target = e.target instanceof Element ? e.target : undefined
-                            const nested = target?.closest("[data-scrollable]")
-                            if (!nested || nested === root) {
-                              markScrollGesture(root)
-                              return
-                            }
+                      <div
+                        ref={setScrollRef}
+                        onWheel={(e) => {
+                          const root = e.currentTarget
+                          const target = e.target instanceof Element ? e.target : undefined
+                          const nested = target?.closest("[data-scrollable]")
+                          if (!nested || nested === root) {
+                            markScrollGesture(root)
+                            return
+                          }
 
-                            if (!(nested instanceof HTMLElement)) {
-                              markScrollGesture(root)
-                              return
-                            }
+                          if (!(nested instanceof HTMLElement)) {
+                            markScrollGesture(root)
+                            return
+                          }
 
-                            const max = nested.scrollHeight - nested.clientHeight
-                            if (max <= 1) {
-                              markScrollGesture(root)
-                              return
-                            }
+                          const max = nested.scrollHeight - nested.clientHeight
+                          if (max <= 1) {
+                            markScrollGesture(root)
+                            return
+                          }
 
-                            const delta =
-                              e.deltaMode === 1
-                                ? e.deltaY * 40
-                                : e.deltaMode === 2
-                                  ? e.deltaY * root.clientHeight
-                                  : e.deltaY
-                            if (!delta) return
+                          const delta =
+                            e.deltaMode === 1
+                              ? e.deltaY * 40
+                              : e.deltaMode === 2
+                                ? e.deltaY * root.clientHeight
+                                : e.deltaY
+                          if (!delta) return
 
-                            if (delta < 0) {
-                              if (nested.scrollTop + delta <= 0) markScrollGesture(root)
-                              return
-                            }
+                          if (delta < 0) {
+                            if (nested.scrollTop + delta <= 0) markScrollGesture(root)
+                            return
+                          }
 
-                            const remaining = max - nested.scrollTop
-                            if (delta > remaining) markScrollGesture(root)
-                          }}
-                          onTouchStart={(e) => {
-                            touchGesture = e.touches[0]?.clientY
-                          }}
-                          onTouchMove={(e) => {
-                            const next = e.touches[0]?.clientY
-                            const prev = touchGesture
-                            touchGesture = next
-                            if (next === undefined || prev === undefined) return
+                          const remaining = max - nested.scrollTop
+                          if (delta > remaining) markScrollGesture(root)
+                        }}
+                        onTouchStart={(e) => {
+                          touchGesture = e.touches[0]?.clientY
+                        }}
+                        onTouchMove={(e) => {
+                          const next = e.touches[0]?.clientY
+                          const prev = touchGesture
+                          touchGesture = next
+                          if (next === undefined || prev === undefined) return
 
-                            const delta = prev - next
-                            if (!delta) return
+                          const delta = prev - next
+                          if (!delta) return
 
-                            const root = e.currentTarget
-                            const target = e.target instanceof Element ? e.target : undefined
-                            const nested = target?.closest("[data-scrollable]")
-                            if (!nested || nested === root) {
-                              markScrollGesture(root)
-                              return
-                            }
+                          const root = e.currentTarget
+                          const target = e.target instanceof Element ? e.target : undefined
+                          const nested = target?.closest("[data-scrollable]")
+                          if (!nested || nested === root) {
+                            markScrollGesture(root)
+                            return
+                          }
 
-                            if (!(nested instanceof HTMLElement)) {
-                              markScrollGesture(root)
-                              return
-                            }
+                          if (!(nested instanceof HTMLElement)) {
+                            markScrollGesture(root)
+                            return
+                          }
 
-                            const max = nested.scrollHeight - nested.clientHeight
-                            if (max <= 1) {
-                              markScrollGesture(root)
-                              return
-                            }
+                          const max = nested.scrollHeight - nested.clientHeight
+                          if (max <= 1) {
+                            markScrollGesture(root)
+                            return
+                          }
 
-                            if (delta < 0) {
-                              if (nested.scrollTop + delta <= 0) markScrollGesture(root)
-                              return
-                            }
+                          if (delta < 0) {
+                            if (nested.scrollTop + delta <= 0) markScrollGesture(root)
+                            return
+                          }
 
-                            const remaining = max - nested.scrollTop
-                            if (delta > remaining) markScrollGesture(root)
-                          }}
+                          const remaining = max - nested.scrollTop
+                          if (delta > remaining) markScrollGesture(root)
+                        }}
                         onTouchEnd={() => {
                           touchGesture = undefined
                         }}
@@ -2401,13 +2395,9 @@ export default function Page() {
                           autoScroll.handleScroll()
                           markScrollGesture(e.currentTarget)
                           if (isDesktop()) scheduleScrollSpy(e.currentTarget)
-
-                          if (e.currentTarget.scrollTop < 100) {
-                            backfillTurns()
-                          }
                         }}
                         onClick={autoScroll.handleInteraction}
-                        class="relative min-w-0 flex-1 h-full overflow-y-auto session-scroller"
+                        class="relative min-w-0 w-full h-full overflow-y-auto session-scroller"
                         style={{ "--session-title-height": info()?.title || info()?.parentID ? "40px" : "0px" }}
                       >
                         <Show when={info()?.title || info()?.parentID}>
@@ -2617,10 +2607,9 @@ export default function Page() {
                         </div>
                       </div>
                     </div>
-                  </>
+                  </Show>
                 </Show>
-              </Show>
-            </Match>
+              </Match>
               <Match when={true}>
                 <NewSessionView
                   worktree={newSessionWorktree()}
@@ -2654,56 +2643,6 @@ export default function Page() {
                 "md:max-w-200 3xl:max-w-[1200px] 4xl:max-w-[1600px] 5xl:max-w-[1900px]": centered(),
               }}
             >
-              <Show when={request()} keyed>
-                {(perm) => (
-                  <div data-component="tool-part-wrapper" data-permission="true" class="mb-3">
-                    <BasicTool
-                      icon="checklist"
-                      locked
-                      defaultOpen
-                      trigger={{
-                        title: language.t("notification.permission.title"),
-                        subtitle:
-                          perm.permission === "doom_loop"
-                            ? language.t("settings.permissions.tool.doom_loop.title")
-                            : perm.permission,
-                      }}
-                    >
-                      <Show when={perm.patterns.length > 0}>
-                        <div class="flex flex-col gap-1 py-2 px-3 max-h-40 overflow-y-auto no-scrollbar">
-                          <For each={perm.patterns}>
-                            {(pattern) => <code class="text-12-regular text-text-base break-all">{pattern}</code>}
-                          </For>
-                        </div>
-                      </Show>
-                      <Show when={perm.permission === "doom_loop"}>
-                        <div class="text-12-regular text-text-weak pb-2 px-3">
-                          {language.t("settings.permissions.tool.doom_loop.description")}
-                        </div>
-                      </Show>
-                    </BasicTool>
-                    <div data-component="permission-prompt">
-                      <div data-slot="permission-actions">
-                        <Button variant="ghost" size="small" onClick={() => decide("reject")} disabled={ui.responding}>
-                          {language.t("ui.permission.deny")}
-                        </Button>
-                        <Button
-                          variant="secondary"
-                          size="small"
-                          onClick={() => decide("always")}
-                          disabled={ui.responding}
-                        >
-                          {language.t("ui.permission.allowAlways")}
-                        </Button>
-                        <Button variant="primary" size="small" onClick={() => decide("once")} disabled={ui.responding}>
-                          {language.t("ui.permission.allowOnce")}
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </Show>
-
               <Show
                 when={prompt.ready()}
                 fallback={
@@ -2745,154 +2684,79 @@ export default function Page() {
             aria-label={language.t("session.panel.reviewAndFiles")}
             class="relative flex-1 min-w-0 h-full border-l border-border-weak-base flex"
           >
-            <div class="flex-1 min-w-0 h-full">
-              <Show
-                when={fileTreeTab() === "changes"}
-                fallback={
-                  <>
-                    <DragDropProvider
-                    onDragStart={handleDragStart}
-                    onDragEnd={handleDragEnd}
-                    onDragOver={handleDragOver}
-                    collisionDetector={closestCenter}
-                  >
-                    <DragDropSensors />
-                    <ConstrainDragYAxis />
-                    <Tabs value={activeTab()} onChange={openTab}>
-                      <div class="sticky top-0 shrink-0 flex">
-                        <Tabs.List
-                          ref={(el: HTMLDivElement) => {
-                            let scrollTimeout: number | undefined
-                            let prevScrollWidth = el.scrollWidth
-                            let prevContextOpen = contextOpen()
-
-                            const handler = () => {
-                              if (scrollTimeout !== undefined) clearTimeout(scrollTimeout)
-                              scrollTimeout = window.setTimeout(() => {
-                                const scrollWidth = el.scrollWidth
-                                const clientWidth = el.clientWidth
-                                const currentContextOpen = contextOpen()
-
-                                // Only scroll when a tab is added (width increased), not on removal
-                                if (scrollWidth > prevScrollWidth) {
-                                  if (!prevContextOpen && currentContextOpen) {
-                                    // Context tab was opened, scroll to first
-                                    el.scrollTo({
-                                      left: 0,
-                                      behavior: "smooth",
-                                    })
-                                  } else if (scrollWidth > clientWidth) {
-                                    // File tab was added, scroll to rightmost
-                                    el.scrollTo({
-                                      left: scrollWidth - clientWidth,
-                                      behavior: "smooth",
-                                    })
-                                  }
-                                }
-                                // When width decreases (tab removed), don't scroll - let browser handle it naturally
-
-                                prevScrollWidth = scrollWidth
-                                prevContextOpen = currentContextOpen
-                              }, 0)
-                            }
-
-                            const wheelHandler = (e: WheelEvent) => {
-                              // Enable horizontal scrolling with mouse wheel
-                              if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
-                                el.scrollLeft += e.deltaY > 0 ? 50 : -50
-                                e.preventDefault()
-                              }
-                            }
-
-                            el.addEventListener("wheel", wheelHandler, { passive: false })
-
-                            const observer = new MutationObserver(handler)
-                            observer.observe(el, { childList: true })
-
-                            onCleanup(() => {
-                              el.removeEventListener("wheel", wheelHandler)
-                              observer.disconnect()
-                              if (scrollTimeout !== undefined) clearTimeout(scrollTimeout)
-                            })
-                          }}
-                        >
-                          <Show when={contextOpen()}>
-                            <Tabs.Trigger
-                              value="context"
-                              closeButton={
-                                <Tooltip value={language.t("common.closeTab")} placement="bottom">
-                                  <IconButton
-                                    icon="close-small"
-                                    variant="ghost"
-                                    class="h-5 w-5"
-                                    onClick={() => tabs().close("context")}
-                                    aria-label={language.t("common.closeTab")}
-                                  />
-                                </Tooltip>
-                              }
-                              hideCloseButton
-                              onMiddleClick={() => tabs().close("context")}
-                            >
-                              <div class="flex items-center gap-2">
-                                <SessionContextUsage variant="indicator" />
-                                <div>{language.t("session.tab.context")}</div>
-                              </div>
-                            </Tabs.Trigger>
+            <DragDropProvider
+              onDragStart={handleDragStart}
+              onDragEnd={handleDragEnd}
+              onDragOver={handleDragOver}
+              collisionDetector={closestCenter}
+            >
+              <DragDropSensors />
+              <ConstrainDragYAxis />
+              <Tabs value={activeTab()} onChange={openTab}>
+                <div class="sticky top-0 shrink-0 flex">
+                  <Tabs.List>
+                    <Show when={true}>
+                      <Tabs.Trigger value="review">
+                        <div class="flex items-center gap-3">
+                          <Show when={diffs()}>
+                            <DiffChanges changes={diffs()} variant="bars" />
                           </Show>
-                          <SortableProvider ids={openedTabs()}>
-                            <For each={openedTabs()}>{(tab) => <SortableTab tab={tab} onTabClose={tabs().close} />}</For>
-                          </SortableProvider>
-                          <StickyAddButton>
-                            <TooltipKeybind
-                              title={language.t("command.file.open")}
-                              keybind={command.keybind("file.open")}
-                              class="flex items-center"
-                            >
-                              <IconButton
-                                icon="plus-small"
-                                variant="ghost"
-                                iconSize="large"
-                                onClick={() => dialog.show(() => <DialogSelectFile mode="files" onOpenFile={() => showAllFiles()} />)}
-                                aria-label={language.t("command.file.open")}
-                              />
-                            </TooltipKeybind>
-                          </StickyAddButton>
-                        </Tabs.List>
-                      </div>
-
-                      <Tabs.Content value="empty" class="flex flex-col h-full overflow-hidden contain-strict">
-                        <Show when={activeTab() === "empty"}>
-                          <div class="relative pt-2 flex-1 min-h-0 overflow-hidden">
-                            <div class="h-full px-6 pb-42 flex flex-col items-center justify-center text-center gap-6">
-                              <Mark class="w-14 opacity-10" />
-                              <div class="text-14-regular text-text-weak max-w-56">
-                                {language.t("session.files.selectToOpen")}
+                          <div class="flex items-center gap-1.5">
+                            <div>Review</div>
+                            <Show when={info()?.summary?.files}>
+                              <div class="text-12-medium text-text-strong h-4 px-2 flex flex-col items-center justify-center rounded-full bg-surface-base">
+                                {info()?.summary?.files ?? 0}
                               </div>
-                            </div>
+                            </Show>
                           </div>
-                        </Show>
-                      </Tabs.Content>
-
-                  <Show
-                    when={activeTab() === "review"}
-                    fallback={
-                      <Show when={contextOpen()}>
-                        <Tabs.Content value="context" class="flex flex-col h-full overflow-hidden contain-strict">
-                          <Show when={activeTab() === "context"}>
-                            <div class="relative pt-2 flex-1 min-h-0 overflow-hidden">
-                              <SessionContextTab
-                                messages={messages}
-                                visibleUserMessages={visibleUserMessages}
-                                view={view}
-                                info={info}
-                              />
-                            </div>
-                          </Show>
-                        </Tabs.Content>
-                      </Show>
-                    }
-                  >
-                    <Tabs.Content value="review" class="flex flex-col h-full overflow-hidden contain-strict">
+                        </div>
+                      </Tabs.Trigger>
+                    </Show>
+                    <Show when={contextOpen()}>
+                      <Tabs.Trigger
+                        value="context"
+                        closeButton={
+                          <Tooltip value={language.t("common.closeTab")} placement="bottom">
+                            <IconButton
+                              icon="close"
+                              variant="ghost"
+                              onClick={() => tabs().close("context")}
+                              aria-label={language.t("common.closeTab")}
+                            />
+                          </Tooltip>
+                        }
+                        hideCloseButton
+                        onMiddleClick={() => tabs().close("context")}
+                      >
+                        <div class="flex items-center gap-2">
+                          <SessionContextUsage variant="indicator" />
+                          <div>Context</div>
+                        </div>
+                      </Tabs.Trigger>
+                    </Show>
+                    <SortableProvider ids={openedTabs()}>
+                      <For each={openedTabs()}>{(tab) => <SortableTab tab={tab} onTabClose={tabs().close} />}</For>
+                    </SortableProvider>
+                    <div class="bg-background-base h-full flex items-center justify-center border-b border-border-weak-base px-3">
+                      <TooltipKeybind
+                        title="Open file"
+                        keybind={command.keybind("file.open")}
+                        class="flex items-center"
+                      >
+                        <IconButton
+                          icon="plus-small"
+                          variant="ghost"
+                          iconSize="large"
+                          onClick={() => dialog.show(() => <DialogSelectFile />)}
+                          aria-label={language.t("command.file.open")}
+                        />
+                      </TooltipKeybind>
+                    </div>
+                  </Tabs.List>
+                </div>
+                <Show when={true}>
+                  <Tabs.Content value="review" class="flex flex-col h-full overflow-hidden contain-strict">
+                    <Show when={activeTab() === "review"}>
                       <div class="relative pt-2 flex-1 min-h-0 overflow-hidden">
                         <Switch>
                           <Match when={hasReview()}>
@@ -2905,21 +2769,14 @@ export default function Page() {
                                 view={view}
                                 diffStyle={layout.review.diffStyle()}
                                 onDiffStyleChange={layout.review.setDiffStyle}
-                                focusedFile={activeDiff()}
-                                onLineComment={(comment) => addCommentToContext({ ...comment, origin: "review" })}
+                                onLineComment={addCommentToContext}
                                 comments={comments.all()}
                                 focusedComment={comments.focus()}
                                 onFocusedCommentChange={comments.setFocus}
                                 onViewFile={(path) => {
-                                  showAllFiles()
                                   const value = file.tab(path)
                                   tabs().open(value)
                                   file.load(path)
-                                }}
-                                classes={{
-                                  root: "pb-[calc(var(--prompt-height,8rem)+32px)]",
-                                  header: "px-6",
-                                  container: "px-6",
                                 }}
                               />
                             </Show>
@@ -2932,8 +2789,23 @@ export default function Page() {
                           </Match>
                         </Switch>
                       </div>
-                    </Tabs.Content>
-                  </Show>
+                    </Show>
+                  </Tabs.Content>
+                </Show>
+                <Show when={contextOpen()}>
+                  <Tabs.Content value="context" class="flex flex-col h-full overflow-hidden contain-strict">
+                    <Show when={activeTab() === "context"}>
+                      <div class="relative pt-2 flex-1 min-h-0 overflow-hidden">
+                        <SessionContextTab
+                          messages={messages}
+                          visibleUserMessages={visibleUserMessages}
+                          view={view}
+                          info={info}
+                        />
+                      </div>
+                    </Show>
+                  </Tabs.Content>
+                </Show>
                 <For each={openedTabs()}>
                   {(tab) => {
                     let scroll: HTMLDivElement | undefined
@@ -2941,66 +2813,54 @@ export default function Page() {
                     let pending: { x: number; y: number } | undefined
                     let codeScroll: HTMLElement[] = []
 
-                    const path = createMemo(() => file.pathFromTab(tab))
-                    const state = createMemo(() => {
-                      const p = path()
-                      if (!p) return
-                      return file.get(p)
-                    })
-                    const selection = createMemo(() => {
-                      const p = path()
-                      if (!p) return
-                      return file.selection(p)
-                    })
-                    const selectionLabel = createMemo(() => {
-                      const sel = selection()
-                      if (!sel) return
-                      if (sel.startLine === sel.endLine) return `L${sel.startLine}`
-                      return `L${sel.startLine}-${sel.endLine}`
-                    })
+                          const path = createMemo(() => file.pathFromTab(tab))
+                          const state = createMemo(() => {
+                            const p = path()
+                            if (!p) return
+                            return file.get(p)
+                          })
+                          const contents = createMemo(() => state()?.content?.content ?? "")
+                          const cacheKey = createMemo(() => checksum(contents()))
+                          const isImage = createMemo(() => {
+                            const c = state()?.content
+                            return (
+                              c?.encoding === "base64" &&
+                              c?.mimeType?.startsWith("image/") &&
+                              c?.mimeType !== "image/svg+xml"
+                            )
+                          })
+                          const isSvg = createMemo(() => {
+                            const c = state()?.content
+                            return c?.mimeType === "image/svg+xml"
+                          })
+                          const isBinary = createMemo(() => state()?.content?.type === "binary")
+                          const svgContent = createMemo(() => {
+                            if (!isSvg()) return
+                            const c = state()?.content
+                            if (!c) return
+                            if (c.encoding !== "base64") return c.content
+                            return decode64(c.content)
+                          })
 
-                    const contents = createMemo(() => state()?.content?.content ?? "")
-                    const cacheKey = createMemo(() => checksum(contents()))
-                    const isImage = createMemo(() => {
-                      const c = state()?.content
-                      return (
-                        c?.encoding === "base64" &&
-                        c?.mimeType?.startsWith("image/") &&
-                        c?.mimeType !== "image/svg+xml"
-                      )
-                    })
-                    const isSvg = createMemo(() => {
-                      const c = state()?.content
-                      return c?.mimeType === "image/svg+xml"
-                    })
-                    const isBinary = createMemo(() => state()?.content?.type === "binary")
-                    const svgContent = createMemo(() => {
-                      if (!isSvg()) return
-                      const c = state()?.content
-                      if (!c) return
-                      if (c.encoding !== "base64") return c.content
-                      return decode64(c.content)
-                    })
+                          const svgDecodeFailed = createMemo(() => {
+                            if (!isSvg()) return false
+                            const c = state()?.content
+                            if (!c) return false
+                            if (c.encoding !== "base64") return false
+                            return svgContent() === undefined
+                          })
 
-                    const svgDecodeFailed = createMemo(() => {
-                      if (!isSvg()) return false
-                      const c = state()?.content
-                      if (!c) return false
-                      if (c.encoding !== "base64") return false
-                      return svgContent() === undefined
-                    })
-
-                    const svgToast = { shown: false }
-                    createEffect(() => {
-                      if (!svgDecodeFailed()) return
-                      if (svgToast.shown) return
-                      svgToast.shown = true
-                      showToast({
-                        variant: "error",
-                        title: language.t("toast.file.loadFailed.title"),
-                        description: "Invalid base64 content.",
-                      })
-                    })
+                          const svgToast = { shown: false }
+                          createEffect(() => {
+                            if (!svgDecodeFailed()) return
+                            if (svgToast.shown) return
+                            svgToast.shown = true
+                            showToast({
+                              variant: "error",
+                              title: language.t("toast.file.loadFailed.title"),
+                              description: "Invalid base64 content.",
+                            })
+                          })
                           const svgPreviewUrl = createMemo(() => {
                             if (!isSvg()) return
                             const c = state()?.content
@@ -3034,23 +2894,7 @@ export default function Page() {
                     const [openedComment, setOpenedComment] = createSignal<string | null>(null)
                     const [commenting, setCommenting] = createSignal<SelectedLineRange | null>(null)
                     const [draft, setDraft] = createSignal("")
-                    const positions = createMemo(() => {
-                      const el = wrap
-                      if (!el) return {}
-
-                      const markers = Array.from(el.querySelectorAll("[data-line-comment]"))
-                      const result: Record<string, number> = {}
-
-                      for (const marker of markers) {
-                        if (!(marker instanceof HTMLElement)) continue
-                        const id = marker.dataset.lineComment
-                        if (!id) continue
-
-                        result[id] = markerTop(el, marker)
-                      }
-
-                      return result
-                    })
+                    const [positions, setPositions] = createSignal<Record<string, number>>({})
                     const [draftTop, setDraftTop] = createSignal<number | undefined>(undefined)
 
                           const commentLabel = (range: SelectedLineRange) => {
@@ -3088,13 +2932,33 @@ export default function Page() {
 
                     const updateComments = () => {
                       const el = wrap
-                      if (!el) return
-
-                      const marker = el.querySelector("[data-line-comment-draft]")
-                      if (!(marker instanceof HTMLElement)) {
+                      const root = getRoot()
+                      if (!el || !root) {
+                        setPositions({})
                         setDraftTop(undefined)
                         return
                       }
+
+                            const next: Record<string, number> = {}
+                            for (const comment of fileComments()) {
+                              const marker = findMarker(root, comment.selection)
+                              if (!marker) continue
+                              next[comment.id] = markerTop(el, marker)
+                            }
+
+                      setPositions(next)
+
+                            const range = commenting()
+                            if (!range) {
+                              setDraftTop(undefined)
+                              return
+                            }
+
+                            const marker = findMarker(root, range)
+                            if (!marker) {
+                              setDraftTop(undefined)
+                              return
+                            }
 
                       setDraftTop(markerTop(el, marker))
                     }
@@ -3103,17 +2967,17 @@ export default function Page() {
                       requestAnimationFrame(updateComments)
                     }
 
-                    createEffect(() => {
-                      fileComments()
-                      scheduleComments()
-                    })
+                          createEffect(() => {
+                            fileComments()
+                            scheduleComments()
+                          })
 
-                    createEffect(() => {
-                      const range = commenting()
-                      scheduleComments()
-                      if (!range) return
-                      setDraft("")
-                    })
+                          createEffect(() => {
+                            const range = commenting()
+                            scheduleComments()
+                            if (!range) return
+                            setDraft("")
+                          })
 
                     createEffect(() => {
                       const range = commenting()
@@ -3122,39 +2986,39 @@ export default function Page() {
                       requestAnimationFrame(() => textarea?.focus())
                     })
 
-                    const renderCode = (source: string, wrapperClass: string) => (
-                      <div
-                        ref={(el) => {
-                          wrap = el
-                          scheduleComments()
-                        }}
-                        class={`relative overflow-hidden ${wrapperClass}`}
-                      >
-                        <Dynamic
-                          component={codeComponent}
-                          file={{
-                            name: path() ?? "",
-                            contents: source,
-                            cacheKey: cacheKey(),
-                          }}
-                          enableLineSelection
-                          selectedLines={selectedLines()}
-                          commentedLines={commentedLines()}
-                          onRendered={() => {
-                            requestAnimationFrame(restoreScroll)
-                            requestAnimationFrame(scheduleComments)
-                          }}
-                          onLineSelected={(range: SelectedLineRange | null) => {
-                            const p = path()
-                            if (!p) return
-                            file.setSelectedLines(p, range)
-                            if (!range) setCommenting(null)
-                          }}
-                          onLineSelectionEnd={(range: SelectedLineRange | null) => {
-                            if (!range) {
-                              setCommenting(null)
-                              return
-                            }
+                          const renderCode = (source: string, wrapperClass: string) => (
+                            <div
+                              ref={(el) => {
+                                wrap = el
+                                scheduleComments()
+                              }}
+                              class={`relative overflow-hidden ${wrapperClass}`}
+                            >
+                              <Dynamic
+                                component={codeComponent}
+                                file={{
+                                  name: path() ?? "",
+                                  contents: source,
+                                  cacheKey: cacheKey(),
+                                }}
+                                enableLineSelection
+                                selectedLines={selectedLines()}
+                                commentedLines={commentedLines()}
+                                onRendered={() => {
+                                  requestAnimationFrame(restoreScroll)
+                                  requestAnimationFrame(scheduleComments)
+                                }}
+                                onLineSelected={(range: SelectedLineRange | null) => {
+                                  const p = path()
+                                  if (!p) return
+                                  file.setSelectedLines(p, range)
+                                  if (!range) setCommenting(null)
+                                }}
+                                onLineSelectionEnd={(range: SelectedLineRange | null) => {
+                                  if (!range) {
+                                    setCommenting(null)
+                                    return
+                                  }
 
                             setOpenedComment(null)
                             setCommenting(range)
@@ -3236,7 +3100,7 @@ export default function Page() {
                                         if (!value) return
                                         const p = path()
                                         if (!p) return
-                                        addCommentToContext({ file: p, selection: range(), comment: value, origin: "file" })
+                                        addCommentToContext({ file: p, selection: range(), comment: value })
                                         setCommenting(null)
                                       }}
                                     />
@@ -3253,7 +3117,7 @@ export default function Page() {
                                           if (!value) return
                                           const p = path()
                                           if (!p) return
-                                          addCommentToContext({ file: p, selection: range(), comment: value, origin: "file" })
+                                          addCommentToContext({ file: p, selection: range(), comment: value })
                                           setCommenting(null)
                                         }}
                                       >
@@ -3327,7 +3191,7 @@ export default function Page() {
                             }
                           }
 
-                          const restoreScroll = (retries = 0) => {
+                          const restoreScroll = () => {
                             const el = scroll
                             if (!el) return
 
@@ -3336,20 +3200,9 @@ export default function Page() {
 
                             syncCodeScroll()
 
-                            // Wait for content to be scrollable - content may not have rendered yet
                             if (codeScroll.length > 0) {
-                              if (codeScroll.some((el) => el.scrollHeight <= el.clientHeight) && retries < 10) {
-                                requestAnimationFrame(() => restoreScroll(retries + 1))
-                                return
-                              }
-
                               for (const item of codeScroll) {
                                 if (item.scrollLeft !== s.x) item.scrollLeft = s.x
-                              }
-                            } else {
-                              if (el.scrollHeight <= el.clientHeight && retries < 10) {
-                                requestAnimationFrame(() => restoreScroll(retries + 1))
-                                return
                               }
                             }
 
@@ -3421,26 +3274,6 @@ export default function Page() {
                               }}
                               onScroll={handleScroll}
                             >
-                              <Show when={activeTab() === tab}>
-                                <Show when={selection()}>
-                                  {(sel) => (
-                                    <div class="hidden sticky top-0 z-10 px-6 py-2 _flex justify-end bg-background-base border-b border-border-weak-base">
-                                      <button
-                                        type="button"
-                                        class="flex items-center gap-2 px-2 py-1 rounded-md bg-surface-base border border-border-base text-12-regular text-text-strong hover:bg-surface-raised-base-hover"
-                                        onClick={() => {
-                                          const p = path()
-                                          if (!p) return
-                                          prompt.context.add({ type: "file", path: p, selection: sel() })
-                                        }}
-                                      >
-                                        <Icon name="plus-small" size="small" />
-                                        <span>Add {selectionLabel()} to context</span>
-                                      </button>
-                                    </div>
-                                  )}
-                                </Show>
-                              </Show>
                               <Switch>
                                 <Match when={state()?.loaded && isImage()}>
                                   <div class="px-6 py-4 pb-40">
@@ -3501,52 +3334,8 @@ export default function Page() {
                       </Show>
                     </DragOverlay>
                 </DragDropProvider>
-              </>
-            }
-          >
-            <div class="relative flex-1 min-h-0 overflow-hidden">
-              <Switch>
-                <Match when={hasReview()}>
-                  <Show
-                    when={diffsReady()}
-                    fallback={<div class="px-6 py-4 text-text-weak">Loading changes...</div>}
-                  >
-                    <SessionReviewTab
-                      diffs={diffs}
-                      view={view}
-                      diffStyle={layout.review.diffStyle()}
-                      onDiffStyleChange={layout.review.setDiffStyle}
-                      focusedFile={activeDiff()}
-                      onLineComment={(comment) => addCommentToContext({ ...comment, origin: "review" })}
-                      comments={comments.all()}
-                      focusedComment={comments.focus()}
-                      onFocusedCommentChange={comments.setFocus}
-                      onViewFile={(path) => {
-                        showAllFiles()
-                        const value = file.tab(path)
-                        tabs().open(value)
-                        file.load(path)
-                      }}
-                      classes={{
-                        root: "pb-[calc(var(--prompt-height,8rem)+32px)]",
-                        header: "px-6",
-                        container: "px-6",
-                      }}
-                    />
-                  </Show>
-                </Match>
-                <Match when={true}>
-                  <div class="h-full px-6 pb-30 flex flex-col items-center justify-center text-center gap-6">
-                    <Mark class="w-14 opacity-10" />
-                    <div class="text-13-regular text-text-weak max-w-56">{language.t("session.review.empty")}</div>
-                  </div>
-                </Match>
-              </Switch>
-            </div>
-          </Show>
-        </div>
 
-        <Show when={layout.fileTree.opened()}>
+                <Show when={layout.fileTree.opened()}>
                   <div
                     id="file-tree-panel"
                     class="relative shrink-0 h-full"
@@ -3593,7 +3382,8 @@ export default function Page() {
                                 />
                               </Show>
                             </Match>
-                            <Match when={true}>
+
+                        <Match when={true}>
                           <div class="mt-8 text-center text-12-regular text-text-weak">
                             {language.t("session.review.noChanges")}
                           </div>

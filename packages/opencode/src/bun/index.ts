@@ -27,23 +27,17 @@ export namespace BunProc {
         BUN_BE_BUN: "1",
       },
     })
-
-    const stdoutPromise = result.stdout
-      ? typeof result.stdout === "number"
-        ? Promise.resolve(result.stdout)
-        : readableStreamToText(result.stdout)
-      : Promise.resolve(undefined)
-
-    const stderrPromise = result.stderr
-      ? typeof result.stderr === "number"
-        ? Promise.resolve(result.stderr)
-        : readableStreamToText(result.stderr)
-      : Promise.resolve(undefined)
-
     const code = await result.exited
-    const stdout = await stdoutPromise
-    const stderr = await stderrPromise
-
+    const stdout = result.stdout
+      ? typeof result.stdout === "number"
+        ? result.stdout
+        : await readableStreamToText(result.stdout)
+      : undefined
+    const stderr = result.stderr
+      ? typeof result.stderr === "number"
+        ? result.stderr
+        : await readableStreamToText(result.stderr)
+      : undefined
     log.info("done", {
       code,
       stdout,

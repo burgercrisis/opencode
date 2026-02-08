@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import * as fs from "fs/promises"
+import fs from "fs/promises"
 import path from "path"
 import { tmpdir } from "../fixture/fixture"
 import { Ripgrep } from "../../src/file/ripgrep"
@@ -74,7 +74,7 @@ package.json`)
         await fs.mkdir(path.join(dir, "src"))
         // Create more files than the limit
         for (let i = 1; i <= 10; i++) {
-          await fs.writeFile(path.join(dir, "src", `file${i.toString().padStart(2, "0")}.ts`), "")   
+          await fs.writeFile(path.join(dir, "src", `file${i.toString().padStart(2, "0")}.ts`), "")
         }
       },
     })

@@ -486,7 +486,7 @@ export namespace Ripgrep {
     limit?: number
     follow?: boolean
   }) {
-    const args = ["--json", "--hidden", "--glob=!.git/*"]
+    const args = [`${await filepath()}`, "--json", "--hidden", "--glob='!.git/*'"]
     if (input.follow) args.push("--follow")
 
     if (input.glob) {
@@ -502,20 +502,14 @@ export namespace Ripgrep {
     args.push("--")
     args.push(input.pattern)
 
-    const path = await filepath()
-    const result = await Bun.spawn([path, ...args], {
-      cwd: input.cwd,
-      stdout: "pipe",
-      stderr: "ignore",
-    })
-
-    const text = await Bun.readableStreamToText(result.stdout)
-    if (result.exitCode !== 0 && text === "") {
+    const command = args.join(" ")
+    const result = await $`${{ raw: command }}`.cwd(input.cwd).quiet().nothrow()
+    if (result.exitCode !== 0) {
       return []
     }
 
     // Handle both Unix (\n) and Windows (\r\n) line endings
-    const lines = text.trim().split(/\r?\n/).filter(Boolean)
+    const lines = result.text().trim().split(/\r?\n/).filter(Boolean)
     // Parse JSON lines from ripgrep output
 
     return lines

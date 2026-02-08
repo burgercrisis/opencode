@@ -1,10 +1,20 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test, mock } from "bun:test"
 import path from "path"
 import { ReadTool } from "../../src/tool/read"
 import { Instance } from "../../src/project/instance"
 import { tmpdir } from "../fixture/fixture"
 import { PermissionNext } from "../../src/permission/next"
 import { Agent } from "../../src/agent/agent"
+
+// Mock Config to return empty permissions, ignoring user config
+mock.module("../../src/config/config", () => {
+  return {
+    Config: {
+      get: async () => ({ permission: {} }),
+      directories: async () => [],
+    }
+  }
+})
 
 const FIXTURES_DIR = path.join(import.meta.dir, "fixtures")
 

@@ -1,11 +1,13 @@
 import { describe, expect, test } from "bun:test"
 import path from "path"
+import fs from "fs/promises"
 import { pathToFileURL } from "url"
 import type { PermissionNext } from "../../src/permission/next"
 import type { Tool } from "../../src/tool/tool"
 import { Instance } from "../../src/project/instance"
 import { SkillTool } from "../../src/tool/skill"
 import { tmpdir } from "../fixture/fixture"
+import { Global } from "../../src/global"
 
 const baseCtx: Omit<Tool.Context, "ask"> = {
   sessionID: "test",
@@ -23,6 +25,7 @@ describe("tool.skill", () => {
       git: true,
       init: async (dir) => {
         const skillDir = path.join(dir, ".opencode", "skill", "tool-skill")
+        await fs.mkdir(skillDir, { recursive: true })
         await Bun.write(
           path.join(skillDir, "SKILL.md"),
           `---
@@ -38,6 +41,7 @@ description: Skill for tool tests.
 
     const home = process.env.OPENCODE_TEST_HOME
     process.env.OPENCODE_TEST_HOME = tmp.path
+    await Global.initialize()
 
     try {
       await Instance.provide({
@@ -58,6 +62,7 @@ description: Skill for tool tests.
       git: true,
       init: async (dir) => {
         const skillDir = path.join(dir, ".opencode", "skill", "tool-skill")
+        await fs.mkdir(skillDir, { recursive: true })
         await Bun.write(
           path.join(skillDir, "SKILL.md"),
           `---
@@ -70,12 +75,15 @@ description: Skill for tool tests.
 Use this skill.
 `,
         )
-        await Bun.write(path.join(skillDir, "scripts", "demo.txt"), "demo")
+        const scriptsDir = path.join(skillDir, "scripts")
+        await fs.mkdir(scriptsDir, { recursive: true })
+        await Bun.write(path.join(scriptsDir, "demo.txt"), "demo")
       },
     })
 
     const home = process.env.OPENCODE_TEST_HOME
     process.env.OPENCODE_TEST_HOME = tmp.path
+    await Global.initialize()
 
     try {
       await Instance.provide({
@@ -99,7 +107,7 @@ Use this skill.
           expect(requests[0].patterns).toContain("tool-skill")
           expect(requests[0].always).toContain("tool-skill")
 
-          expect(result.metadata.dir).toBe(dir)
+          expect(result.metadata.dir).toBe(dir.replace(/\\/g, "/"))
           expect(result.output).toContain(`<skill_content name="tool-skill">`)
           expect(result.output).toContain(`Base directory for this skill: ${pathToFileURL(dir).href}`)
           expect(result.output).toContain(`<file>${file}</file>`)

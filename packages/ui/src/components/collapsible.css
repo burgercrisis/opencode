@@ -50,17 +50,16 @@
   [data-slot="collapsible-content"] {
     display: grid;
     grid-template-rows: 0fr;
-    transition-property: grid-template-rows, opacity;
-    transition-duration: var(--transition-duration);
-    transition-timing-function: var(--transition-easing);
+    transition: grid-template-rows 0.2s ease-out;
+    overflow: hidden;
 
-    > * {
-      overflow: hidden;
+    &[data-expanded] {
+      grid-template-rows: 1fr;
     }
 
-    /* &[data-expanded] { */
-    /*   animation: slideDown 250ms ease-out; */
-    /* } */
+    &[data-closed] {
+      grid-template-rows: 0fr;
+    }
   }
 
   &[data-variant="ghost"] {

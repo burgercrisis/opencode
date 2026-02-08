@@ -4,29 +4,7 @@ import os from "os"
 import path from "path"
 import fs from "fs/promises"
 import fsSync from "fs"
-import { afterAll, mock } from "bun:test"
-
-// Mock BunProc to prevent actual installations during tests
-mock.module("../src/bun/index", () => ({
-  BunProc: {
-    install: async (pkg: string, _version?: string) => {
-      // Return package name without version for mocking
-      const lastAtIndex = pkg.lastIndexOf("@")
-      return lastAtIndex > 0 ? pkg.substring(0, lastAtIndex) : pkg
-    },
-    run: async () => {
-      throw new Error("BunProc.run should not be called in tests")
-    },
-    which: () => process.execPath,
-    InstallFailedError: class extends Error {},
-  },
-}))
-
-// Mock default plugins
-const mockPlugin = () => ({})
-mock.module("opencode-anthropic-auth", () => ({ default: mockPlugin }))
-mock.module("@gitlab/opencode-gitlab-auth", () => ({ default: mockPlugin }))
-mock.module("opencode-copilot-auth", () => ({ default: mockPlugin }))
+import { afterAll } from "bun:test"
 
 const dir = path.join(os.tmpdir(), "opencode-test-data-" + process.pid)
 await fs.mkdir(dir, { recursive: true })
@@ -60,7 +38,6 @@ process.env["XDG_DATA_HOME"] = path.join(dir, "share")
 process.env["XDG_CACHE_HOME"] = path.join(dir, "cache")
 process.env["XDG_CONFIG_HOME"] = path.join(dir, "config")
 process.env["XDG_STATE_HOME"] = path.join(dir, "state")
-process.env["OPENCODE_DISABLE_MODELS_FETCH"] = "true"
 process.env["OPENCODE_MODELS_PATH"] = path.join(import.meta.dir, "tool", "fixtures", "models-api.json")
 
 // Write the cache version file to prevent global/index.ts from clearing the cache

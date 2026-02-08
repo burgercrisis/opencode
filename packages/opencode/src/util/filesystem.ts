@@ -232,7 +232,8 @@ export namespace Filesystem {
   export async function findUp(target: string, start: string, stop?: string): Promise<string[]> {
     const find = async (curr: string, acc: string[]): Promise<string[]> => {
       const search = join(curr, target)
-      const nextAcc = (await exists(search)) ? [...acc, search] : acc
+      const existsResult = await exists(search)
+      const nextAcc = existsResult ? [...acc, search] : acc
       if (stop === curr) return nextAcc
       const next = dirname(curr)
       if (next === curr) return nextAcc

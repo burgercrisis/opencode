@@ -40,8 +40,12 @@ export namespace Skill {
     }),
   )
 
+  // External skill directories to search for (project-level and global)
+  // These follow the directory layout used by Claude Code and other agents.
+  const EXTERNAL_DIRS = [".claude", ".agents"]
+  const EXTERNAL_SKILL_GLOB = new Bun.Glob("skills/**/SKILL.md")
+
   const OPENCODE_SKILL_GLOB = new Bun.Glob("{skill,skills}/**/SKILL.md")
-  const CLAUDE_SKILL_GLOB = new Bun.Glob("skills/**/SKILL.md")
   const SKILL_GLOB = new Bun.Glob("**/SKILL.md")
 
   export const state = Instance.state(async () => {
@@ -77,14 +81,14 @@ export namespace Skill {
       skills[parsed.data.name] = {
         name: parsed.data.name,
         description: parsed.data.description,
-        location: match.replaceAll(path.sep, "/"), // Normalize path for Windows
+        location: match.replaceAll(path.sep, "/"),
         content: md.content,
       }
     }
 
-    const scanGlob = async (glob: Bun.Glob, root: string, scope: "global" | "project" | "config") => {
+    const scanExternal = async (root: string, scope: "global" | "project") => {
       return Array.fromAsync(
-        glob.scan({
+        EXTERNAL_SKILL_GLOB.scan({
           cwd: root,
           absolute: true,
           onlyFiles: true,
@@ -101,26 +105,38 @@ export namespace Skill {
     // Scan external skill directories (.claude/skills/, .agents/skills/, etc.)
     // Load global (home) first, then project-level (so project-level overwrites)
     if (!Flag.OPENCODE_DISABLE_EXTERNAL_SKILLS) {
-      const externalDirs = [".claude", ".agents"]
-      for (const dir of externalDirs) {
+      for (const dir of EXTERNAL_DIRS) {
         const root = path.join(Global.Path.home, dir)
         if (await Filesystem.isDir(root)) {
-          await scanGlob(CLAUDE_SKILL_GLOB, root, "global")
+          await scanExternal(root, "global")
         }
       }
 
       for await (const root of Filesystem.up({
-        targets: externalDirs,
+        targets: EXTERNAL_DIRS,
         start: Instance.directory,
         stop: Instance.worktree,
       })) {
-        await scanGlob(CLAUDE_SKILL_GLOB, root, "project")
+        await scanExternal(root, "project")
       }
     }
 
-    // Scan opencode skill directories
+    // Scan opencode directories
     const opencodeDirs = await Config.directories()
-    await Promise.all(opencodeDirs.map((dir) => scanGlob(OPENCODE_SKILL_GLOB, dir, "global")))
+    const opencodeMatches = await opencodeDirs.reduce(async (accPromise, dir) => {
+      const acc = await accPromise
+      const matches = await Array.fromAsync(
+        OPENCODE_SKILL_GLOB.scan({
+          cwd: dir,
+          absolute: true,
+          onlyFiles: true,
+          followSymlinks: true,
+        }),
+      )
+      return [...acc, ...matches]
+    }, Promise.resolve([] as string[]))
+
+    await Promise.all(opencodeMatches.map(addSkill))
 
     // Scan additional skill paths from config
     const config = await Config.get()
@@ -131,7 +147,14 @@ export namespace Skill {
         log.warn("skill path not found", { path: resolved })
         continue
       }
-      await scanGlob(SKILL_GLOB, resolved, "config")
+      for await (const match of SKILL_GLOB.scan({
+        cwd: resolved,
+        absolute: true,
+        onlyFiles: true,
+        followSymlinks: true,
+      })) {
+        await addSkill(match)
+      }
     }
 
     return {

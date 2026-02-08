@@ -14,14 +14,8 @@ import { findLast } from "@opencode-ai/util/array"
 
 import { Binary } from "@opencode-ai/util/binary"
 import { createEffect, createMemo, createSignal, For, Match, on, onCleanup, ParentProps, Show, Switch } from "solid-js"
-import { Typewriter } from "./typewriter"
 import { Message, Part } from "./message-part"
 import { Markdown } from "./markdown"
-import { Accordion } from "./accordion"
-import { StickyAccordionHeader } from "./sticky-accordion-header"
-import { FileIcon } from "./file-icon"
-import { DiffChanges } from "./diff-changes"
-import { Icon } from "./icon"
 import { IconButton } from "./icon-button"
 import { Card } from "./card"
 import { Button } from "./button"
@@ -163,8 +157,6 @@ export function SessionTurn(
     const messages = allMessages()
     if (!messages || messages.length === 0) return -1
     const result = Binary.search(messages, props.messageID, (m) => m.id)
-    if (!result || !result.found) return -1
-
     const index = result.found ? result.index : messages.findIndex((m) => m.id === props.messageID)
     if (index < 0) return -1
 
@@ -482,9 +474,6 @@ const permissionParts = createMemo(() => {
   })
 
   const [store, setStore] = createStore({
-    stickyTitleRef: undefined as HTMLDivElement | undefined,
-    stickyTriggerRef: undefined as HTMLDivElement | undefined,
-    stickyHeaderHeight: 0,
     retrySeconds: 0,
     status: rawStatus(),
     duration: duration(),
@@ -504,22 +493,6 @@ const permissionParts = createMemo(() => {
     const timer = setInterval(updateSeconds, 1000)
     onCleanup(() => clearInterval(timer))
   })
-
-  createResizeObserver(
-    () => store.stickyTitleRef,
-    ({ height }) => {
-      const triggerHeight = store.stickyTriggerRef?.offsetHeight ?? 0
-      setStore("stickyHeaderHeight", height + triggerHeight + 8)
-    },
-  )
-
-  createResizeObserver(
-    () => store.stickyTriggerRef,
-    ({ height }) => {
-      const titleHeight = store.stickyTitleRef?.offsetHeight ?? 0
-      setStore("stickyHeaderHeight", titleHeight + height + 8)
-    },
-  )
 
   createEffect(() => {
     const update = () => {
@@ -588,33 +561,12 @@ const permissionParts = createMemo(() => {
                 data-message={msg().id}
                 data-slot="session-turn-message-container"
                 class={props.classes?.container}
-                style={{ "--sticky-header-height": `${store.stickyHeaderHeight}px` }}
               >
                 <Switch>
                   <Match when={isShellMode()}>
                     <Part part={shellModePart()!} message={msg()} defaultOpen />
                   </Match>
                   <Match when={true}>
-                    {/* Title (sticky) */}
-                    <div ref={(el) => setStore("stickyTitleRef", el)} data-slot="session-turn-sticky-title">
-                      <div data-slot="session-turn-message-header">
-                        <div data-slot="session-turn-message-title">
-                          <Switch>
-                            <Match when={working()}>
-                              <Typewriter
-                                as="h1"
-                                text={msg().summary?.title}
-                                data-slot="session-turn-typewriter"
-                              />
-                            </Match>
-                            <Match when={true}>
-                              <h1>{msg().summary?.title}</h1>
-                            </Match>
-                          </Switch>
-                        </div>
-                      </div>
-                    </div>
-
                     <Show when={attachmentParts().length > 0}>
                       <div data-slot="session-turn-attachments" aria-live="off">
                         <Message message={msg()} parts={attachmentParts()} />
@@ -628,10 +580,7 @@ const permissionParts = createMemo(() => {
 
                       {/* Trigger (sticky) */}
                       <Show when={working() || hasSteps()}>
-                        <div
-                          ref={(el) => setStore("stickyTriggerRef", el)}
-                          data-slot="session-turn-response-trigger"
-                        >
+                        <div data-slot="session-turn-response-trigger">
                           <Button
                             data-expandable={assistantMessages().length > 0}
                             data-slot="session-turn-collapsible-trigger-content"

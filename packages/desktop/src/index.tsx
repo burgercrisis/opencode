@@ -48,24 +48,23 @@ const listenForDeepLinks = async () => {
   await onOpenUrl((urls) => emitDeepLinks(urls)).catch(() => undefined)
 }
 
-const isTauri = () => !!(window as any).__TAURI_INTERNALS__
-
 const createPlatform = (password: Accessor<string | null>): Platform => ({
   platform: "desktop",
   os: (() => {
-    if (!isTauri()) return undefined
     try {
-      const type = ostype()
-      if (type === "macos" || type === "windows" || type === "linux") return type
+      // Check if we are in a Tauri environment before calling plugin functions
+      if (typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__) {
+        const type = ostype()
+        if (type === "macos" || type === "windows" || type === "linux") return type
+      }
     } catch (e) {
-      console.warn("Failed to get OS type, likely not in Tauri:", e)
+      console.warn("Failed to detect OS type via Tauri:", e)
     }
     return undefined
   })(),
   version: pkg.version,
 
   async openDirectoryPickerDialog(opts) {
-    if (!isTauri()) return null
     const result = await open({
       directory: true,
       multiple: opts?.multiple ?? false,
@@ -75,7 +74,6 @@ const createPlatform = (password: Accessor<string | null>): Platform => ({
   },
 
   async openFilePickerDialog(opts) {
-    if (!isTauri()) return null
     const result = await open({
       directory: false,
       multiple: opts?.multiple ?? false,
@@ -85,7 +83,6 @@ const createPlatform = (password: Accessor<string | null>): Platform => ({
   },
 
   async saveFilePickerDialog(opts) {
-    if (!isTauri()) return null
     const result = await save({
       title: opts?.title ?? t("desktop.dialog.saveFile"),
       defaultPath: opts?.defaultPath,
@@ -94,10 +91,6 @@ const createPlatform = (password: Accessor<string | null>): Platform => ({
   },
 
   openLink(url: string) {
-    if (!isTauri()) {
-      window.open(url, "_blank")
-      return
-    }
     void shellOpen(url).catch(() => undefined)
   },
 
@@ -163,21 +156,14 @@ const createPlatform = (password: Accessor<string | null>): Platform => ({
       const cached = storeCache.get(name)
       if (cached) return cached
 
-      const store = (async () => {
-        if (!isTauri()) {
-          const memory = createMemoryStore()
-          memoryCache.set(name, memory)
-          return memory
-        }
-        return await Store.load(name).catch(() => {
-          const cached = memoryCache.get(name)
-          if (cached) return cached
+      const store = Store.load(name).catch(() => {
+        const cached = memoryCache.get(name)
+        if (cached) return cached
 
-          const memory = createMemoryStore()
-          memoryCache.set(name, memory)
-          return memory
-        })
-      })()
+        const memory = createMemoryStore()
+        memoryCache.set(name, memory)
+        return memory
+      })
 
       storeCache.set(name, store)
       return store
@@ -270,7 +256,7 @@ const createPlatform = (password: Accessor<string | null>): Platform => ({
   })(),
 
   checkUpdate: async () => {
-    if (!UPDATER_ENABLED || !isTauri()) return { updateAvailable: false }
+    if (!UPDATER_ENABLED) return { updateAvailable: false }
     const next = await check().catch(() => null)
     if (!next) return { updateAvailable: false }
     const ok = await next
@@ -283,24 +269,17 @@ const createPlatform = (password: Accessor<string | null>): Platform => ({
   },
 
   update: async () => {
-    if (!UPDATER_ENABLED || !update || !isTauri()) return
-    try {
-      if (ostype() === "windows") await commands.killSidecar().catch(() => undefined)
-    } catch (e) {}
+    if (!UPDATER_ENABLED || !update) return
+    if (ostype() === "windows") await commands.killSidecar().catch(() => undefined)
     await update.install().catch(() => undefined)
   },
 
   restart: async () => {
-    if (!isTauri()) {
-      window.location.reload()
-      return
-    }
     await commands.killSidecar().catch(() => undefined)
     await relaunch()
   },
 
   notify: async (title, description, href) => {
-    if (!isTauri()) return
     const granted = await isPermissionGranted().catch(() => false)
     const permission = granted ? "granted" : await requestPermission().catch(() => "denied")
     if (permission !== "granted") return
@@ -338,20 +317,6 @@ const createPlatform = (password: Accessor<string | null>): Platform => ({
       headers.append("Authorization", `Basic ${btoa(`opencode:${password}`)}`)
     }
 
-    if (!isTauri()) {
-      if (input instanceof Request) {
-        if (pw) addHeader(input.headers, pw)
-        return fetch(input)
-      } else {
-        const headers = new Headers(init?.headers)
-        if (pw) addHeader(headers, pw)
-        return fetch(input, {
-          ...(init as any),
-          headers: headers,
-        })
-      }
-    }
-
     if (input instanceof Request) {
       if (pw) addHeader(input.headers, pw)
       return tauriFetch(input)
@@ -366,20 +331,15 @@ const createPlatform = (password: Accessor<string | null>): Platform => ({
   },
 
   getDefaultServerUrl: async () => {
-    if (!isTauri()) return null
     const result = await commands.getDefaultServerUrl().catch(() => null)
     return result
   },
 
   setDefaultServerUrl: async (url: string | null) => {
-    if (!isTauri()) return
     await commands.setDefaultServerUrl(url)
   },
 
-  parseMarkdown: (markdown: string) => {
-    if (!isTauri()) return Promise.resolve(markdown)
-    return commands.parseMarkdownCommand(markdown)
-  },
+  parseMarkdown: (markdown: string) => commands.parseMarkdownCommand(markdown),
 
   webviewZoom,
 })
@@ -427,15 +387,7 @@ type ServerReadyData = { url: string; password: string | null }
 
 // Gate component that waits for the server to be ready
 function ServerGate(props: { children: (data: Accessor<ServerReadyData>) => JSX.Element }) {
-  const [serverData] = createResource(async () => {
-    if (!isTauri()) {
-      return {
-        url: "http://localhost:8080",
-        password: null,
-      }
-    }
-    return await commands.ensureServerReady()
-  })
+  const [serverData] = createResource(() => commands.ensureServerReady())
 
   const errorMessage = () => {
     const error = serverData.error

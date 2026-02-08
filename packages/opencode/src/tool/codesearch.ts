@@ -74,7 +74,7 @@ export const CodeSearchTool = Tool.define("codesearch", {
       },
     }
 
-    const { signal, clearTimeout } = abortAfterAny(60000, ctx.abort)
+    const { signal, clearTimeout: clearAbort } = abortAfterAny(30000, ctx.abort)
 
     try {
       const headers: Record<string, string> = {
@@ -89,7 +89,7 @@ export const CodeSearchTool = Tool.define("codesearch", {
         signal,
       })
 
-      clearTimeout()
+      clearAbort()
 
       if (!response.ok) {
         const errorText = await response.text()
@@ -102,13 +102,17 @@ export const CodeSearchTool = Tool.define("codesearch", {
       const lines = responseText.split("\n")
       for (const line of lines) {
         if (line.startsWith("data: ")) {
-          const data: McpCodeResponse = JSON.parse(line.substring(6))
-          if (data.result && data.result.content && data.result.content.length > 0) {
-            return {
-              output: data.result.content[0].text,
-              title: `Code search: ${params.query}`,
-              metadata: {},
+          try {
+            const data: McpCodeResponse = JSON.parse(line.substring(6))
+            if (data.result?.content?.[0]?.text) {
+              return {
+                output: data.result.content[0].text,
+                title: `Code search: ${params.query}`,
+                metadata: {},
+              }
             }
+          } catch (e) {
+            // Ignore parse errors for individual lines
           }
         }
       }
@@ -120,7 +124,7 @@ export const CodeSearchTool = Tool.define("codesearch", {
         metadata: {},
       }
     } catch (error) {
-      clearTimeout()
+      clearAbort()
 
       if (error instanceof Error && error.name === "AbortError") {
         throw new Error("Code search request timed out")

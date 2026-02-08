@@ -162,22 +162,28 @@ export function processPowerShellOutput(output: string, command: string): { outp
  * Process CMD command output to fix quote artifacts from variable expansion.
  * @param output The raw output from CMD command execution
  * @param command The original command that was executed
- * @returns Processed output and whether it contains errors
+ * @returns Processed output with quote artifacts removed
  */
-export function processCmdOutput(output: string, command: string): { output: string; hasErrors: boolean } {
+export function processCmdOutput(output: string, command: string): { output: string; hasErrors: boolean; exitCode?: number } {
   const hasVariables = /%[^%]+%/g.test(command)
-  const processed = hasVariables ? output.replace(/"$/, "") : output
+  const cleanOutput = hasVariables ? output.replace(/"$/, "") : output
 
-  const errorPatterns = [
-    /is not recognized as an internal or external command/i,
-    /The system cannot find the path specified/i,
-    /Access is denied/i,
-    /The filename, directory name, or volume label syntax is incorrect/i,
-    /The system cannot find the file specified/i,
-  ]
+  // Check for standard CMD "not recognized" error
+  if (cleanOutput.includes("is not recognized as an internal or external command") ||
+    cleanOutput.includes("is not recognized as the name of a cmdlet")) {
+    const processed = cleanOutput.replace(
+      /'([^']+)' is not recognized as an internal or external command, operable program or batch file\./gi,
+      "Error: Command '$1' not found. Please check the spelling and ensure the command is available in your PATH.",
+    )
+    return { output: processed, hasErrors: true, exitCode: 9009 }
+  }
 
-  const hasErrors = errorPatterns.some((p) => p.test(processed))
-  return { output: processed, hasErrors }
+  // Check for "The system cannot find the path specified"
+  if (cleanOutput.includes("The system cannot find the path specified")) {
+    return { output: cleanOutput, hasErrors: true, exitCode: 1 }
+  }
+
+  return { output: cleanOutput, hasErrors: false }
 }
 
 
@@ -218,10 +224,7 @@ export const BashTool = Tool.define("bash", async () => {
       const tree = await parser().then((p) => p.parse(params.command))
       const _tree = !tree ? (() => { throw new Error("Failed to parse command") })() : tree
 
-      const directories = new Set<string>()
-      if (!Instance.containsPath(cwd)) {
-        directories.add(Filesystem.normalize(cwd))
-      }
+      const directories = Instance.containsPath(cwd) ? new Set<string>() : new Set([Filesystem.normalize(cwd)])
       const patterns = new Set<string>()
       const always = new Set<string>()
 
@@ -241,25 +244,35 @@ export const BashTool = Tool.define("bash", async () => {
 
         if (command.length === 0) continue
 
+        // not an exhaustive list, but covers most common cases
         if (["cd", "rm", "cp", "mv", "mkdir", "touch", "chmod", "chown", "cat"].includes(command[0])) {
           for (const arg of command.slice(1)) {
             if (arg.startsWith("-") || (command[0] === "chmod" && arg.startsWith("+"))) continue
 
-            const resolved = (() => {
+            const resolved = await (async () => {
+              try {
+                // Try shell realpath first as it handles Git Bash paths better
+                const shellPath = await $`realpath ${arg}`
+                  .cwd(cwd)
+                  .quiet()
+                  .nothrow()
+                  .text()
+                  .then((x) => x.trim())
+                if (shellPath) return shellPath
+              } catch {
+                // Fallback to node-native resolution
+              }
               try {
                 return Filesystem.getCanonicalPath(path.resolve(cwd, arg))
               } catch {
                 return path.resolve(cwd, arg)
               }
             })()
-            const normalized = Filesystem.normalize(resolved)
 
+            const normalized = Filesystem.normalize(resolved)
             if (!Instance.containsPath(normalized)) {
-              const isDir = await Filesystem.isDir(normalized).catch(() => false)
-              const dir = isDir ? normalized : path.dirname(normalized)
-              if (!Instance.containsPath(dir)) {
-                directories.add(dir)
-              }
+              const dir = (await Filesystem.isDir(normalized)) ? normalized : Filesystem.dirname(normalized)
+              directories.add(dir)
             }
           }
         }
@@ -270,26 +283,23 @@ export const BashTool = Tool.define("bash", async () => {
         }
       }
 
-      const beforeTrigger = await Plugin.trigger(
-        "tool.execute.before",
-        { tool: "bash", sessionID: ctx.sessionID, callID: ctx.callID },
-        { args: params },
-      )
-      const commandToExecute = beforeTrigger.args.command || params.command
+      if (directories.size > 0) {
+        await ctx.ask({
+          permission: "external_directory",
+          patterns: Array.from(directories).map((x) => Filesystem.join(x, "*")),
+          always: Array.from(directories).map((x) => Filesystem.join(x, "*")),
+          metadata: {},
+        })
+      }
 
-      directories.size > 0 && await ctx.ask({
-        permission: "external_directory",
-        patterns: Array.from(directories).map((dir) => path.join(dir, "*")),
-        always: Array.from(directories).map((dir) => path.join(dir, "*")),
-        metadata: {},
-      })
-
-      patterns.size > 0 && await ctx.ask({
-        permission: "bash",
-        patterns: Array.from(patterns),
-        always: Array.from(always),
-        metadata: {},
-      })
+      if (patterns.size > 0) {
+        await ctx.ask({
+          permission: "bash",
+          patterns: Array.from(patterns),
+          always: Array.from(always),
+          metadata: {},
+        })
+      }
 
       const baseEnv = iife(() => {
         const initial = { ...process.env }
@@ -306,7 +316,7 @@ export const BashTool = Tool.define("bash", async () => {
       })
 
       const { processedCommand, finalEnv } = iife(() => {
-        const initialProcessedCommand = commandToExecute
+        const initialProcessedCommand = params.command
         const initialEnv = baseEnv
 
         if (process.platform !== "win32") return { processedCommand: initialProcessedCommand, finalEnv: initialEnv }
@@ -326,17 +336,19 @@ export const BashTool = Tool.define("bash", async () => {
 
       const config = await Config.get()
       const spawnConfig = Shell.getSpawnConfig(processedCommand, config.shell)
-      
-      const shellEnv = await Plugin.trigger("shell.env", { cwd }, { env: {} })
-      const mergedEnv = { ...finalEnv, ...spawnConfig.env, ...shellEnv.env } as Record<string, string>
+      const mergedEnv = { ...finalEnv, ...spawnConfig.env } as Record<string, string>
 
       Shell.isCmdBuiltin(processedCommand) && log.info("Detected bare CMD builtin, automatically wrapping", {
         command: processedCommand.substring(0, 100),
       })
 
+      const shellEnv = await Plugin.trigger("shell.env", { cwd }, { env: {} })
       const proc = Bun.spawn([spawnConfig.executable, ...spawnConfig.args], {
         cwd,
-        env: mergedEnv,
+        env: {
+          ...mergedEnv,
+          ...shellEnv.env,
+        },
         stdin: "ignore",
         stdout: "pipe",
         stderr: "pipe",
@@ -357,7 +369,7 @@ export const BashTool = Tool.define("bash", async () => {
             description: params.description,
           } as any,
         })
-        if (result.done) return newAcc
+        if (result.done) return acc
         return read(reader, newAcc)
       }
 
@@ -388,44 +400,29 @@ export const BashTool = Tool.define("bash", async () => {
         }),
       ])
 
-      const { output: finalOutput, hasErrors } = iife(() => {
+      const { output: finalOutput, hasErrors, exitCode: overrideExitCode } = iife((): { output: string; hasErrors: boolean; exitCode?: number } => {
         if (Shell.isPowerShellCommand(processedCommand)) return processPowerShellOutput(output, processedCommand)
         if (Shell.isCmdCommand(processedCommand)) return processCmdOutput(output, processedCommand)
         return { output, hasErrors: false }
       })
 
-      const executionStatus = await Plugin.trigger(
-        "tool.execute.after",
-        { tool: "bash", sessionID: ctx.sessionID, callID: ctx.callID },
-        {
-          output: finalOutput,
-          metadata: {
-            exit: proc.exitCode,
-            aborted: ctx.abort.aborted,
-            timedOut: false, // TODO: support timeout
-          },
-        },
-      )
-
-      const afterTrigger = executionStatus
-      const resultOutput = afterTrigger.output ?? finalOutput
-      const resultExitCode = executionStatus.metadata.timedOut
-        ? 124
-        : executionStatus.metadata.aborted
-          ? 130
-          : Shell.normalizeExitCode(afterTrigger.metadata?.exit ?? proc.exitCode, hasErrors, finalOutput)
-
       const resultMetadata = [
-        executionStatus.metadata.timedOut ? `bash tool terminated command after exceeding timeout ${timeout} ms` : null,
-        executionStatus.metadata.aborted ? "User aborted the command" : null,
+        status.timedOut ? `bash tool terminated command after exceeding timeout ${timeout} ms` : null,
+        status.aborted ? "User aborted the command" : null,
       ].filter((x): x is string => x !== null)
 
       const outputWithMetadata =
         resultMetadata.length > 0
-          ? resultOutput + "\n\n<bash_metadata>\n" + resultMetadata.join("\n") + "\n</bash_metadata>"
-          : resultOutput
+          ? finalOutput + "\n\n<bash_metadata>\n" + resultMetadata.join("\n") + "\n</bash_metadata>"
+          : finalOutput
 
       const normalizedOutput = outputWithMetadata.replace(/\r\n/g, "\n")
+      const exitCode = status.timedOut
+        ? 124
+        : (status.aborted
+            ? 130
+            : (overrideExitCode ?? Shell.normalizeExitCode(proc.exitCode, hasErrors)))
+
       const truncated = await Truncate.output(normalizedOutput, {}, undefined)
 
       return {
@@ -435,7 +432,7 @@ export const BashTool = Tool.define("bash", async () => {
             truncated.content.length > MAX_METADATA_LENGTH
               ? truncated.content.slice(0, MAX_METADATA_LENGTH) + "\n\n..."
               : truncated.content,
-          exit: resultExitCode,
+          exit: exitCode,
           description: params.description,
           truncated: truncated.truncated,
           outputPath: truncated.truncated ? (truncated as any).outputPath : undefined,

@@ -26,7 +26,6 @@ export namespace Flag {
   export const OPENCODE_DISABLE_EXTERNAL_SKILLS =
     OPENCODE_DISABLE_CLAUDE_CODE_SKILLS || truthy("OPENCODE_DISABLE_EXTERNAL_SKILLS")
   export declare const OPENCODE_DISABLE_PROJECT_CONFIG: boolean
-  export declare const OPENCODE_DISABLE_MANAGED_CONFIG: boolean
   export const OPENCODE_FAKE_VCS = process.env["OPENCODE_FAKE_VCS"]
   export declare const OPENCODE_CLIENT: string
   export const OPENCODE_SERVER_PASSWORD = process.env["OPENCODE_SERVER_PASSWORD"]
@@ -41,7 +40,6 @@ export namespace Flag {
   export const OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT = truthy("OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT")
   export const OPENCODE_ENABLE_EXA =
     truthy("OPENCODE_ENABLE_EXA") || OPENCODE_EXPERIMENTAL || truthy("OPENCODE_EXPERIMENTAL_EXA")
-  export const OPENCODE_EXPERIMENTAL_BASH_MAX_OUTPUT_LENGTH = number("OPENCODE_EXPERIMENTAL_BASH_MAX_OUTPUT_LENGTH")
   export const OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS = number("OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS")
   export const OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX = number("OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX")
   export const OPENCODE_EXPERIMENTAL_OXFMT = OPENCODE_EXPERIMENTAL || truthy("OPENCODE_EXPERIMENTAL_OXFMT")
@@ -54,7 +52,6 @@ export namespace Flag {
   export const OPENCODE_EXPERIMENTAL_MARKDOWN = truthy("OPENCODE_EXPERIMENTAL_MARKDOWN")
   export const OPENCODE_MODELS_URL = process.env["OPENCODE_MODELS_URL"]
   export const OPENCODE_DEBUG_SHELL = truthy("OPENCODE_DEBUG_SHELL")
-  export const OPENCODE_FORCE_INSTALL = truthy("OPENCODE_FORCE_INSTALL")
   export const OPENCODE_MODELS_PATH = process.env["OPENCODE_MODELS_PATH"]
 
   function number(key: string) {
@@ -71,17 +68,6 @@ export namespace Flag {
 Object.defineProperty(Flag, "OPENCODE_DISABLE_PROJECT_CONFIG", {
   get() {
     return truthy("OPENCODE_DISABLE_PROJECT_CONFIG")
-  },
-  enumerable: true,
-  configurable: false,
-})
-
-// Dynamic getter for OPENCODE_DISABLE_MANAGED_CONFIG
-// This must be evaluated at access time, not module load time,
-// because external tooling may set this env var at runtime
-Object.defineProperty(Flag, "OPENCODE_DISABLE_MANAGED_CONFIG", {
-  get() {
-    return truthy("OPENCODE_DISABLE_MANAGED_CONFIG")
   },
   enumerable: true,
   configurable: false,

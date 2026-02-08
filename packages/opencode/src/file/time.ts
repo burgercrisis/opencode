@@ -1,6 +1,7 @@
 import { Instance } from "../project/instance"
 import { Log } from "../util/log"
 import { Flag } from "../flag/flag"
+import { Filesystem } from "../util/filesystem"
 
 export namespace FileTime {
   const log = Log.create({ service: "file.time" })
@@ -22,32 +23,35 @@ export namespace FileTime {
   })
 
   export function read(sessionID: string, file: string) {
-    log.info("read", { sessionID, file })
+    const normalized = Filesystem.normalizePath(file)
+    log.info("read", { sessionID, file, normalized })
     const { read } = state()
     read[sessionID] = read[sessionID] || {}
-    read[sessionID][file] = new Date()
+    read[sessionID][normalized] = new Date()
   }
 
   export function get(sessionID: string, file: string) {
-    return state().read[sessionID]?.[file]
+    const normalized = Filesystem.normalizePath(file)
+    return state().read[sessionID]?.[normalized]
   }
 
   export async function withLock<T>(filepath: string, fn: () => Promise<T>): Promise<T> {
+    const normalized = Filesystem.normalizePath(filepath)
     const current = state()
-    const currentLock = current.locks.get(filepath) ?? Promise.resolve()
+    const currentLock = current.locks.get(normalized) ?? Promise.resolve()
     let release: () => void = () => {}
     const nextLock = new Promise<void>((resolve) => {
       release = resolve
     })
     const chained = currentLock.then(() => nextLock)
-    current.locks.set(filepath, chained)
+    current.locks.set(normalized, chained)
     await currentLock
     try {
       return await fn()
     } finally {
       release()
-      if (current.locks.get(filepath) === chained) {
-        current.locks.delete(filepath)
+      if (current.locks.get(normalized) === chained) {
+        current.locks.delete(normalized)
       }
     }
   }
@@ -57,12 +61,13 @@ export namespace FileTime {
       return
     }
 
-    const time = get(sessionID, filepath)
-    if (!time) throw new Error(`You must read file ${filepath} before overwriting it. Use the Read tool first`)
-    const stats = await Bun.file(filepath).stat()
+    const normalized = Filesystem.normalizePath(filepath)
+    const time = get(sessionID, normalized)
+    if (!time) throw new Error(`You must read file ${normalized} before overwriting it. Use the Read tool first`)
+    const stats = await Bun.file(normalized).stat()
     if (stats.mtime.getTime() > time.getTime()) {
       throw new Error(
-        `File ${filepath} has been modified since it was last read.\nLast modification: ${stats.mtime.toISOString()}\nLast read: ${time.toISOString()}\n\nPlease read the file again before modifying it.`,
+        `File ${normalized} has been modified since it was last read.\nLast modification: ${stats.mtime.toISOString()}\nLast read: ${time.toISOString()}\n\nPlease read the file again before modifying it.`,
       )
     }
   }

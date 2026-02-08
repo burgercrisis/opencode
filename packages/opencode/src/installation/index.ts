@@ -53,10 +53,6 @@ export namespace Installation {
     return CHANNEL !== "latest"
   }
 
-  export function isTest() {
-    return process.env.NODE_ENV === "test" || process.env.BUN_ENV === "test"
-  }
-
   export function isLocal() {
     return CHANNEL === "local"
   }

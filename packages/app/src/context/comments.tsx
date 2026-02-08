@@ -10,7 +10,6 @@ export type LineComment = {
   file: string
   selection: SelectedLineRange
   comment: string
-  origin?: string
   time: number
 }
 

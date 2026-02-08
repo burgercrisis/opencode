@@ -536,11 +536,9 @@ export namespace Snapshot {
       ref: "FileDiff",
     })
   export type FileDiff = z.infer<typeof FileDiff>
-  
+
   export async function diffFull(from: string, to: string): Promise<FileDiff[]> {
     const git = gitdir()
-    
-    // Robust helper to show file content at a specific hash, handling "does not exist" errors gracefully
     const show = async (hash: string, file: string) => {
       const response = await $`git -c core.autocrlf=false -c core.quotepath=false --git-dir ${git} --work-tree ${Instance.worktree} show ${hash}:${file}`
         .quiet()
@@ -551,54 +549,56 @@ export namespace Snapshot {
       return `[DEBUG ERROR] git show ${hash}:${file} failed: ${stderr}`
     }
 
-    const result: FileDiff[] = []
-    const status = new Map<string, "added" | "deleted" | "modified">()
+    const statusMap = new Map<string, "added" | "deleted" | "modified">()
+    const statusResult = await $`git -c core.autocrlf=false -c core.quotepath=false --git-dir ${git} --work-tree ${Instance.worktree} diff --name-status --no-renames ${from} ${to} -- .`
+      .quiet()
+      .cwd(Instance.directory)
+      .nothrow()
+      .text()
 
-    const statuses =
-      await $`git -c core.autocrlf=false -c core.quotepath=false --git-dir ${git} --work-tree ${Instance.worktree} diff --no-ext-diff --name-status --no-renames ${from} ${to} -- .`
-        .quiet()
-        .cwd(Instance.directory)
-        .nothrow()
-        .text()
-
-    for (const line of statuses.trim().split("\n")) {
+    for (const line of statusResult.trim().split("\n")) {
       if (!line) continue
       const [code, rawFile] = line.split("\t")
       if (!code || !rawFile) continue
       const file = unquote(rawFile)
       const kind = code.startsWith("A") ? "added" : code.startsWith("D") ? "deleted" : "modified"
-      status.set(file, kind)
+      statusMap.set(file, kind)
     }
 
-    for await (const line of $`git -c core.autocrlf=false -c core.quotepath=false --git-dir ${git} --work-tree ${Instance.worktree} diff --no-ext-diff --no-renames --numstat ${from} ${to} -- .`
-      .quiet()
-      .cwd(Instance.directory)
-      .nothrow()
-      .lines()) {
-      if (!line) continue
-      const [additions, deletions, rawFile] = line.split("\t")
-      const file = unquote(rawFile)
-      const isBinaryFile = additions === "-" && deletions === "-"
-      
-      const [before, after] = await Promise.all([
-        isBinaryFile ? Promise.resolve("") : show(from, file),
-        isBinaryFile ? Promise.resolve("") : show(to, file),
-      ])
+    const lines = (
+      await $`git -c core.autocrlf=false -c core.quotepath=false --git-dir ${git} --work-tree ${Instance.worktree} diff --no-ext-diff --no-renames --numstat ${from} ${to} -- .`
+        .quiet()
+        .cwd(Instance.directory)
+        .nothrow()
+        .text()
+    ).split("\n")
 
-      const added = isBinaryFile ? 0 : parseInt(additions)
-      const deleted = isBinaryFile ? 0 : parseInt(deletions)
-      
-      result.push({
-        file,
-        before,
-        after,
-        additions: Number.isFinite(added) ? added : 0,
-        deletions: Number.isFinite(deleted) ? deleted : 0,
-        status: status.get(file) ?? "modified",
-      })
-    }
-    
-    return result
+    return Promise.all(
+      lines
+        .filter(Boolean)
+        .map(async (line: string) => {
+          const [additions, deletions, rawFile] = line.split("\t")
+          const file = unquote(rawFile)
+          const isBinaryFile = additions === "-" && deletions === "-"
+
+          const [before, after] = await Promise.all([
+            isBinaryFile ? Promise.resolve("") : show(from, file),
+            isBinaryFile ? Promise.resolve("") : show(to, file),
+          ])
+
+          const added = isBinaryFile ? 0 : parseInt(additions)
+          const deleted = isBinaryFile ? 0 : parseInt(deletions)
+
+          return {
+            file,
+            before,
+            after,
+            additions: Number.isFinite(added) ? added : 0,
+            deletions: Number.isFinite(deleted) ? deleted : 0,
+            status: statusMap.get(file) ?? "modified",
+          }
+        }),
+    )
   }
 
   export function unquote(path: string): string {

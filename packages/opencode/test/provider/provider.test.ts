@@ -1,26 +1,5 @@
-import { test, expect, mock } from "bun:test"
+import { test, expect } from "bun:test"
 import path from "path"
-
-// Mock BunProc and default plugins to prevent actual installations during tests
-mock.module("../../src/bun/index", () => ({
-  BunProc: {
-    install: async (pkg: string, _version?: string) => {
-      // Return package name without version for mocking
-      const lastAtIndex = pkg.lastIndexOf("@")
-      return lastAtIndex > 0 ? pkg.substring(0, lastAtIndex) : pkg
-    },
-    run: async () => {
-      throw new Error("BunProc.run should not be called in tests")
-    },
-    which: () => process.execPath,
-    InstallFailedError: class extends Error {},
-  },
-}))
-
-const mockPlugin = () => ({})
-mock.module("opencode-copilot-auth", () => ({ default: mockPlugin }))
-mock.module("opencode-anthropic-auth", () => ({ default: mockPlugin }))
-mock.module("@gitlab/opencode-gitlab-auth", () => ({ default: mockPlugin }))
 
 import { tmpdir } from "../fixture/fixture"
 import { Instance } from "../../src/project/instance"
@@ -1850,8 +1829,7 @@ test("model variants are generated for reasoning models", async () => {
     fn: async () => {
       const providers = await Provider.list()
       // Claude sonnet 4 has reasoning capability
-      const model = providers["anthropic"]?.models["claude-sonnet-4-20250514"]
-      expect(model).toBeDefined()
+      const model = providers["anthropic"].models["claude-sonnet-4-20250514"]
       expect(model.capabilities.reasoning).toBe(true)
       expect(model.variants).toBeDefined()
       expect(Object.keys(model.variants!).length).toBeGreaterThan(0)
