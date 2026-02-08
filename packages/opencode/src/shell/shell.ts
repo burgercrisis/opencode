@@ -217,8 +217,6 @@ export namespace Shell {
     })
   }
 
-
-
   /**
    * Configuration for spawning a command
    */
@@ -451,7 +449,7 @@ export namespace Shell {
         windowsVerbatimArguments: true,
       }
     }
- 
+
     const shellPath = configShell || acceptable()
     return {
       executable: shellPath,
