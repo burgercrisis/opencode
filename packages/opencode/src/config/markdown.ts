@@ -17,11 +17,11 @@ export namespace ConfigMarkdown {
   // other coding agents like claude code allow invalid yaml in their
   // frontmatter, we need to fallback to a more permissive parser for those cases
   export function fallbackSanitization(content: string): string {
-    const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)
+    const match = content.match(/^(---\r?\n)([\s\S]*?)(\r?\n---)/)
     if (!match) return content
 
-    const frontmatter = match[1]
-    const lines = frontmatter.split("\n")
+    const [full, prefix, frontmatter, suffix] = match
+    const lines = frontmatter.split(/\r?\n/)
     const result: string[] = []
 
     for (const line of lines) {
@@ -38,7 +38,7 @@ export namespace ConfigMarkdown {
       }
 
       // match key: value pattern
-      const kvMatch = line.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*(.*)$/)
+      const kvMatch = line.match(/^([a-zA-Z0-9_-]+)\s*:\s*(.*)$/)
       if (!kvMatch) {
         result.push(line)
         continue
@@ -64,7 +64,7 @@ export namespace ConfigMarkdown {
     }
 
     const processed = result.join("\n")
-    return content.replace(frontmatter, () => processed)
+    return prefix + processed + suffix + content.slice(full.length)
   }
 
   export async function parse(filePath: string) {
