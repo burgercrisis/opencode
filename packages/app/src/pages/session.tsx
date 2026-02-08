@@ -3377,7 +3377,7 @@ export default function Page() {
                                   allowed={diffFiles()}
                                   kinds={kinds()}
                                   draggable={false}
-                                  active={activeDiff()}
+                                  active={tree.activeDiff}
                                   onFileClick={(node) => focusReviewDiff(node.path)}
                                 />
                               </Show>
