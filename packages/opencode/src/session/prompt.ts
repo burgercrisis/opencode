@@ -2708,7 +2708,7 @@ NOTE: At any point in time through this workflow you should feel free to ask use
            (draft) => {
              try {
                const cleaned = text
-                .replace(/<thinking>[\s\S]*?<\/thinking>\s*/g, "")
+                .replace(/<think(ing)?>[\s\S]*?<\/think(ing)?>\s*/g, "")
                 .split("\n")
                 .map((line: string) => line.trim())
                 .find((line: string) => line.length > 0)
