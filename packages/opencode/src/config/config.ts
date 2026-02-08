@@ -8,8 +8,8 @@ import { Filesystem } from "../util/filesystem"
 import { ModelsDev } from "../provider/models"
 import { mergeDeep, pipe, unique } from "remeda"
 import { Global } from "../global"
-import fs from "fs"
-import fsp from "fs/promises"
+import * as fs from "node:fs"
+import fsp from "node:fs/promises"
 import { lazy } from "../util/lazy"
 import { NamedError } from "@opencode-ai/util/error"
 import { Flag } from "../flag/flag"
@@ -26,7 +26,6 @@ import { LSPServer } from "../lsp/server"
 import { BunProc } from "@/bun"
 import { Installation } from "@/installation"
 import { ConfigMarkdown } from "./markdown"
-import { constants, existsSync } from "fs"
 import { Bus } from "@/bus"
 import { GlobalBus } from "@/bus/global"
 import { Event } from "../server/event"
@@ -193,7 +192,7 @@ export namespace Config {
     // Kept separate from directories array to avoid write operations when installing plugins
     // which would fail on system directories requiring elevated permissions
     // This way it only loads config file and not skills/plugins/commands
-    if (existsSync(managedConfigDir)) {
+    if (fs.existsSync(managedConfigDir)) {
       for (const file of ["opencode.jsonc", "opencode.json"]) {
         result = mergeConfigConcatArrays(result, await loadFile(path.join(managedConfigDir, file)))
       }
@@ -272,7 +271,7 @@ export namespace Config {
     const targetVersion = Installation.isLocal() ? "*" : Installation.VERSION
 
     // Ensure directory exists before writing
-    if (!existsSync(dir)) {
+    if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true })
     }
 
@@ -309,7 +308,7 @@ export namespace Config {
 
   async function isWritable(dir: string) {
     try {
-      await fsp.access(dir, constants.W_OK)
+      await fsp.access(dir, fs.constants.W_OK)
       return true
     } catch {
       return false
@@ -326,7 +325,7 @@ export namespace Config {
     }
 
     const nodeModules = path.join(dir, "node_modules")
-    if (!existsSync(nodeModules)) return true
+    if (!fs.existsSync(nodeModules)) return true
 
     const pkg = path.join(dir, "package.json")
     const pkgFile = Bun.file(pkg)
@@ -1279,7 +1278,7 @@ export namespace Config {
     )
 
     const legacy = path.join(Global.Path.config, "config")
-    if (existsSync(legacy)) {
+    if (fs.existsSync(legacy)) {
       await import(pathToFileURL(legacy).href, {
         with: {
           type: "toml",
@@ -1461,7 +1460,7 @@ export namespace Config {
       path.join(Global.Path.config, file),
     )
     for (const file of candidates) {
-      if (existsSync(file)) return file
+      if (fs.existsSync(file)) return file
     }
     return candidates[0]
   }
