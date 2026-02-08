@@ -51,6 +51,10 @@ export namespace Snapshot {
     })
   }
   
+  export function resetForTest() {
+    validationCache.clear()
+  }
+  
   export async function cleanup() {
     if (Instance.project.vcs !== "git") return
     const cfg = await Config.get()
@@ -81,7 +85,7 @@ export namespace Snapshot {
    * Uses exponential backoff for retry attempts.
    */
   async function gitWithRetry(
-    command: string,
+    args: string[],
     options: {
       maxRetries?: number
       baseDelay?: number
@@ -96,7 +100,7 @@ export namespace Snapshot {
       const controller = new AbortController()
       const timeoutId = setTimeout(() => controller.abort(), timeout)
 
-      return $`git ${command}`
+      return $`git ${args}`
         .env({
           ...process.env,
           GIT_TERMINAL_PROMPT: "0",
@@ -160,11 +164,13 @@ export namespace Snapshot {
       .catch(() => false)
 
     if (!gitInitialized) {
-      const initResult = await gitWithRetry("init", {
-        cwd: Instance.directory,
+      // Create the directory if it doesn't exist
+      await fs.mkdir(git, { recursive: true }).catch(() => {})
+
+      const initResult = await gitWithRetry(["init", "--bare"], {
+        cwd: git,
         env: {
-          GIT_DIR: gitNormalized,
-          GIT_WORK_TREE: worktreeNormalized,
+          GIT_DIR: ".",
         },
       }).catch((error) => {
         log.error("failed to initialize git for snapshot", { error: String(error) })
@@ -181,17 +187,17 @@ export namespace Snapshot {
         return
       }
 
-      await gitWithRetry(`--git-dir ${gitNormalized} config core.autocrlf false`, { cwd: Instance.directory }).catch((error) => {
+      await gitWithRetry(["--git-dir", gitNormalized, "config", "core.autocrlf", "false"], { cwd: Instance.directory }).catch((error) => {
         log.warn("failed to set core.autocrlf config", { error: String(error) })
       })
       log.info("initialized")
     }
 
-    await gitWithRetry(`--git-dir ${gitNormalized} --work-tree ${worktreeNormalized} add .`, { cwd: Instance.directory }).catch((error) => {
+    await gitWithRetry(["--git-dir", gitNormalized, "--work-tree", worktreeNormalized, "add", "."], { cwd: Instance.directory }).catch((error) => {
       log.warn("git add failed with exception", { error: String(error) })
     })
 
-    const writeTreeResult = await gitWithRetry(`--git-dir ${gitNormalized} --work-tree ${worktreeNormalized} write-tree`, {
+    const writeTreeResult = await gitWithRetry(["--git-dir", gitNormalized, "--work-tree", worktreeNormalized, "write-tree"], {
       cwd: Instance.directory,
       timeout: 30000,
     }).catch((error) => {
@@ -246,7 +252,7 @@ export namespace Snapshot {
   
     try {
       // Check if the hash exists in the git repository
-      const catResult = await gitWithRetry(`--git-dir ${gitNormalized} --work-tree ${worktreeNormalized} cat-file -t ${hash}`, {
+      const catResult = await gitWithRetry(["--git-dir", gitNormalized, "--work-tree", worktreeNormalized, "cat-file", "-t", hash], {
         cwd: Instance.directory,
         maxRetries: 1
       })
@@ -303,55 +309,48 @@ export namespace Snapshot {
     const gitNormalized = Filesystem.normalizeGitPath(git, true)
     const worktreeNormalized = Filesystem.normalizeGitPath(Instance.worktree, true)
 
-    try {
-      const addResult = await $`git --git-dir ${gitNormalized} --work-tree ${worktreeNormalized} add .`
-        .quiet()
-        .cwd(Instance.directory)
-        .nothrow()
-
-      if (addResult.exitCode !== 0) {
-        log.warn("git add failed in patch", { exitCode: addResult.exitCode })
-      }
-    } catch (error) {
+    const addResult = await gitWithRetry(["--git-dir", gitNormalized, "--work-tree", worktreeNormalized, "add", "."], {
+      cwd: Instance.directory,
+    }).catch((error) => {
       log.warn("git add failed in patch with exception", { error: String(error) })
+      return { exitCode: 1, stdout: "", stderr: String(error) }
+    })
+
+    if (addResult.exitCode !== 0) {
+      log.warn("git add failed in patch", { exitCode: addResult.exitCode })
     }
 
     // For repos without commits, git diff <hash> won't work
     // Instead, we need to check what files are different from the snapshot state
     // Use git ls-tree to check if the file existed in the snapshot
-    const result = await $`git -c core.autocrlf=false -c core.quotepath=false --git-dir ${gitNormalized} --work-tree ${worktreeNormalized} diff --no-ext-diff --name-only ${hash} -- .`
-        .quiet()
-        .cwd(Instance.directory)
-        .nothrow()
+    const result = await gitWithRetry(["-c", "core.autocrlf=false", "-c", "core.quotepath=false", "--git-dir", gitNormalized, "--work-tree", worktreeNormalized, "diff", "--no-ext-diff", "--name-only", hash, "--", "."], {
+        cwd: Instance.directory
+    }).catch(() => ({ exitCode: 1, stdout: "", stderr: "" }))
   
     // If git diff fails (common in repos without commits), fall back to checking what files exist
-    if (result.exitCode !== 0 || !result.text().trim()) {
+    if (result.exitCode !== 0 || !result.stdout.trim()) {
       log.warn("git diff failed or returned empty, checking file changes differently", { 
         hash, 
         exitCode: result.exitCode,
-        stdout: result.text().toString().substring(0, 200)
+        stdout: result.stdout.substring(0, 200)
       })
       
       // For repos without commits, we need to check which files are new or modified
       // by comparing against what was in the snapshot tree
       try {
         // Get list of all files in current worktree
-        const lsFilesResult = await $`git --git-dir ${gitNormalized} --work-tree ${worktreeNormalized} ls-files --others --exclude-standard .`
-          .quiet()
-          .cwd(Instance.directory)
-          .nothrow()
-          .text()
+        const lsFilesResult = await gitWithRetry(["--git-dir", gitNormalized, "--work-tree", worktreeNormalized, "ls-files", "--others", "--exclude-standard", "."], {
+          cwd: Instance.directory
+        }).catch(() => ({ exitCode: 1, stdout: "", stderr: "" }))
         
-        const untrackedFiles = lsFilesResult.trim().split("\n").filter(Boolean)
+        const untrackedFiles = lsFilesResult.stdout.trim().split("\n").filter(Boolean)
         
         // Get list of modified tracked files  
-        const diffIndexResult = await $`git --git-dir ${gitNormalized} --work-tree ${worktreeNormalized} diff --name-only .`
-          .quiet()
-          .cwd(Instance.directory)
-          .nothrow()
-          .text()
-          
-        const modifiedFiles = diffIndexResult.trim().split("\n").filter(Boolean)
+        const diffIndexResult = await gitWithRetry(["--git-dir", gitNormalized, "--work-tree", worktreeNormalized, "diff", "--name-only", "."], {
+          cwd: Instance.directory
+        }).catch(() => ({ exitCode: 1, stdout: "", stderr: "" }))
+        
+        const modifiedFiles = diffIndexResult.stdout.trim().split("\n").filter(Boolean)
         
         // Combine untracked and modified files
         const allChangedFiles = [...new Set([...untrackedFiles, ...modifiedFiles])]
@@ -372,7 +371,7 @@ export namespace Snapshot {
       }
     }
   
-    const files = result.text()
+    const files = result.stdout
     const normalizedFiles = files
       .trim()
       .split("\n")
@@ -408,7 +407,7 @@ export namespace Snapshot {
     const worktreeNormalized = Filesystem.normalizeGitPath(Instance.worktree, true)
     
     const result =
-      await gitWithRetry(`--git-dir ${gitNormalized} --work-tree ${worktreeNormalized} read-tree ${snapshot}`, {
+      await gitWithRetry(["--git-dir", gitNormalized, "--work-tree", worktreeNormalized, "read-tree", snapshot], {
         cwd: worktreeNormalized
       })
   
@@ -423,7 +422,7 @@ export namespace Snapshot {
     }
     
     const checkoutResult =
-      await gitWithRetry(`--git-dir ${gitNormalized} --work-tree ${worktreeNormalized} checkout-index -a -f`, {
+      await gitWithRetry(["--git-dir", gitNormalized, "--work-tree", worktreeNormalized, "checkout-index", "-a", "-f"], {
         cwd: worktreeNormalized
       })
   
@@ -455,21 +454,19 @@ export namespace Snapshot {
         const normalizedFile = Filesystem.normalizeNativePath(file)
         log.info("reverting", { file: normalizedFile, hash: item.hash })
 
-        const result = await $`git --git-dir ${gitNormalized} --work-tree ${worktreeNormalized} checkout ${item.hash} -- "${normalizedFile}"`
-          .quiet()
-          .cwd(worktreeNormalized)
-          .nothrow()
+        const result = await gitWithRetry(["--git-dir", gitNormalized, "--work-tree", worktreeNormalized, "checkout", item.hash, "--", normalizedFile], {
+          cwd: worktreeNormalized
+        }).catch(() => ({ exitCode: 1, stdout: "", stderr: "" }))
 
         if (result.exitCode !== 0) {
           const relativePath = path.relative(Instance.worktree, normalizedFile)
           const normalizedRelative = Filesystem.normalizeNativePath(relativePath)
 
-          const checkTree = await $`git --git-dir ${gitNormalized} --work-tree ${worktreeNormalized} ls-tree ${item.hash} -- "${normalizedRelative}"`
-            .quiet()
-            .cwd(worktreeNormalized)
-            .nothrow()
+          const checkTree = await gitWithRetry(["--git-dir", gitNormalized, "--work-tree", worktreeNormalized, "ls-tree", item.hash, "--", normalizedRelative], {
+            cwd: worktreeNormalized
+          }).catch(() => ({ exitCode: 1, stdout: "", stderr: "" }))
 
-          if (checkTree.exitCode === 0 && checkTree.text().trim()) {
+          if (checkTree.exitCode === 0 && checkTree.stdout.trim()) {
             log.info("file existed in snapshot but checkout failed, keeping", {
               file: normalizedFile,
             })
@@ -493,10 +490,9 @@ export namespace Snapshot {
     const worktreeNormalized = Filesystem.normalizeGitPath(Instance.worktree, true)
 
     try {
-      const addResult = await $`git --git-dir ${gitNormalized} --work-tree ${worktreeNormalized} add .`
-        .quiet()
-        .cwd(Instance.directory)
-        .nothrow()
+      const addResult = await gitWithRetry(["--git-dir", gitNormalized, "--work-tree", worktreeNormalized, "add", "."], {
+        cwd: Instance.directory
+      }).catch(() => ({ exitCode: 1, stdout: "", stderr: "" }))
 
       if (addResult.exitCode !== 0) {
         log.warn("git add failed in diff", { exitCode: addResult.exitCode })
@@ -505,22 +501,21 @@ export namespace Snapshot {
       log.warn("git add failed in diff with exception", { error: String(error) })
     }
 
-    const result = await $`git -c core.autocrlf=false --git-dir ${gitNormalized} --work-tree ${worktreeNormalized} diff --no-ext-diff ${hash} -- .`
-        .quiet()
-        .cwd(worktreeNormalized)
-        .nothrow()
+    const result = await gitWithRetry(["-c", "core.autocrlf=false", "--git-dir", gitNormalized, "--work-tree", worktreeNormalized, "diff", "--no-ext-diff", hash, "--", "."], {
+        cwd: worktreeNormalized
+    }).catch(() => ({ exitCode: 1, stdout: "", stderr: "" }))
   
     if (result.exitCode !== 0) {
       log.warn("failed to get diff", {
         hash,
         exitCode: result.exitCode,
-        stderr: result.stderr.toString(),
-        stdout: result.stdout.toString(),
+        stderr: result.stderr,
+        stdout: result.stdout,
       })
       return ""
     }
   
-    return result.text().trim()
+    return result.stdout.trim()
   }
   
   export const FileDiff = z
@@ -540,23 +535,22 @@ export namespace Snapshot {
   export async function diffFull(from: string, to: string): Promise<FileDiff[]> {
     const git = gitdir()
     const show = async (hash: string, file: string) => {
-      const response = await $`git -c core.autocrlf=false -c core.quotepath=false --git-dir ${git} --work-tree ${Instance.worktree} show ${hash}:${file}`
-        .quiet()
-        .nothrow()
-      if (response.exitCode === 0) return response.text()
-      const stderr = response.stderr.toString()
+      const response = await gitWithRetry(["-c", "core.autocrlf=false", "-c", "core.quotepath=false", "--git-dir", git, "--work-tree", Instance.worktree, "show", `${hash}:${file}`], {
+        maxRetries: 1
+      }).catch(() => ({ exitCode: 1, stdout: "", stderr: "" }))
+
+      if (response.exitCode === 0) return response.stdout
+      const stderr = response.stderr
       if (stderr.toLowerCase().includes("does not exist in")) return ""
       return `[DEBUG ERROR] git show ${hash}:${file} failed: ${stderr}`
     }
 
     const statusMap = new Map<string, "added" | "deleted" | "modified">()
-    const statusResult = await $`git -c core.autocrlf=false -c core.quotepath=false --git-dir ${git} --work-tree ${Instance.worktree} diff --name-status --no-renames ${from} ${to} -- .`
-      .quiet()
-      .cwd(Instance.directory)
-      .nothrow()
-      .text()
+    const statusResult = await gitWithRetry(["-c", "core.autocrlf=false", "-c", "core.quotepath=false", "--git-dir", git, "--work-tree", Instance.worktree, "diff", "--name-status", "--no-renames", from, to, "--", "."], {
+      cwd: Instance.directory
+    }).catch(() => ({ exitCode: 1, stdout: "", stderr: "" }))
 
-    for (const line of statusResult.trim().split("\n")) {
+    for (const line of statusResult.stdout.trim().split("\n")) {
       if (!line) continue
       const [code, rawFile] = line.split("\t")
       if (!code || !rawFile) continue
@@ -565,39 +559,31 @@ export namespace Snapshot {
       statusMap.set(file, kind)
     }
 
-    const lines = (
-      await $`git -c core.autocrlf=false -c core.quotepath=false --git-dir ${git} --work-tree ${Instance.worktree} diff --no-ext-diff --no-renames --numstat ${from} ${to} -- .`
-        .quiet()
-        .cwd(Instance.directory)
-        .nothrow()
-        .text()
-    ).split("\n")
+    const numstatResult = await gitWithRetry(["-c", "core.autocrlf=false", "-c", "core.quotepath=false", "--git-dir", git, "--work-tree", Instance.worktree, "diff", "--no-ext-diff", "--no-renames", "--numstat", from, to, "--", "."], {
+      cwd: Instance.directory
+    }).catch(() => ({ exitCode: 1, stdout: "", stderr: "" }))
+
+    const lines = numstatResult.stdout.trim().split("\n")
 
     return Promise.all(
       lines
-        .filter(Boolean)
-        .map(async (line: string) => {
-          const [additions, deletions, rawFile] = line.split("\t")
+        .filter((l) => l.trim().length > 0)
+        .map(async (line) => {
+          const [add, del, rawFile] = line.split("\t")
           const file = unquote(rawFile)
-          const isBinaryFile = additions === "-" && deletions === "-"
-
-          const [before, after] = await Promise.all([
-            isBinaryFile ? Promise.resolve("") : show(from, file),
-            isBinaryFile ? Promise.resolve("") : show(to, file),
-          ])
-
-          const added = isBinaryFile ? 0 : parseInt(additions)
-          const deleted = isBinaryFile ? 0 : parseInt(deletions)
+          const status = statusMap.get(file) || "modified"
+          const before = status === "added" ? "" : await show(from, file)
+          const after = status === "deleted" ? "" : await show(to, file)
 
           return {
             file,
+            status,
             before,
             after,
-            additions: Number.isFinite(added) ? added : 0,
-            deletions: Number.isFinite(deleted) ? deleted : 0,
-            status: statusMap.get(file) ?? "modified",
+            additions: parseInt(add) || 0,
+            deletions: parseInt(del) || 0
           }
-        }),
+        })
     )
   }
 

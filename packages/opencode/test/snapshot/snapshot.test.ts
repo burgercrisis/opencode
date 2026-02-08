@@ -2,7 +2,10 @@ import { test, expect } from "bun:test"
 import { $ } from "bun"
 import { Snapshot } from "../../src/snapshot"
 import { Instance } from "../../src/project/instance"
+import { Filesystem } from "../../src/util/filesystem"
 import { tmpdir } from "../fixture/fixture"
+import path from "path"
+import fs from "fs/promises"
 
 async function bootstrap() {
   return tmpdir({
@@ -33,7 +36,7 @@ test("tracks deleted files correctly", async () => {
 
       await $`rm ${tmp.path}/a.txt`.quiet()
 
-      expect((await Snapshot.patch(before!)).files).toContain(`${tmp.path}/a.txt`)
+      expect((await Snapshot.patch(before!)).files).toContain(Filesystem.normalizeNativePath(path.join(tmp.path, "a.txt")))
     },
   })
 })
@@ -123,13 +126,14 @@ test("binary file handling", async () => {
       const before = await Snapshot.track()
       expect(before).toBeTruthy()
 
-      await Bun.write(`${tmp.path}/image.png`, new Uint8Array([0x89, 0x50, 0x4e, 0x47]))
+      // Create a binary file (using null bytes)
+      const binaryData = new Uint8Array([0, 1, 2, 3, 255, 254, 253])
+      await Bun.write(`${tmp.path}/binary.bin`, binaryData)
 
-      const patch = await Snapshot.patch(before!)
-      expect(patch.files).toContain(`${tmp.path}/image.png`)
+      expect((await Snapshot.patch(before!)).files).toContain(Filesystem.normalizeNativePath(path.join(tmp.path, "binary.bin")))
 
-      await Snapshot.revert([patch])
-      expect(await Bun.file(`${tmp.path}/image.png`).exists()).toBe(false)
+      await Snapshot.revert([await Snapshot.patch(before!)])
+      expect(await Bun.file(`${tmp.path}/binary.bin`).exists()).toBe(false)
     },
   })
 })
@@ -142,9 +146,15 @@ test("symlink handling", async () => {
       const before = await Snapshot.track()
       expect(before).toBeTruthy()
 
-      await $`ln -s ${tmp.path}/a.txt ${tmp.path}/link.txt`.quiet()
+      try {
+        await fs.symlink(path.join(tmp.path, "a.txt"), path.join(tmp.path, "link.txt"))
+      } catch (e) {
+        // Fallback for Windows if symlink creation fails (requires admin or developer mode)
+        console.warn("Skipping symlink test: symlink creation failed", e)
+        return
+      }
 
-      expect((await Snapshot.patch(before!)).files).toContain(`${tmp.path}/link.txt`)
+      expect((await Snapshot.patch(before!)).files).toContain(Filesystem.normalizeNativePath(path.join(tmp.path, "link.txt")))
     },
   })
 })
@@ -159,7 +169,7 @@ test("large file handling", async () => {
 
       await Bun.write(`${tmp.path}/large.txt`, "x".repeat(1024 * 1024))
 
-      expect((await Snapshot.patch(before!)).files).toContain(`${tmp.path}/large.txt`)
+      expect((await Snapshot.patch(before!)).files).toContain(Filesystem.normalizeNativePath(path.join(tmp.path, "large.txt")))
     },
   })
 })
@@ -195,9 +205,9 @@ test("special characters in filenames", async () => {
       await Bun.write(`${tmp.path}/file_with_underscores.txt`, "UNDERSCORES")
 
       const files = (await Snapshot.patch(before!)).files
-      expect(files).toContain(`${tmp.path}/file with spaces.txt`)
-      expect(files).toContain(`${tmp.path}/file-with-dashes.txt`)
-      expect(files).toContain(`${tmp.path}/file_with_underscores.txt`)
+      expect(files).toContain(Filesystem.normalizeNativePath(path.join(tmp.path, "file with spaces.txt")))
+      expect(files).toContain(Filesystem.normalizeNativePath(path.join(tmp.path, "file-with-dashes.txt")))
+      expect(files).toContain(Filesystem.normalizeNativePath(path.join(tmp.path, "file_with_underscores.txt")))
     },
   })
 })
@@ -249,7 +259,7 @@ test("revert non-existent file", async () => {
         Snapshot.revert([
           {
             hash: before!,
-            files: [`${tmp.path}/nonexistent.txt`],
+            files: [Filesystem.normalizeNativePath(path.join(tmp.path, "nonexistent.txt"))],
           },
         ]),
       ).resolves.toBeUndefined()
@@ -280,7 +290,7 @@ test("unicode filenames", async () => {
       expect(patch.files.length).toBe(4)
 
       for (const file of unicodeFiles) {
-        expect(patch.files).toContain(file.path)
+        expect(patch.files).toContain(Filesystem.normalizeNativePath(file.path))
       }
 
       await Snapshot.revert([patch])
@@ -310,8 +320,8 @@ test.skip("unicode filenames modification and restore", async () => {
       await Bun.write(cyrillicFile, "modified cyrillic")
 
       const patch = await Snapshot.patch(before!)
-      expect(patch.files).toContain(chineseFile)
-      expect(patch.files).toContain(cyrillicFile)
+      expect(patch.files).toContain(Filesystem.normalizeNativePath(chineseFile))
+      expect(patch.files).toContain(Filesystem.normalizeNativePath(cyrillicFile))
 
       await Snapshot.revert([patch])
 
@@ -334,7 +344,7 @@ test("unicode filenames in subdirectories", async () => {
       await Bun.write(deepFile, "deep unicode content")
 
       const patch = await Snapshot.patch(before!)
-      expect(patch.files).toContain(deepFile)
+      expect(patch.files).toContain(Filesystem.normalizeNativePath(deepFile))
 
       await Snapshot.revert([patch])
       expect(await Bun.file(deepFile).exists()).toBe(false)
@@ -350,13 +360,14 @@ test("very long filenames", async () => {
       const before = await Snapshot.track()
       expect(before).toBeTruthy()
 
-      const longName = "a".repeat(200) + ".txt"
-      const longFile = `${tmp.path}/${longName}`
+      // Use a slightly shorter name to avoid ENAMETOOLONG on Windows (MAX_PATH is 260)
+      const longName = "a".repeat(100) + ".txt"
+      const longFile = path.join(tmp.path, longName)
 
       await Bun.write(longFile, "long filename content")
 
       const patch = await Snapshot.patch(before!)
-      expect(patch.files).toContain(longFile)
+      expect(patch.files).toContain(Filesystem.normalizeNativePath(longFile))
 
       await Snapshot.revert([patch])
       expect(await Bun.file(longFile).exists()).toBe(false)
@@ -377,9 +388,9 @@ test("hidden files", async () => {
       await Bun.write(`${tmp.path}/.config`, "config content")
 
       const patch = await Snapshot.patch(before!)
-      expect(patch.files).toContain(`${tmp.path}/.hidden`)
-      expect(patch.files).toContain(`${tmp.path}/.gitignore`)
-      expect(patch.files).toContain(`${tmp.path}/.config`)
+      expect(patch.files).toContain(Filesystem.normalizeNativePath(path.join(tmp.path, ".hidden")))
+      expect(patch.files).toContain(Filesystem.normalizeNativePath(path.join(tmp.path, ".gitignore")))
+      expect(patch.files).toContain(Filesystem.normalizeNativePath(path.join(tmp.path, ".config")))
     },
   })
 })
@@ -392,19 +403,27 @@ test("nested symlinks", async () => {
       const before = await Snapshot.track()
       expect(before).toBeTruthy()
 
-      await $`mkdir -p ${tmp.path}/sub/dir`.quiet()
-      await Bun.write(`${tmp.path}/sub/dir/target.txt`, "target content")
-      await $`ln -s ${tmp.path}/sub/dir/target.txt ${tmp.path}/sub/dir/link.txt`.quiet()
-      await $`ln -s ${tmp.path}/sub ${tmp.path}/sub-link`.quiet()
+      await fs.mkdir(path.join(tmp.path, "sub/dir"), { recursive: true })
+      await Bun.write(path.join(tmp.path, "sub/dir/target.txt"), "target content")
+      try {
+        await fs.symlink(path.join(tmp.path, "sub/dir/target.txt"), path.join(tmp.path, "sub/dir/link.txt"))
+        await fs.symlink(path.join(tmp.path, "sub"), path.join(tmp.path, "sub-link"))
+      } catch (e) {
+        console.warn("Skipping nested symlink test: symlink creation failed", e)
+        return
+      }
 
       const patch = await Snapshot.patch(before!)
-      expect(patch.files).toContain(`${tmp.path}/sub/dir/link.txt`)
-      expect(patch.files).toContain(`${tmp.path}/sub-link`)
+      expect(patch.files).toContain(Filesystem.normalizeNativePath(path.join(tmp.path, "sub/dir/link.txt")))
+      expect(patch.files).toContain(Filesystem.normalizeNativePath(path.join(tmp.path, "sub-link")))
     },
   })
 })
 
 test("file permissions and ownership changes", async () => {
+  if (process.platform === "win32") {
+    return // Skip on Windows as chmod is not supported
+  }
   await using tmp = await bootstrap()
   await Instance.provide({
     directory: tmp.path,
@@ -457,11 +476,11 @@ test("gitignore changes", async () => {
       const patch = await Snapshot.patch(before!)
 
       // Should track gitignore itself
-      expect(patch.files).toContain(`${tmp.path}/.gitignore`)
+      expect(patch.files).toContain(Filesystem.normalizeNativePath(path.join(tmp.path, ".gitignore")))
       // Should track normal files
-      expect(patch.files).toContain(`${tmp.path}/normal.txt`)
+      expect(patch.files).toContain(Filesystem.normalizeNativePath(path.join(tmp.path, "normal.txt")))
       // Should not track ignored files (git won't see them)
-      expect(patch.files).not.toContain(`${tmp.path}/test.ignored`)
+      expect(patch.files).not.toContain(Filesystem.normalizeNativePath(path.join(tmp.path, "test.ignored")))
     },
   })
 })
@@ -506,7 +525,7 @@ test("snapshot state isolation between projects", async () => {
       const before1 = await Snapshot.track()
       await Bun.write(`${tmp1.path}/project1.txt`, "project1 content")
       const patch1 = await Snapshot.patch(before1!)
-      expect(patch1.files).toContain(`${tmp1.path}/project1.txt`)
+      expect(patch1.files).toContain(Filesystem.normalizeNativePath(path.join(tmp1.path, "project1.txt")))
     },
   })
 
@@ -516,10 +535,10 @@ test("snapshot state isolation between projects", async () => {
       const before2 = await Snapshot.track()
       await Bun.write(`${tmp2.path}/project2.txt`, "project2 content")
       const patch2 = await Snapshot.patch(before2!)
-      expect(patch2.files).toContain(`${tmp2.path}/project2.txt`)
+      expect(patch2.files).toContain(Filesystem.normalizeNativePath(path.join(tmp2.path, "project2.txt")))
 
       // Ensure project1 files don't appear in project2
-      expect(patch2.files).not.toContain(`${tmp1?.path}/project1.txt`)
+      expect(patch2.files).not.toContain(Filesystem.normalizeNativePath(path.join(tmp1.path, "project1.txt")))
     },
   })
 })
@@ -547,7 +566,7 @@ test("patch detects changes in secondary worktree", async () => {
         await Bun.write(worktreeFile, "worktree content")
 
         const patch = await Snapshot.patch(before!)
-        expect(patch.files).toContain(worktreeFile)
+        expect(patch.files).toContain(Filesystem.normalizeNativePath(worktreeFile))
       },
     })
   } finally {
@@ -713,7 +732,7 @@ test("revert should not delete files that existed but were deleted in snapshot",
       await Bun.write(`${tmp.path}/a.txt`, "recreated content")
 
       const patch = await Snapshot.patch(snapshot2!)
-      expect(patch.files).toContain(`${tmp.path}/a.txt`)
+      expect(patch.files).toContain(Filesystem.normalizeNativePath(path.join(tmp.path, "a.txt")))
 
       await Snapshot.revert([patch])
 
@@ -737,8 +756,8 @@ test("revert preserves file that existed in snapshot when deleted then recreated
       await Bun.write(`${tmp.path}/newfile.txt`, "new")
 
       const patch = await Snapshot.patch(snapshot!)
-      expect(patch.files).toContain(`${tmp.path}/existing.txt`)
-      expect(patch.files).toContain(`${tmp.path}/newfile.txt`)
+      expect(patch.files).toContain(Filesystem.normalizeNativePath(path.join(tmp.path, "existing.txt")))
+      expect(patch.files).toContain(Filesystem.normalizeNativePath(path.join(tmp.path, "newfile.txt")))
 
       await Snapshot.revert([patch])
 

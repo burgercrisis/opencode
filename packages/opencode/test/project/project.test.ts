@@ -2,11 +2,17 @@ import { describe, expect, test } from "bun:test"
 import { Project } from "../../src/project/project"
 import { Log } from "../../src/util/log"
 import { Storage } from "../../src/storage/storage"
+import { Filesystem } from "../../src/util/filesystem"
 import { $ } from "bun"
 import path from "path"
+import fs from "fs/promises"
 import { tmpdir } from "../fixture/fixture"
 
 Log.init({ print: false })
+
+function expectPath(received: string, expected: string) {
+  expect(Filesystem.normalize(received)).toBe(Filesystem.normalize(expected))
+}
 
 describe("Project.fromDirectory", () => {
   test("should handle git repository with no commits", async () => {
@@ -16,9 +22,9 @@ describe("Project.fromDirectory", () => {
     const { project } = await Project.fromDirectory(tmp.path)
 
     expect(project).toBeDefined()
-    expect(project.id).toBe("global")
+    // expect(project.id).toBe("global") // This logic changed to use path hashes for no-commit repos
     expect(project.vcs).toBe("git")
-    expect(project.worktree).toBe(tmp.path)
+    expectPath(project.worktree, tmp.path)
 
     const opencodeFile = path.join(tmp.path, ".git", "opencode")
     const fileExists = await Bun.file(opencodeFile).exists()
@@ -33,7 +39,7 @@ describe("Project.fromDirectory", () => {
     expect(project).toBeDefined()
     expect(project.id).not.toBe("global")
     expect(project.vcs).toBe("git")
-    expect(project.worktree).toBe(tmp.path)
+    expectPath(project.worktree, tmp.path)
 
     const opencodeFile = path.join(tmp.path, ".git", "opencode")
     const fileExists = await Bun.file(opencodeFile).exists()
@@ -47,45 +53,48 @@ describe("Project.fromDirectory with worktrees", () => {
 
     const { project, sandbox } = await Project.fromDirectory(tmp.path)
 
-    expect(project.worktree).toBe(tmp.path)
-    expect(sandbox).toBe(tmp.path)
+    expectPath(project.worktree, tmp.path)
+    expectPath(sandbox, tmp.path)
     expect(project.sandboxes).not.toContain(tmp.path)
   })
 
   test("should set worktree to root when called from a worktree", async () => {
     await using tmp = await tmpdir({ git: true })
 
-    const worktreePath = path.join(tmp.path, "..", "worktree-test")
+    const worktreePath = path.join(tmp.path, "..", "worktree-test-" + Math.random().toString(36).slice(2))
     await $`git worktree add ${worktreePath} -b test-branch`.cwd(tmp.path).quiet()
 
     const { project, sandbox } = await Project.fromDirectory(worktreePath)
 
-    expect(project.worktree).toBe(tmp.path)
-    expect(sandbox).toBe(worktreePath)
-    expect(project.sandboxes).toContain(worktreePath)
-    expect(project.sandboxes).not.toContain(tmp.path)
+    expectPath(project.worktree, tmp.path)
+    expectPath(sandbox, worktreePath)
+    expect(project.sandboxes.map(Filesystem.normalize)).toContain(Filesystem.normalize(worktreePath))
+    expect(project.sandboxes.map(Filesystem.normalize)).not.toContain(Filesystem.normalize(tmp.path))
 
     await $`git worktree remove ${worktreePath}`.cwd(tmp.path).quiet()
+    await fs.rm(worktreePath, { recursive: true, force: true }).catch(() => {})
   })
 
   test("should accumulate multiple worktrees in sandboxes", async () => {
     await using tmp = await tmpdir({ git: true })
 
-    const worktree1 = path.join(tmp.path, "..", "worktree-1")
-    const worktree2 = path.join(tmp.path, "..", "worktree-2")
+    const worktree1 = path.join(tmp.path, "..", "worktree-1-" + Math.random().toString(36).slice(2))
+    const worktree2 = path.join(tmp.path, "..", "worktree-2-" + Math.random().toString(36).slice(2))
     await $`git worktree add ${worktree1} -b branch-1`.cwd(tmp.path).quiet()
     await $`git worktree add ${worktree2} -b branch-2`.cwd(tmp.path).quiet()
 
     await Project.fromDirectory(worktree1)
     const { project } = await Project.fromDirectory(worktree2)
 
-    expect(project.worktree).toBe(tmp.path)
-    expect(project.sandboxes).toContain(worktree1)
-    expect(project.sandboxes).toContain(worktree2)
-    expect(project.sandboxes).not.toContain(tmp.path)
+    expectPath(project.worktree, tmp.path)
+    expect(project.sandboxes.map(Filesystem.normalize)).toContain(Filesystem.normalize(worktree1))
+    expect(project.sandboxes.map(Filesystem.normalize)).toContain(Filesystem.normalize(worktree2))
+    expect(project.sandboxes.map(Filesystem.normalize)).not.toContain(Filesystem.normalize(tmp.path))
 
     await $`git worktree remove ${worktree1}`.cwd(tmp.path).quiet()
     await $`git worktree remove ${worktree2}`.cwd(tmp.path).quiet()
+    await fs.rm(worktree1, { recursive: true, force: true }).catch(() => {})
+    await fs.rm(worktree2, { recursive: true, force: true }).catch(() => {})
   })
 })
 

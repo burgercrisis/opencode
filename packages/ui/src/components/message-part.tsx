@@ -671,7 +671,7 @@ PART_MAPPING["text"] = function TextPartDisplay(props) {
   const i18n = useI18n()
   const part = props.part as TextPart
   const displayText = () =>
-    relativizeProjectPaths((part.text ?? "").replace(/<think>[\s\S]*?<\/think>/g, "").trim(), data.directory)
+    relativizeProjectPaths((part.text ?? "").replace(/<think(ing)?>[\s\S]*?<\/think(ing)?>/g, "").trim(), data.directory)
   const throttledText = createThrottledValue(displayText)
   const [copied, setCopied] = createSignal(false)
 
