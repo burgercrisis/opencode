@@ -82,6 +82,8 @@ export namespace Log {
   }
 
   async function cleanup(dir: string) {
+    // Ensure the directory exists before scanning
+    await fs.mkdir(dir, { recursive: true }).catch(() => {})
     const glob = new Bun.Glob("????-??-??T??????.log")
     const files = await Array.fromAsync(
       glob.scan({

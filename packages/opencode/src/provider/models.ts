@@ -130,7 +130,7 @@ export namespace ModelsDev {
   }
 }
 
-if (!Flag.OPENCODE_DISABLE_MODELS_FETCH) {
+if (!Flag.OPENCODE_DISABLE_MODELS_FETCH && process.env.NODE_ENV !== "test") {
   ModelsDev.refresh()
   setInterval(
     async () => {

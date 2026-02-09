@@ -1,4 +1,7 @@
-import { test, expect, mock, beforeEach } from "bun:test"
+import { test, expect, mock, beforeEach, beforeAll } from "bun:test"
+import path from "path"
+import os from "os"
+import fs from "fs"
 
 // Track what options were passed to each transport constructor
 const transportCalls: Array<{
@@ -38,14 +41,23 @@ mock.module("@modelcontextprotocol/sdk/client/sse.js", () => ({
   },
 }))
 
-beforeEach(() => {
-  transportCalls.length = 0
-})
+let MCP: any
+let Instance: any
+let tmpdir: any
 
-// Import MCP after mocking
-const { MCP } = await import("../../src/mcp/index")
-const { Instance } = await import("../../src/project/instance")
-const { tmpdir } = await import("../fixture/fixture")
+beforeAll(async () => {
+  const { Global } = await import("../../src/global/index")
+  await Global.initialize()
+  const { Config } = await import("../../src/config/config")
+  Config.global.reset()
+  
+  const mcpMod = await import("../../src/mcp/index")
+  MCP = mcpMod.MCP
+  const instanceMod = await import("../../src/project/instance")
+  Instance = instanceMod.Instance
+  const fixtureMod = await import("../fixture/fixture")
+  tmpdir = fixtureMod.tmpdir
+})
 
 test("headers are passed to transports when oauth is enabled (default)", async () => {
   await using tmp = await tmpdir({

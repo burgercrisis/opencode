@@ -29,6 +29,7 @@ afterAll(async () => {
 const testHome = path.join(dir, "home")
 await fs.mkdir(testHome, { recursive: true })
 process.env["OPENCODE_TEST_HOME"] = testHome
+console.log(`[preload.ts] Set OPENCODE_TEST_HOME=${testHome}`)
 
 // Set test managed config directory to isolate tests from system managed settings
 const testManagedConfigDir = path.join(dir, "managed")

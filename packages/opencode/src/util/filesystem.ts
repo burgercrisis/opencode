@@ -234,9 +234,10 @@ export namespace Filesystem {
       const search = join(curr, target)
       const existsResult = await exists(search)
       const nextAcc = existsResult ? [...acc, search] : acc
-      if (stop === curr) return nextAcc
+      const stopAt = stop || process.env.OPENCODE_TEST_HOME
+      if (stopAt && nativePath(stopAt) === nativePath(curr)) return nextAcc
       const next = dirname(curr)
-      if (next === curr) return nextAcc
+      if (nativePath(next) === nativePath(curr)) return nextAcc
       return find(next, nextAcc)
     }
     return find(start, [])
@@ -254,9 +255,10 @@ export namespace Filesystem {
 
       yield* matches.filter((x): x is string => !!x)
 
-      if (stop === curr) return
+      const stopAt = stop || process.env.OPENCODE_TEST_HOME
+      if (stopAt && nativePath(stopAt) === nativePath(curr)) return
       const next = dirname(curr)
-      if (next === curr) return
+      if (nativePath(next) === nativePath(curr)) return
       yield* iterate(next)
     }
     yield* iterate(start)
@@ -275,9 +277,9 @@ export namespace Filesystem {
         }),
       )
       const nextAcc = [...acc, ...matches]
-      if (stop === curr) return nextAcc
+      if (stop && normalize(stop) === normalize(curr)) return nextAcc
       const next = dirname(curr)
-      if (next === curr) return nextAcc
+      if (normalize(next) === normalize(curr)) return nextAcc
       return scan(next, nextAcc)
     }
     return scan(start, [])

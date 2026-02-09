@@ -196,8 +196,8 @@ export namespace Project {
         .substring(0, 40)
       return {
         id: pathHash,
-        worktree: "/",
-        sandbox: "/",
+        worktree: directory,
+        sandbox: directory,
         vcs: Info.shape.vcs.parse(Flag.OPENCODE_FAKE_VCS),
       }
     })

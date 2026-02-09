@@ -1,5 +1,8 @@
-import { test, expect, mock, beforeEach } from "bun:test"
+import { test, expect, mock, beforeEach, beforeAll } from "bun:test"
 import { EventEmitter } from "events"
+import path from "path"
+import os from "os"
+import fs from "fs"
 
 // Track open() calls and control failure behavior
 let openShouldFail = false
@@ -84,6 +87,11 @@ mock.module("@modelcontextprotocol/sdk/client/index.js", () => ({
     async connect(transport: { start: () => Promise<void> }) {
       await transport.start()
     }
+    async listTools() {
+      return { tools: [] }
+    }
+    on() {}
+    close() {}
   },
 }))
 
@@ -98,12 +106,29 @@ beforeEach(() => {
   transportCalls.length = 0
 })
 
-// Import modules after mocking
-const { MCP } = await import("../../src/mcp/index")
-const { Bus } = await import("../../src/bus")
-const { McpOAuthCallback } = await import("../../src/mcp/oauth-callback")
-const { Instance } = await import("../../src/project/instance")
-const { tmpdir } = await import("../fixture/fixture")
+let MCP: any
+let Bus: any
+let McpOAuthCallback: any
+let Instance: any
+let tmpdir: any
+
+beforeAll(async () => {
+  const { Global } = await import("../../src/global/index")
+  await Global.initialize()
+  const { Config } = await import("../../src/config/config")
+  Config.global.reset()
+  
+  const mcpMod = await import("../../src/mcp/index")
+  MCP = mcpMod.MCP
+  const busMod = await import("../../src/bus/index")
+  Bus = busMod.Bus
+  const oauthMod = await import("../../src/mcp/oauth-callback")
+  McpOAuthCallback = oauthMod.McpOAuthCallback
+  const instanceMod = await import("../../src/project/instance")
+  Instance = instanceMod.Instance
+  const fixtureMod = await import("../fixture/fixture")
+  tmpdir = fixtureMod.tmpdir
+})
 
 test("BrowserOpenFailed event is published when open() throws", async () => {
   await using tmp = await tmpdir({

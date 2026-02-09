@@ -49,7 +49,7 @@ export namespace Config {
     }
   }
 
-  const managedConfigDir = process.env.OPENCODE_TEST_MANAGED_CONFIG_DIR || getManagedConfigDir()
+  const managedConfigDir = lazy(() => process.env.OPENCODE_TEST_MANAGED_CONFIG_DIR || getManagedConfigDir())
 
 
   // Custom merge function that concatenates array fields instead of replacing them
@@ -152,6 +152,8 @@ export namespace Config {
     const deps = []
 
     for (const dir of unique(directories)) {
+      if (!fs.existsSync(dir)) continue
+      
       if (dir.endsWith(".opencode") || dir === Flag.OPENCODE_CONFIG_DIR) {
         for (const file of ["opencode.jsonc", "opencode.json"]) {
           log.debug(`loading config from ${path.join(dir, file)}`)
@@ -192,9 +194,9 @@ export namespace Config {
     // Kept separate from directories array to avoid write operations when installing plugins
     // which would fail on system directories requiring elevated permissions
     // This way it only loads config file and not skills/plugins/commands
-    if (fs.existsSync(managedConfigDir)) {
+    if (fs.existsSync(managedConfigDir())) {
       for (const file of ["opencode.jsonc", "opencode.json"]) {
-        result = mergeConfigConcatArrays(result, await loadFile(path.join(managedConfigDir, file)))
+        result = mergeConfigConcatArrays(result, await loadFile(path.join(managedConfigDir(), file)))
       }
     }
 

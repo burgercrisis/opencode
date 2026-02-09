@@ -2,26 +2,34 @@ import fs from "fs/promises"
 import { xdgData, xdgCache, xdgConfig, xdgState } from "xdg-basedir"
 import path from "path"
 import os from "os"
+import { lazy } from "../util/lazy"
 
 const app = "opencode"
 
-const data = path.join(xdgData!, app)
-const cache = path.join(xdgCache!, app)
-const config = path.join(xdgConfig!, app)
-const state = path.join(xdgState!, app)
+function sanitize(p: string | undefined): string | undefined {
+  return p?.replace(/\0/g, "").trim()
+}
+
+const data = lazy(() => path.join(xdgData || path.join(os.homedir(), ".local", "share"), app))
+const cache = lazy(() => path.join(xdgCache || path.join(os.homedir(), ".cache"), app))
+const config = lazy(() => path.join(xdgConfig || path.join(os.homedir(), ".config"), app))
+const state = lazy(() => path.join(xdgState || path.join(os.homedir(), ".local", "state"), app))
 
 let configOverride: string | undefined
 
 export namespace Global {
   export const Path = {
-    // Allow override via OPENCODE_TEST_HOME for test isolation
     get home() {
-        const home = process.env.OPENCODE_TEST_HOME || os.homedir()
-        return home
-      },
+      const testHome = sanitize(process.env.OPENCODE_TEST_HOME)
+      if (process.env.NODE_ENV === "test" && !testHome) {
+        throw new Error("Global.Path.home accessed in test without OPENCODE_TEST_HOME")
+      }
+      return testHome || os.homedir()
+    },
     get data() {
-      if (process.env.OPENCODE_TEST_HOME) return path.join(process.env.OPENCODE_TEST_HOME, ".local", "share", app)
-      return data
+      const testHome = sanitize(process.env.OPENCODE_TEST_HOME)
+      if (testHome) return path.join(testHome, ".local", "share", app)
+      return data()
     },
     get bin() {
       return path.join(this.data, "bin")
@@ -30,21 +38,23 @@ export namespace Global {
       return path.join(this.data, "log")
     },
     get cache() {
-      if (process.env.OPENCODE_TEST_HOME) return path.join(process.env.OPENCODE_TEST_HOME, ".cache", app)
-      return cache
+      const testHome = sanitize(process.env.OPENCODE_TEST_HOME)
+      if (testHome) return path.join(testHome, ".cache", app)
+      return cache()
     },
     get config() {
       if (configOverride) return configOverride
-      if (process.env.OPENCODE_TEST_HOME) return path.join(process.env.OPENCODE_TEST_HOME, ".config", app)
-      return config
+      const testHome = sanitize(process.env.OPENCODE_TEST_HOME)
+      return testHome ? path.join(testHome, ".config", app) : config()
     },
     set config(v: string) {
       if (!process.env.OPENCODE_TEST_HOME) throw new Error("Cannot override Global.Path.config outside of tests")
       configOverride = v
     },
     get state() {
-      if (process.env.OPENCODE_TEST_HOME) return path.join(process.env.OPENCODE_TEST_HOME, ".local", "state", app)
-      return state
+      const testHome = sanitize(process.env.OPENCODE_TEST_HOME)
+      if (testHome) return path.join(testHome, ".local", "state", app)
+      return state()
     },
   }
   
@@ -58,29 +68,40 @@ export namespace Global {
       fs.mkdir(Global.Path.state, { recursive: true }),
       fs.mkdir(Global.Path.log, { recursive: true }),
       fs.mkdir(Global.Path.bin, { recursive: true }),
+      fs.mkdir(Global.Path.cache, { recursive: true }),
     ])
   }
 }
 
-await Global.initialize()
+// Don't initialize automatically in tests to allow OPENCODE_TEST_HOME to be set
+if (process.env.NODE_ENV !== "test") {
+  await Global.initialize()
+}
 
 const CACHE_VERSION = "21"
 
-const version = await Bun.file(path.join(Global.Path.cache, "version"))
-  .text()
-  .catch(() => "0")
+async function checkCache() {
+  const version = await Bun.file(path.join(Global.Path.cache, "version"))
+    .text()
+    .catch(() => "0")
 
-if (version !== CACHE_VERSION) {
-  try {
-    const contents = await fs.readdir(Global.Path.cache)
-    await Promise.all(
-      contents.map((item) =>
-        fs.rm(path.join(Global.Path.cache, item), {
-          recursive: true,
-          force: true,
-        }),
-      ),
-    )
-  } catch (e) {}
-  await Bun.file(path.join(Global.Path.cache, "version")).write(CACHE_VERSION)
+  if (version !== CACHE_VERSION) {
+    try {
+      const contents = await fs.readdir(Global.Path.cache)
+      await Promise.all(
+        contents.map((item) =>
+          fs.rm(path.join(Global.Path.cache, item), {
+            recursive: true,
+            force: true,
+          }),
+        ),
+      )
+    } catch (e) {}
+    await fs.mkdir(Global.Path.cache, { recursive: true })
+    await Bun.file(path.join(Global.Path.cache, "version")).write(CACHE_VERSION)
+  }
+}
+
+if (process.env.NODE_ENV !== "test") {
+  await checkCache()
 }

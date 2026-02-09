@@ -5,7 +5,7 @@ import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js"
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 
 // TODO: Find correct import for UnauthorizedError from MCP SDK
-class UnauthorizedError extends Error {}
+export class UnauthorizedError extends Error {}
 import {
   type Tool as MCPToolDef,
   ToolListChangedNotificationSchema,
@@ -753,7 +753,7 @@ export namespace MCP {
       // If we get here, we're already authenticated
       return { authorizationUrl: "" }
     } catch (error) {
-      if (error instanceof UnauthorizedError && capture.url) {
+      if ((error instanceof UnauthorizedError || (error as Error).name === "UnauthorizedError") && capture.url) {
         // Store transport for finishAuth
         pendingOAuthTransports.set(mcpName, transport)
         return { authorizationUrl: capture.url.toString() }
