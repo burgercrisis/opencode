@@ -27,24 +27,48 @@ export namespace BunProc {
         BUN_BE_BUN: "1",
       },
     })
-    const code = await result.exited
+    let code = await result.exited
+
+    let stderr: string | undefined
+    if (code !== 0 && process.platform === "win32") {
+      stderr = result.stderr
+        ? typeof result.stderr === "number"
+          ? undefined
+          : await readableStreamToText(result.stderr)
+        : undefined
+
+      if (
+        stderr &&
+        (stderr.includes("ENOTEMPTY") || stderr.includes("moving") || stderr.includes("NtSetInformationFile"))
+      ) {
+        log.warn("retrying command on Windows due to ENOTEMPTY error", { cmd: [which(), ...cmd] })
+        // Wait a bit before retrying
+        await new Promise((resolve) => setTimeout(resolve, 1000))
+        return run(cmd, options)
+      }
+    }
+
     const stdout = result.stdout
       ? typeof result.stdout === "number"
         ? result.stdout
         : await readableStreamToText(result.stdout)
       : undefined
-    const stderr = result.stderr
-      ? typeof result.stderr === "number"
-        ? result.stderr
-        : await readableStreamToText(result.stderr)
-      : undefined
+
+    if (stderr === undefined) {
+      stderr = result.stderr
+        ? typeof result.stderr === "number"
+          ? result.stderr
+          : await readableStreamToText(result.stderr)
+        : undefined
+    }
+
     log.info("done", {
       code,
       stdout,
       stderr,
     })
     if (code !== 0) {
-      throw new Error(`Command failed with exit code ${result.exitCode}`)
+      throw new Error(`Command failed with exit code ${code}`)
     }
     return result
   }
@@ -93,7 +117,7 @@ export namespace BunProc {
       "--force",
       "--exact",
       // TODO: get rid of this case (see: https://github.com/oven-sh/bun/issues/19936)
-      ...(proxied() ? ["--no-cache"] : []),
+      ...(proxied() || (process.platform === "win32" && process.env.NODE_ENV === "test") ? ["--no-cache"] : []),
       "--cwd",
       Global.Path.cache,
       pkg + "@" + version,

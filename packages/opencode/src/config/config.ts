@@ -11,6 +11,7 @@ import { Global } from "../global"
 import * as fs from "node:fs"
 import fsp from "node:fs/promises"
 import { lazy } from "../util/lazy"
+import { Lock } from "../util/lock"
 import { NamedError } from "@opencode-ai/util/error"
 import { Flag } from "../flag/flag"
 import { Auth } from "../auth"
@@ -269,6 +270,7 @@ export namespace Config {
   }
 
   export async function installDependencies(dir: string) {
+    using _ = await Lock.write("config-install-" + dir)
     const pkg = path.join(dir, "package.json")
     const targetVersion = Installation.isLocal() ? "*" : Installation.VERSION
 
@@ -300,7 +302,7 @@ export namespace Config {
       [
         "install",
         // TODO: get rid of this case (see: https://github.com/oven-sh/bun/issues/19936)
-        ...(proxied() ? ["--no-cache"] : []),
+        ...(proxied() || (process.platform === "win32" && process.env.NODE_ENV === "test") ? ["--no-cache"] : []),
       ],
       { cwd: dir },
     ).catch((err) => {
