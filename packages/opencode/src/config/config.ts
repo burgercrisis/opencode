@@ -141,7 +141,7 @@ export namespace Config {
         }),
       )),
       ...(Flag.OPENCODE_CONFIG_DIR ? [Flag.OPENCODE_CONFIG_DIR] : []),
-    ]
+    ].map(d => d.replace(/[\x00-\x1F\x7F-\x9F]/g, "").replace(/\\u0000/g, "").trim())
 
 
     // .opencode directory config overrides (project and global) config sources.
@@ -152,13 +152,21 @@ export namespace Config {
 
     const deps = []
 
-    for (const dir of unique(directories)) {
-      if (!fs.existsSync(dir)) continue
+    for (let dir of unique(directories)) {
+      // Extremely aggressive sanitization before any fs calls
+      dir = dir
+        .replace(/\\u0000/g, "")
+        .replace(/\0/g, "")
+        .replace(/[\x00-\x1F\x7F-\x9F]/g, "")
+        .trim()
+        
+      if (!dir || !fs.existsSync(dir)) continue
       
       if (dir.endsWith(".opencode") || dir === Flag.OPENCODE_CONFIG_DIR) {
         for (const file of ["opencode.jsonc", "opencode.json"]) {
-          log.debug(`loading config from ${path.join(dir, file)}`)
-          result = mergeConfigConcatArrays(result, await loadFile(path.join(dir, file)))
+          const configPath = path.join(dir, file).replace(/[\x00-\x1F\x7F-\x9F]/g, "").trim()
+          log.debug(`loading config from ${configPath}`)
+          result = mergeConfigConcatArrays(result, await loadFile(configPath))
           // to satisfy the type checker
           result.agent ??= {}
           result.mode ??= {}
@@ -195,9 +203,10 @@ export namespace Config {
     // Kept separate from directories array to avoid write operations when installing plugins
     // which would fail on system directories requiring elevated permissions
     // This way it only loads config file and not skills/plugins/commands
-    if (fs.existsSync(managedConfigDir())) {
+    if (fs.existsSync(managedConfigDir().replace(/\0/g, ""))) {
       for (const file of ["opencode.jsonc", "opencode.json"]) {
-        result = mergeConfigConcatArrays(result, await loadFile(path.join(managedConfigDir(), file)))
+        const p = path.join(managedConfigDir(), file).replace(/\0/g, "")
+        result = mergeConfigConcatArrays(result, await loadFile(p))
       }
     }
 
@@ -1274,16 +1283,31 @@ export namespace Config {
   export type Info = z.output<typeof Info>
 
   export const global = lazy(async () => {
+    const sanitize = (p: string) => {
+      let res = p.replace(/[\x00-\x1F\x7F-\x9F]/g, "").trim()
+      while (res.includes("\0")) res = res.replace("\0", "")
+      return res
+    }
+    const configPath = Global.Path.config
+    // Debug: print all char codes of configPath
+    let debug = ""
+    for (let i = 0; i < configPath.length; i++) {
+      debug += configPath.charCodeAt(i) + ","
+    }
+    if (configPath.includes("\0")) {
+      console.error(`!!! configPath has null byte! codes: ${debug}`)
+    }
+    
     let result: Info = pipe(
       {},
-      mergeDeep(await loadFile(path.join(Global.Path.config, "config.json"))),
-      mergeDeep(await loadFile(path.join(Global.Path.config, "opencode.json"))),
-      mergeDeep(await loadFile(path.join(Global.Path.config, "opencode.jsonc"))),
+      mergeDeep(await loadFile(path.join(configPath, "config.json"))),
+      mergeDeep(await loadFile(path.join(configPath, "opencode.json"))),
+      mergeDeep(await loadFile(path.join(configPath, "opencode.jsonc"))),
     )
 
-    const legacy = path.join(Global.Path.config, "config")
-    if (fs.existsSync(legacy)) {
-      await import(pathToFileURL(legacy).href, {
+    const legacy = path.join(configPath, "config")
+    if (fs.existsSync(legacy.replace(/\0/g, ""))) {
+      await import(pathToFileURL(legacy.replace(/\0/g, "")).href, {
         with: {
           type: "toml",
         },
@@ -1293,8 +1317,8 @@ export namespace Config {
           if (provider && model) result.model = `${provider}/${model}`
           result["$schema"] = "https://opencode.ai/config.json"
           result = mergeDeep(result, rest)
-          await Bun.write(path.join(Global.Path.config, "config.json"), JSON.stringify(result, null, 2))
-          await fsp.unlink(legacy)
+          await Bun.write(path.join(configPath, "config.json").replace(/\0/g, ""), JSON.stringify(result, null, 2))
+          await fsp.unlink(legacy.replace(/\0/g, ""))
         })
         .catch(() => {})
     }
@@ -1303,6 +1327,13 @@ export namespace Config {
   })
 
   async function loadFile(filepath: string): Promise<Info> {
+    filepath = filepath
+      .replace(/\\u0000/g, "")
+      .replace(/\0/g, "")
+      .replace(/[\x00-\x1F\x7F-\x9F]/g, "")
+      .trim()
+      
+    if (!filepath) return {}
     log.info("loading", { path: filepath })
     let text = await Bun.file(filepath)
       .text()
