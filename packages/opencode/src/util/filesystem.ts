@@ -228,8 +228,10 @@ export namespace Filesystem {
   }
 
   export function contains(parent: string, child: string) {
-    const path = relativePath(parent, child)
-    return !/^\.\.|.:/.test(path)
+    const parentPath = getCanonicalPath(parent)
+    const childPath = getCanonicalPath(child)
+    const rel = path.relative(parentPath, childPath)
+    return !rel.startsWith("..") && !path.isAbsolute(rel)
   }
 
   export async function findUp(target: string, start: string, stop?: string): Promise<string[]> {

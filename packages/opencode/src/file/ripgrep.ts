@@ -430,7 +430,9 @@ export namespace Ripgrep {
     const root = new FileNode()
     for (const file of files) {
       if (!file.includes(".opencode")) {
-        root.insert(file.split(path.sep))
+        // Use path.sep for cross-platform compatibility, but ripgrep usually 
+        // returns forward slashes even on Windows. Use a regex to split on both.
+        root.insert(file.split(/[\\\/]/))
       }
     }
 
@@ -486,30 +488,18 @@ export namespace Ripgrep {
     limit?: number
     follow?: boolean
   }) {
-    const args = [`${await filepath()}`, "--json", "--hidden", "--glob='!.git/*'"]
-    if (input.follow) args.push("--follow")
+    const bin = await filepath()
+    const proc = Bun.spawn([bin, "--json", "--hidden", "--glob=!.git/*", ...(input.follow ? ["--follow"] : []), ...(input.glob ? input.glob.map(g => `--glob=${g}`) : []), ...(input.limit ? [`--max-count=${input.limit}`] : []), "--", input.pattern], {
+      cwd: input.cwd,
+      stdout: "pipe",
+      stderr: "ignore",
+    })
 
-    if (input.glob) {
-      for (const g of input.glob) {
-        args.push(`--glob=${g}`)
-      }
-    }
-
-    if (input.limit) {
-      args.push(`--max-count=${input.limit}`)
-    }
-
-    args.push("--")
-    args.push(input.pattern)
-
-    const command = args.join(" ")
-    const result = await $`${{ raw: command }}`.cwd(input.cwd).quiet().nothrow()
-    if (result.exitCode !== 0) {
-      return []
-    }
+    const text = await new Response(proc.stdout).text()
+    await proc.exited
 
     // Handle both Unix (\n) and Windows (\r\n) line endings
-    const lines = result.text().trim().split(/\r?\n/).filter(Boolean)
+    const lines = text.trim().split(/\r?\n/).filter(Boolean)
     // Parse JSON lines from ripgrep output
 
     return lines
