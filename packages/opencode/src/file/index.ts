@@ -319,7 +319,7 @@ export namespace File {
         result.files.push(file)
         let current = file
         while (true) {
-          const dir = path.dirname(current)
+          const dir = path.dirname(current).replace(/\\/g, "/")
           if (dir === ".") break
           if (dir === current) break
           current = dir
@@ -420,7 +420,7 @@ export namespace File {
 
     return changedFiles.map((x) => ({
       ...x,
-      path: path.relative(Instance.directory, x.path),
+      path: x.path.replace(/\\/g, "/"),
     }))
   }
 
@@ -523,12 +523,12 @@ export namespace File {
       .catch(() => [])) {
       if (exclude.includes(entry.name)) continue
       const fullPath = path.join(resolved, entry.name)
-      const relativePath = path.relative(Instance.directory, fullPath)
+      const relativePath = path.relative(Instance.directory, fullPath).replace(/\\/g, "/")
       const type = entry.isDirectory() ? "directory" : "file"
       nodes.push({
         name: entry.name,
         path: relativePath,
-        absolute: fullPath,
+        absolute: fullPath.replace(/\\/g, "/"),
         type,
         ignored: ignored(type === "directory" ? relativePath + "/" : relativePath),
       })

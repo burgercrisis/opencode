@@ -570,7 +570,7 @@ export namespace Snapshot {
         .filter((l) => l.trim().length > 0)
         .map(async (line) => {
           const [add, del, rawFile] = line.split("\t")
-          const file = unquote(rawFile)
+          const file = unquote(rawFile).replace(/\\/g, "/")
           const status = statusMap.get(file) || "modified"
           const before = status === "added" ? "" : await show(from, file)
           const after = status === "deleted" ? "" : await show(to, file)
