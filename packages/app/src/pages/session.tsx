@@ -450,7 +450,10 @@ export default function Page() {
   })
 
   const info = createMemo(() => (params.id ? sync.session.get(params.id) : undefined))
-  const diffs = createMemo(() => (params.id ? (sync.data.session_diff[params.id] ?? []) : []))
+  const diffs = createMemo(() => {
+    const raw = params.id ? (sync.data.session_diff[params.id] ?? []) : []
+    return raw.map((d) => ({ ...d, file: d.file.replace(/\\/g, "/") }))
+  })
 
   const DiffChanges = (props: { changes: FileDiff[]; variant: "bars" | "text" }) => {
     return (
@@ -721,7 +724,10 @@ export default function Page() {
     promptHeight: 0,
   })
 
-  const turnDiffs = createMemo(() => lastUserMessage()?.summary?.diffs ?? [])
+  const turnDiffs = createMemo(() => {
+    const raw = lastUserMessage()?.summary?.diffs ?? []
+    return raw.map((d) => ({ ...d, file: d.file.replace(/\\/g, "/") }))
+  })
   const reviewDiffs = createMemo(() => (store.changes === "session" ? diffs() : turnDiffs()))
 
   const renderedUserMessages = createMemo(
@@ -786,7 +792,7 @@ export default function Page() {
       return "mix" as const
     }
 
-    const normalize = (p: string) => p.replaceAll("\\\\", "/").replace(/\/+$/, "")
+    const normalize = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "")
 
     const out = new Map<string, "add" | "del" | "mix">()
     for (const diff of diffs()) {
@@ -1553,7 +1559,7 @@ export default function Page() {
   }
 
   const reviewDiffId = (path: string) => {
-    const sum = checksum(path)
+    const sum = checksum(path.replace(/\\/g, "/"))
     if (!sum) return
     return `session-review-diff-${sum}`
   }
@@ -1586,7 +1592,9 @@ export default function Page() {
     return true
   }
 
-  const focusReviewDiff = (path: string) => {
+  const focusReviewDiff = (rawPath: string) => {
+    const path = rawPath.replace(/\\/g, "/")
+    tabs().setActive("review")
     const current = view().review.open() ?? []
     if (!current.includes(path)) view().review.setOpen([...current, path])
     setTree({ activeDiff: path, pendingDiff: path })
@@ -1636,11 +1644,13 @@ export default function Page() {
   const activeTab = createMemo(() => {
     const active = tabs().active()
     if (active === "context") return "context"
+    if (active === "review") return "review"
     if (active && file.pathFromTab(active)) return normalizeTab(active)
 
     const first = openedTabs()[0]
     if (first) return first
     if (contextOpen()) return "context"
+    if (hasReview()) return "review"
     return "empty"
   })
 

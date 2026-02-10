@@ -125,7 +125,7 @@ function dataUrlFromValue(value: unknown): string | undefined {
 }
 
 function diffId(file: string): string | undefined {
-  const sum = checksum(file)
+  const sum = checksum(file.replace(/\\/g, "/"))
   if (!sum) return
   return `session-review-diff-${sum}`
 }

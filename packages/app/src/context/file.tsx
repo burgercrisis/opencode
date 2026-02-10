@@ -323,10 +323,10 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
 
     function normalize(input: string) {
       if (!input) return ""
-      const root = scope()
+      const root = scope().replace(/\\/g, "/")
       const prefix = root.endsWith("/") ? root : root + "/"
 
-      let path = unquoteGitPath(stripQueryAndHash(stripFileProtocol(input)))
+      let path = unquoteGitPath(stripQueryAndHash(stripFileProtocol(input))).replace(/\\/g, "/")
 
       if (path.startsWith(prefix)) {
         path = path.slice(prefix.length)
