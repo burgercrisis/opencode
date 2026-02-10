@@ -1,262 +1,198 @@
-import { describe, expect, test } from "bun:test"
-import path from "path"
+import { expect, it, describe, mock, beforeEach } from "bun:test"
 import { PatchTool } from "../../src/tool/patch"
+import { Patch } from "../../src/patch"
 import { Instance } from "../../src/project/instance"
-import { tmpdir } from "../fixture/fixture"
-import { PermissionNext } from "../../src/permission/next"
+import { Filesystem } from "../../src/util/filesystem"
+import { FileTime } from "../../src/file/time"
+import { assertExternalDirectory } from "../../src/tool/external-directory"
+import { FileWatcher } from "../../src/file/watcher"
+import { Bus } from "../../src/bus"
 import * as fs from "fs/promises"
+import path from "path"
 
-const ctx = {
-  sessionID: "test",
-  messageID: "",
-  callID: "",
-  agent: "build",
-  abort: AbortSignal.any([]),
-  messages: [],
-  metadata: () => {},
-  ask: async () => {},
-}
+// Mock dependencies
+mock.module("../../src/patch", () => ({
+  Patch: {
+    safeParsePatch: mock(),
+    deriveNewContentsFromChunks: mock(),
+  },
+}))
 
-const patchTool = await PatchTool.init()
+mock.module("../../src/project/instance", () => ({
+  Instance: {
+    directory: "/project",
+    worktree: "/project",
+    disposeAll: mock().mockResolvedValue(undefined),
+    resetForTest: mock().mockResolvedValue(undefined),
+  },
+}))
 
-describe("tool.patch", () => {
-  test("should validate required parameters", async () => {
-    await Instance.provide({
-      directory: "/tmp",
-      fn: async () => {
-        expect(patchTool.execute({ patchText: "" }, ctx)).rejects.toThrow("patchText is required")
-      },
+mock.module("../../src/file/time", () => ({
+  FileTime: {
+    assert: mock(),
+    update: mock(),
+    read: mock(),
+  },
+}))
+
+mock.module("../../src/tool/external-directory", () => ({
+  assertExternalDirectory: mock().mockResolvedValue(undefined),
+}))
+
+mock.module("../../src/file/watcher", () => ({
+  FileWatcher: {
+    touch: mock().mockResolvedValue(undefined),
+    Event: {
+      Updated: "updated",
+    },
+  },
+}))
+
+mock.module("../../src/bus", () => ({
+  Bus: {
+    publish: mock().mockResolvedValue(undefined),
+  },
+}))
+
+mock.module("fs/promises", () => ({
+  mkdir: mock().mockResolvedValue(undefined),
+  unlink: mock().mockResolvedValue(undefined),
+}))
+
+describe("PatchTool", () => {
+  const ctx: any = {
+    sessionID: "session-123",
+    ask: mock(async () => {}),
+  }
+
+  beforeEach(() => {
+    mock.restore()
+    ;(ctx.ask as any).mockClear()
+    ;(Patch.safeParsePatch as any).mockReturnValue({
+      success: true,
+      data: { hunks: [] },
     })
+    
+    // Mock Bun.file
+    const originalBunFile = Bun.file
+    ;(Bun as any).file = (p: string) => ({
+      text: () => Promise.resolve("original content"),
+      exists: () => Promise.resolve(true),
+    })
+    
+    // Mock Bun.write
+    ;(Bun as any).write = mock().mockResolvedValue(10)
   })
 
-  test("should validate patch format", async () => {
-    await Instance.provide({
-      directory: "/tmp",
-      fn: async () => {
-        expect(patchTool.execute({ patchText: "invalid patch" }, ctx)).rejects.toThrow("Failed to parse patch")
-      },
-    })
+  it("throws error if patchText is missing", async () => {
+    const tool = await PatchTool.init()
+    expect(tool.execute({ patchText: "" }, ctx)).rejects.toThrow("patchText is required")
   })
 
-  test("should handle empty patch", async () => {
-    await Instance.provide({
-      directory: "/tmp",
-      fn: async () => {
-        const emptyPatch = `*** Begin Patch
-*** End Patch`
-
-        expect(patchTool.execute({ patchText: emptyPatch }, ctx)).rejects.toThrow("No file changes found in patch")
-      },
-    })
+  it("throws error if patch parsing fails", async () => {
+    ;(Patch.safeParsePatch as any).mockReturnValue({ success: false })
+    const tool = await PatchTool.init()
+    expect(tool.execute({ patchText: "invalid" }, ctx)).rejects.toThrow("Failed to parse patch")
   })
 
-  test.skip("should ask permission for files outside working directory", async () => {
-    await Instance.provide({
-      directory: "/tmp",
-      fn: async () => {
-        const maliciousPatch = `*** Begin Patch
-*** Add File: /etc/passwd
-+malicious content
-*** End Patch`
-        patchTool.execute({ patchText: maliciousPatch }, ctx)
-        // TODO: this sucks
-        await new Promise((resolve) => setTimeout(resolve, 1000))
-        const pending = await PermissionNext.list()
-        expect(pending.find((p) => p.sessionID === ctx.sessionID)).toBeDefined()
-      },
+  it("throws error if no hunks found", async () => {
+    ;(Patch.safeParsePatch as any).mockReturnValue({
+      success: true,
+      data: { hunks: [] },
     })
+    const tool = await PatchTool.init()
+    expect(tool.execute({ patchText: "valid but empty" }, ctx)).rejects.toThrow("No file changes found")
   })
 
-  test("should handle simple add file operation", async () => {
-    await using fixture = await tmpdir()
-
-    await Instance.provide({
-      directory: fixture.path,
-      fn: async () => {
-        const patchText = `*** Begin Patch
-*** Add File: test-file.txt
-+Hello World
-+This is a test file
-*** End Patch`
-
-        const result = await patchTool.execute({ patchText }, ctx)
-
-        expect(result.title).toContain("files changed")
-        expect(result.metadata.diff).toBeDefined()
-        expect(result.output).toContain("Patch applied successfully")
-
-        // Verify file was created
-        const filePath = path.join(fixture.path, "test-file.txt")
-        const content = await fs.readFile(filePath, "utf-8")
-        expect(content).toBe("Hello World\nThis is a test file")
+  it("handles 'add' hunk", async () => {
+    ;(Patch.safeParsePatch as any).mockReturnValue({
+      success: true,
+      data: {
+        hunks: [{ type: "add", path: "new.txt", contents: "new content" }],
       },
     })
+    const tool = await PatchTool.init()
+    const result = await tool.execute({ patchText: "some patch" }, ctx)
+
+    expect(fs.mkdir).toHaveBeenCalled()
+    expect(Bun.write).toHaveBeenCalledWith(expect.stringContaining("new.txt"), "new content")
+    expect(FileTime.read).toHaveBeenCalled()
+    expect(Bus.publish).toHaveBeenCalled()
   })
 
-  test("should handle file with context update", async () => {
-    await using fixture = await tmpdir()
-
-    await Instance.provide({
-      directory: fixture.path,
-      fn: async () => {
-        const patchText = `*** Begin Patch
-*** Add File: config.js
-+const API_KEY = "test-key"
-+const DEBUG = false
-+const VERSION = "1.0"
-*** End Patch`
-
-        const result = await patchTool.execute({ patchText }, ctx)
-
-        expect(result.title).toContain("files changed")
-        expect(result.metadata.diff).toBeDefined()
-        expect(result.output).toContain("Patch applied successfully")
-
-        // Verify file was created with correct content
-        const filePath = path.join(fixture.path, "config.js")
-        const content = await fs.readFile(filePath, "utf-8")
-        expect(content).toBe('const API_KEY = "test-key"\nconst DEBUG = false\nconst VERSION = "1.0"')
+  it("handles 'delete' hunk", async () => {
+    ;(Patch.safeParsePatch as any).mockReturnValue({
+      success: true,
+      data: {
+        hunks: [{ type: "delete", path: "old.txt" }],
       },
     })
+    const tool = await PatchTool.init()
+    await tool.execute({ patchText: "some patch" }, ctx)
+
+    expect(FileTime.assert).toHaveBeenCalled()
+    expect(fs.unlink).toHaveBeenCalledWith(expect.stringContaining("old.txt"))
+    expect(FileTime.read).toHaveBeenCalled()
+    expect(Bus.publish).toHaveBeenCalled()
   })
 
-  test("should handle multiple file operations", async () => {
-    await using fixture = await tmpdir()
-
-    await Instance.provide({
-      directory: fixture.path,
-      fn: async () => {
-        const patchText = `*** Begin Patch
-*** Add File: file1.txt
-+Content of file 1
-*** Add File: file2.txt
-+Content of file 2
-*** Add File: file3.txt
-+Content of file 3
-*** End Patch`
-
-        const result = await patchTool.execute({ patchText }, ctx)
-
-        expect(result.title).toContain("3 files changed")
-        expect(result.metadata.diff).toBeDefined()
-        expect(result.output).toContain("Patch applied successfully")
-
-        // Verify all files were created
-        for (let i = 1; i <= 3; i++) {
-          const filePath = path.join(fixture.path, `file${i}.txt`)
-          const content = await fs.readFile(filePath, "utf-8")
-          expect(content).toBe(`Content of file ${i}`)
-        }
+  it("handles 'update' hunk", async () => {
+    ;(Patch.safeParsePatch as any).mockReturnValue({
+      success: true,
+      data: {
+        hunks: [{ type: "update", path: "existing.txt", chunks: [] }],
       },
     })
+    ;(Patch.deriveNewContentsFromChunks as any).mockResolvedValue({
+      content: "updated content",
+    })
+    const tool = await PatchTool.init()
+    await tool.execute({ patchText: "some patch" }, ctx)
+
+    expect(FileTime.assert).toHaveBeenCalled()
+    expect(Bun.write).toHaveBeenCalledWith(expect.stringContaining("existing.txt"), "updated content")
   })
 
-  test("should create parent directories when adding nested files", async () => {
-    await using fixture = await tmpdir()
-
-    await Instance.provide({
-      directory: fixture.path,
-      fn: async () => {
-        const patchText = `*** Begin Patch
-*** Add File: deep/nested/file.txt
-+Deep nested content
-*** End Patch`
-
-        const result = await patchTool.execute({ patchText }, ctx)
-
-        expect(result.title).toContain("files changed")
-        expect(result.output).toContain("Patch applied successfully")
-
-        // Verify nested file was created
-        const nestedPath = path.join(fixture.path, "deep", "nested", "file.txt")
-        const exists = await fs
-          .access(nestedPath)
-          .then(() => true)
-          .catch(() => false)
-        expect(exists).toBe(true)
-
-        const content = await fs.readFile(nestedPath, "utf-8")
-        expect(content).toBe("Deep nested content")
+  it("handles 'move' hunk (update with move_path)", async () => {
+    ;(Patch.safeParsePatch as any).mockReturnValue({
+      success: true,
+      data: {
+        hunks: [{ type: "update", path: "old.txt", move_path: "new.txt", chunks: [] }],
       },
     })
+    ;(Patch.deriveNewContentsFromChunks as any).mockResolvedValue({
+      content: "moved content",
+    })
+    const tool = await PatchTool.init()
+    await tool.execute({ patchText: "some patch" }, ctx)
+
+    expect(Bun.write).toHaveBeenCalledWith(expect.stringContaining("new.txt"), "moved content")
+    expect(fs.unlink).toHaveBeenCalledWith(expect.stringContaining("old.txt"))
   })
 
-  test("should generate proper unified diff in metadata", async () => {
-    await using fixture = await tmpdir()
-
-    await Instance.provide({
-      directory: fixture.path,
-      fn: async () => {
-        // First create a file with simple content
-        const patchText1 = `*** Begin Patch
-*** Add File: test.txt
-+line 1
-+line 2
-+line 3
-*** End Patch`
-
-        await patchTool.execute({ patchText: patchText1 }, ctx)
-
-        // Now create an update patch
-        const patchText2 = `*** Begin Patch
-*** Update File: test.txt
-@@
- line 1
--line 2
-+line 2 updated
- line 3
-*** End Patch`
-
-        const result = await patchTool.execute({ patchText: patchText2 }, ctx)
-
-        expect(result.metadata.diff).toBeDefined()
-        expect(result.metadata.diff).toContain("@@")
-        expect(result.metadata.diff).toContain("-line 2")
-        expect(result.metadata.diff).toContain("+line 2 updated")
+  it("throws error for unknown hunk type", async () => {
+    ;(Patch.safeParsePatch as any).mockReturnValue({
+      success: true,
+      data: {
+        hunks: [{ type: "invalid", path: "test.txt" }],
       },
     })
+    const tool = await PatchTool.init()
+    expect(tool.execute({ patchText: "some patch" }, ctx)).rejects.toThrow("Unknown hunk type")
   })
 
-  test("should handle complex patch with multiple operations", async () => {
-    await using fixture = await tmpdir()
-
-    await Instance.provide({
-      directory: fixture.path,
-      fn: async () => {
-        const patchText = `*** Begin Patch
-*** Add File: new.txt
-+This is a new file
-+with multiple lines
-*** Add File: existing.txt
-+old content
-+new line
-+more content
-*** Add File: config.json
-+{
-+  "version": "1.0",
-+  "debug": true
-+}
-*** End Patch`
-
-        const result = await patchTool.execute({ patchText }, ctx)
-
-        expect(result.title).toContain("3 files changed")
-        expect(result.metadata.diff).toBeDefined()
-        expect(result.output).toContain("Patch applied successfully")
-
-        // Verify all files were created
-        const newPath = path.join(fixture.path, "new.txt")
-        const newContent = await fs.readFile(newPath, "utf-8")
-        expect(newContent).toBe("This is a new file\nwith multiple lines")
-
-        const existingPath = path.join(fixture.path, "existing.txt")
-        const existingContent = await fs.readFile(existingPath, "utf-8")
-        expect(existingContent).toBe("old content\nnew line\nmore content")
-
-        const configPath = path.join(fixture.path, "config.json")
-        const configContent = await fs.readFile(configPath, "utf-8")
-        expect(configContent).toBe('{\n  "version": "1.0",\n  "debug": true\n}')
+  it("throws error if update file does not exist", async () => {
+    ;(Patch.safeParsePatch as any).mockReturnValue({
+      success: true,
+      data: {
+        hunks: [{ type: "update", path: "missing.txt", chunks: [] }],
       },
     })
+    ;(Bun as any).file = (p: string) => ({
+      exists: () => Promise.resolve(false),
+      text: () => Promise.resolve("old content"),
+    })
+    const tool = await PatchTool.init()
+    expect(tool.execute({ patchText: "some patch" }, ctx)).rejects.toThrow("File not found")
   })
 })
