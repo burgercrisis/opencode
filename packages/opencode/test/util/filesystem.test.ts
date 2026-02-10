@@ -91,4 +91,120 @@ describe("util.filesystem", () => {
     // Absolute path outside
     expect(Filesystem.validateFilepath(process.platform === "win32" ? "C:\\outside.txt" : "/outside.txt", root).valid).toBe(false)
   })
+
+  test("isBinaryFile() detects binary content", async () => {
+    const tmp = await mkdtemp(path.join(os.tmpdir(), "opencode-binary-"))
+    const textFile = path.join(tmp, "text.txt")
+    const binaryFile = path.join(tmp, "binary.bin")
+    const missingFile = path.join(tmp, "missing.bin")
+
+    await Bun.write(textFile, "Hello world")
+    await Bun.write(binaryFile, new Uint8Array([0, 0, 0, 0, 0]))
+
+    expect(await Filesystem.isBinaryFile(textFile)).toBe(false)
+    expect(await Filesystem.isBinaryFile(binaryFile)).toBe(true)
+    expect(await Filesystem.isBinaryFile(missingFile)).toBe(true) // Fail safe
+
+    await rm(tmp, { recursive: true, force: true })
+  })
+
+  test("contains() checks if path is within parent", () => {
+    const root = path.resolve("/tmp/project")
+    const inside = path.resolve("/tmp/project/src/file.ts")
+    const outside = path.resolve("/tmp/outside/file.ts")
+
+    expect(Filesystem.contains(root, inside)).toBe(true)
+    expect(Filesystem.contains(root, outside)).toBe(false)
+    expect(Filesystem.contains(root, root)).toBe(true)
+  })
+
+  test("overlaps() checks if paths overlap", () => {
+    const a = path.resolve("/tmp/project/src")
+    const b = path.resolve("/tmp/project/src/file.ts")
+    const c = path.resolve("/tmp/project/test")
+
+    expect(Filesystem.overlaps(a, b)).toBe(true)
+    expect(Filesystem.overlaps(b, a)).toBe(true)
+    expect(Filesystem.overlaps(a, c)).toBe(false)
+  })
+
+  test("normalizeNativePath() uses correct separators", () => {
+    const p = "path/to/file"
+    const normalized = Filesystem.normalizeNativePath(p)
+    if (process.platform === "win32") {
+      expect(normalized).toBe("path\\to\\file")
+    } else {
+      expect(normalized).toBe("path/to/file")
+    }
+  })
+
+  test("getCanonicalPath() returns absolute path", () => {
+    const p = "."
+    const canonical = Filesystem.getCanonicalPath(p)
+    expect(path.isAbsolute(canonical)).toBe(true)
+  })
+
+  test("findUp() finds files up the directory tree", async () => {
+    const tmp = await mkdtemp(path.join(os.tmpdir(), "opencode-findup-"))
+    const deep = path.join(tmp, "a/b/c")
+    const target = "config.json"
+    const targetPath = path.join(tmp, target)
+
+    await mkdir(deep, { recursive: true })
+    await Bun.write(targetPath, "{}")
+
+    const found = await Filesystem.findUp(target, deep, tmp)
+    expect(found).toContain(Filesystem.nativePath(targetPath))
+
+    await rm(tmp, { recursive: true, force: true })
+  })
+
+  test("up() iterates up the directory tree", async () => {
+    const tmp = await mkdtemp(path.join(os.tmpdir(), "opencode-up-"))
+    const deep = path.join(tmp, "a/b/c")
+    const target = "marker.txt"
+    const targetPath = path.join(tmp, "a", target)
+
+    await mkdir(deep, { recursive: true })
+    await Bun.write(targetPath, "here")
+
+    const matches: string[] = []
+    for await (const match of Filesystem.up({ targets: [target], start: deep, stop: tmp })) {
+      matches.push(match)
+    }
+
+    expect(matches).toContain(Filesystem.nativePath(targetPath))
+    await rm(tmp, { recursive: true, force: true })
+  })
+
+  test("globUp() scans for patterns up the tree", async () => {
+    const tmp = await mkdtemp(path.join(os.tmpdir(), "opencode-globup-"))
+    const deep = path.join(tmp, "a/b/c")
+    const target = "file.test.js"
+    const targetPath = path.join(tmp, "a", target)
+
+    await mkdir(deep, { recursive: true })
+    await Bun.write(targetPath, "test")
+
+    const found = await Filesystem.globUp("*.test.js", deep, tmp)
+    expect(found.some(f => f.endsWith(target))).toBe(true)
+
+    await rm(tmp, { recursive: true, force: true })
+  })
+
+  test("normalizeGitPath() handles non-git mode", () => {
+    const p = "path\\to\\file"
+    const normalized = Filesystem.normalizeGitPath(p, false)
+    if (process.platform === "win32") {
+      expect(normalized).toContain("\\")
+    }
+  })
+
+  test("isValidFilename() handles long filenames and trailing spaces", () => {
+    expect(Filesystem.isValidFilename("a".repeat(300))).toBe(false)
+    if (process.platform === "win32") {
+      expect(Filesystem.isValidFilename("test ")).toBe(false)
+      expect(Filesystem.isValidFilename("test.")).toBe(false)
+    }
+  })
 })
