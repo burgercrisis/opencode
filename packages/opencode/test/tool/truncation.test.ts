@@ -1,4 +1,4 @@
-import { expect, it, describe, mock, beforeEach, afterEach } from "bun:test"
+import { expect, it, describe, mock, beforeEach, afterEach, spyOn } from "bun:test"
 import { Truncate } from "../../src/tool/truncation"
 import { Scheduler } from "../../src/scheduler"
 import { Identifier } from "../../src/id/id"
@@ -47,9 +47,16 @@ describe("Truncate", () => {
   const originalBuffer = Buffer
 
   beforeEach(() => {
-    mock.spyOn(Bun, "write").mockResolvedValue(0 as any)
-    mock.spyOn(Bun, "file").mockReturnValue({ path: "some-path" } as any)
-    // For Bun.Glob, we might need a different approach since it's a constructor
+    spyOn(Bun, "write").mockResolvedValue(0 as any)
+    spyOn(Bun, "file").mockReturnValue({ path: "some-path" } as any)
+    spyOn(Bun, "Glob").mockImplementation(() => ({
+      scan: mock().mockReturnValue({
+        [Symbol.asyncIterator]: async function* () {
+          yield "tool_old"
+          yield "tool_recent"
+        }
+      })
+    } as any))
   })
 
   afterEach(() => {
@@ -82,7 +89,7 @@ describe("Truncate", () => {
       await Truncate.cleanup()
 
       expect(fs.unlink).toHaveBeenCalledTimes(1)
-      expect(fs.unlink).toHaveBeenCalledWith(path.join("/test-data/tool-output", "tool_old"))
+      expect(fs.unlink).toHaveBeenCalledWith(path.join(Truncate.DIR, "tool_old"))
     })
 
     it("handles glob errors gracefully", async () => {
