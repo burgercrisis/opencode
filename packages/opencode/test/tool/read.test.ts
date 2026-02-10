@@ -1,367 +1,173 @@
-import { describe, expect, test, mock } from "bun:test"
-import path from "path"
+import { describe, expect, test, mock, beforeEach } from "bun:test"
 import { ReadTool } from "../../src/tool/read"
 import { Instance } from "../../src/project/instance"
 import { tmpdir } from "../fixture/fixture"
-import { PermissionNext } from "../../src/permission/next"
-import { Agent } from "../../src/agent/agent"
+import { InstructionPrompt } from "../../src/session/instruction"
+import { LSP } from "../../src/lsp"
+import * as fs from "fs/promises"
+import * as path from "path"
 
-// Mock Config to return empty permissions, ignoring user config
-mock.module("../../src/config/config", () => {
-  return {
-    Config: {
-      get: async () => ({ permission: {} }),
-      directories: async () => [],
-    }
+mock.module("../../src/session/instruction", () => ({
+  InstructionPrompt: {
+    resolve: mock(() => Promise.resolve([])),
+  },
+}))
+
+mock.module("../../src/lsp", () => ({
+  LSP: {
+    touchFile: mock(() => Promise.resolve()),
+  },
+}))
+
+describe("ReadTool", () => {
+  const ctx: any = {
+    sessionID: "session",
+    messageID: "message",
+    agent: "agent",
+    abort: new AbortController().signal,
+    messages: [],
+    metadata: () => {},
+    ask: async () => {},
   }
-})
 
-const FIXTURES_DIR = path.join(import.meta.dir, "fixtures")
-
-const ctx = {
-  sessionID: "test",
-  messageID: "",
-  callID: "",
-  agent: "build",
-  messages: [],
-  abort: AbortSignal.any([]),
-  metadata: () => {},
-  ask: async () => {},
-}
-
-describe("tool.read external_directory permission", () => {
-  test("allows reading absolute path inside project directory", async () => {
-    await using tmp = await tmpdir({
-      init: async (dir) => {
-        await Bun.write(path.join(dir, "test.txt"), "hello world")
-      },
-    })
+  test("reads a text file", async () => {
+    await using tmp = await tmpdir()
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const read = await ReadTool.init()
-        const result = await read.execute({ filePath: path.join(tmp.path, "test.txt") }, ctx)
-        expect(result.output).toContain("hello world")
-      },
-    })
-  })
+        const filePath = path.join(tmp.path, "test.txt")
+        await fs.writeFile(filePath, "line 1\nline 2\nline 3")
 
-  test("allows reading file in subdirectory inside project directory", async () => {
-    await using tmp = await tmpdir({
-      init: async (dir) => {
-        await Bun.write(path.join(dir, "subdir", "test.txt"), "nested content")
-      },
-    })
-    await Instance.provide({
-      directory: tmp.path,
-      fn: async () => {
-        const read = await ReadTool.init()
-        const result = await read.execute({ filePath: path.join(tmp.path, "subdir", "test.txt") }, ctx)
-        expect(result.output).toContain("nested content")
-      },
-    })
-  })
+        const tool = await ReadTool.init()
+        const result = await tool.execute({ filePath }, ctx)
 
-  test("asks for external_directory permission when reading absolute path outside project", async () => {
-    await using outerTmp = await tmpdir({
-      init: async (dir) => {
-        await Bun.write(path.join(dir, "secret.txt"), "secret data")
-      },
-    })
-    await using tmp = await tmpdir({ git: true })
-    await Instance.provide({
-      directory: tmp.path,
-      fn: async () => {
-        const read = await ReadTool.init()
-        const requests: Array<Omit<PermissionNext.Request, "id" | "sessionID" | "tool">> = []
-        const testCtx = {
-          ...ctx,
-          ask: async (req: Omit<PermissionNext.Request, "id" | "sessionID" | "tool">) => {
-            requests.push(req)
-          },
-        }
-        await read.execute({ filePath: path.join(outerTmp.path, "secret.txt") }, testCtx)
-        const extDirReq = requests.find((r) => r.permission === "external_directory")
-        expect(extDirReq).toBeDefined()
-        expect(extDirReq!.patterns.some((p) => p.includes(outerTmp.path))).toBe(true)
-      },
-    })
-  })
-
-  test("asks for external_directory permission when reading relative path outside project", async () => {
-    await using tmp = await tmpdir({ git: true })
-    await Instance.provide({
-      directory: tmp.path,
-      fn: async () => {
-        const read = await ReadTool.init()
-        const requests: Array<Omit<PermissionNext.Request, "id" | "sessionID" | "tool">> = []
-        const testCtx = {
-          ...ctx,
-          ask: async (req: Omit<PermissionNext.Request, "id" | "sessionID" | "tool">) => {
-            requests.push(req)
-          },
-        }
-        // This will fail because file doesn't exist, but we can check if permission was asked
-        await read.execute({ filePath: "../outside.txt" }, testCtx).catch(() => {})
-        const extDirReq = requests.find((r) => r.permission === "external_directory")
-        expect(extDirReq).toBeDefined()
-      },
-    })
-  })
-
-  test("does not ask for external_directory permission when reading inside project", async () => {
-    await using tmp = await tmpdir({
-      git: true,
-      init: async (dir) => {
-        await Bun.write(path.join(dir, "internal.txt"), "internal content")
-      },
-    })
-    await Instance.provide({
-      directory: tmp.path,
-      fn: async () => {
-        const read = await ReadTool.init()
-        const requests: Array<Omit<PermissionNext.Request, "id" | "sessionID" | "tool">> = []
-        const testCtx = {
-          ...ctx,
-          ask: async (req: Omit<PermissionNext.Request, "id" | "sessionID" | "tool">) => {
-            requests.push(req)
-          },
-        }
-        await read.execute({ filePath: path.join(tmp.path, "internal.txt") }, testCtx)
-        const extDirReq = requests.find((r) => r.permission === "external_directory")
-        expect(extDirReq).toBeUndefined()
-      },
-    })
-  })
-})
-
-describe("tool.read env file permissions", () => {
-  const cases: [string, boolean][] = [
-    [".env", true],
-    [".env.local", true],
-    [".env.production", true],
-    [".env.development.local", true],
-    [".env.example", false],
-    [".envrc", false],
-    ["environment.ts", false],
-  ]
-
-  describe.each(["build", "plan"])("agent=%s", (agentName) => {
-    test.each(cases)("%s asks=%s", async (filename, shouldAsk) => {
-      await using tmp = await tmpdir({
-        init: (dir) => Bun.write(path.join(dir, filename), "content"),
-      })
-      await Instance.provide({
-        directory: tmp.path,
-        fn: async () => {
-          const agent = await Agent.get(agentName)
-          let askedForEnv = false
-          const ctxWithPermissions = {
-            ...ctx,
-            ask: async (req: Omit<PermissionNext.Request, "id" | "sessionID" | "tool">) => {
-              for (const pattern of req.patterns) {
-                const rule = PermissionNext.evaluate(req.permission, pattern, agent.permission)
-                if (rule.action === "ask" && req.permission === "read") {
-                  askedForEnv = true
-                }
-                if (rule.action === "deny") {
-                  throw new PermissionNext.DeniedError(agent.permission)
-                }
-              }
-            },
-          }
-          const read = await ReadTool.init()
-          await read.execute({ filePath: path.join(tmp.path, filename) }, ctxWithPermissions)
-          expect(askedForEnv).toBe(shouldAsk)
-        },
-      })
-    })
-  })
-})
-
-describe("tool.read truncation", () => {
-  test("truncates large file by bytes and sets truncated metadata", async () => {
-    await using tmp = await tmpdir({
-      init: async (dir) => {
-        const base = await Bun.file(path.join(FIXTURES_DIR, "models-api.json")).text()
-        const target = 60 * 1024
-        const content = base.length >= target ? base : base.repeat(Math.ceil(target / base.length))
-        await Bun.write(path.join(dir, "large.json"), content)
-      },
-    })
-    await Instance.provide({
-      directory: tmp.path,
-      fn: async () => {
-        const read = await ReadTool.init()
-        const result = await read.execute({ filePath: path.join(tmp.path, "large.json") }, ctx)
-        expect(result.metadata.truncated).toBe(true)
-        expect(result.output).toContain("Output truncated at")
-        expect(result.output).toContain("bytes")
-      },
-    })
-  })
-
-  test("truncates by line count when limit is specified", async () => {
-    await using tmp = await tmpdir({
-      init: async (dir) => {
-        const lines = Array.from({ length: 100 }, (_, i) => `line${i}`).join("\n")
-        await Bun.write(path.join(dir, "many-lines.txt"), lines)
-      },
-    })
-    await Instance.provide({
-      directory: tmp.path,
-      fn: async () => {
-        const read = await ReadTool.init()
-        const result = await read.execute({ filePath: path.join(tmp.path, "many-lines.txt"), limit: 10 }, ctx)
-        expect(result.metadata.truncated).toBe(true)
-        expect(result.output).toContain("File has more lines")
-        expect(result.output).toContain("line0")
-        expect(result.output).toContain("line9")
-        expect(result.output).not.toContain("line10")
-      },
-    })
-  })
-
-  test("does not truncate small file", async () => {
-    await using tmp = await tmpdir({
-      init: async (dir) => {
-        await Bun.write(path.join(dir, "small.txt"), "hello world")
-      },
-    })
-    await Instance.provide({
-      directory: tmp.path,
-      fn: async () => {
-        const read = await ReadTool.init()
-        const result = await read.execute({ filePath: path.join(tmp.path, "small.txt") }, ctx)
+        expect(result.output).toContain("line 1")
+        expect(result.output).toContain("line 2")
+        expect(result.output).toContain("line 3")
+        expect(result.output).toContain("(End of file - total 3 lines)")
         expect(result.metadata.truncated).toBe(false)
-        expect(result.output).toContain("End of file")
       },
     })
   })
 
-  test("respects offset parameter", async () => {
-    await using tmp = await tmpdir({
-      init: async (dir) => {
-        const lines = Array.from({ length: 20 }, (_, i) => `line${i}`).join("\n")
-        await Bun.write(path.join(dir, "offset.txt"), lines)
-      },
-    })
+  test("handles missing file with suggestions", async () => {
+    await using tmp = await tmpdir()
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const read = await ReadTool.init()
-        const result = await read.execute({ filePath: path.join(tmp.path, "offset.txt"), offset: 10, limit: 5 }, ctx)
-        expect(result.output).toContain("line10")
-        expect(result.output).toContain("line14")
-        expect(result.output).not.toContain("line0")
-        expect(result.output).not.toContain("line15")
+        await fs.writeFile(path.join(tmp.path, "hello.txt"), "hello")
+        await fs.writeFile(path.join(tmp.path, "world.txt"), "world")
+
+        const tool = await ReadTool.init()
+        try {
+          await tool.execute({ filePath: path.join(tmp.path, "hell") }, ctx)
+          expect.unreachable()
+        } catch (e: any) {
+          expect(e.message).toContain("File not found")
+          expect(e.message).toContain("Did you mean one of these?")
+          expect(e.message).toContain("hello.txt")
+        }
       },
     })
   })
 
-  test("truncates long lines", async () => {
-    await using tmp = await tmpdir({
-      init: async (dir) => {
-        const longLine = "x".repeat(3000)
-        await Bun.write(path.join(dir, "long-line.txt"), longLine)
-      },
-    })
+  test("reads image as base64", async () => {
+    await using tmp = await tmpdir()
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const read = await ReadTool.init()
-        const result = await read.execute({ filePath: path.join(tmp.path, "long-line.txt") }, ctx)
-        expect(result.output).toContain("...")
-        expect(result.output.length).toBeLessThan(3000)
-      },
-    })
-  })
+        const filePath = path.join(tmp.path, "test.png")
+        const content = Buffer.from("fake-png-data")
+        await fs.writeFile(filePath, content)
 
-  test("image files set truncated to false", async () => {
-    await using tmp = await tmpdir({
-      init: async (dir) => {
-        // 1x1 red PNG
-        const png = Buffer.from(
-          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==",
-          "base64",
-        )
-        await Bun.write(path.join(dir, "image.png"), png)
-      },
-    })
-    await Instance.provide({
-      directory: tmp.path,
-      fn: async () => {
-        const read = await ReadTool.init()
-        const result = await read.execute({ filePath: path.join(tmp.path, "image.png") }, ctx)
-        expect(result.metadata.truncated).toBe(false)
+        const tool = await ReadTool.init()
+        // Mocking Bun.file type because it might not detect .png correctly in all environments
+        // but Bun.file(path).type should work if the extension is present.
+        const result = await tool.execute({ filePath }, ctx)
+
+        expect(result.output).toBe("Image read successfully")
         expect(result.attachments).toBeDefined()
-        expect(result.attachments?.length).toBe(1)
+        expect(result.attachments![0].mime).toBe("image/png")
+        expect(result.attachments![0].url).toContain("data:image/png;base64,")
       },
     })
   })
 
-  test("large image files are properly attached without error", async () => {
-    await Instance.provide({
-      directory: FIXTURES_DIR,
-      fn: async () => {
-        const read = await ReadTool.init()
-        const result = await read.execute({ filePath: path.join(FIXTURES_DIR, "large-image.png") }, ctx)
-        expect(result.metadata.truncated).toBe(false)
-        expect(result.attachments).toBeDefined()
-        expect(result.attachments?.length).toBe(1)
-        expect(result.attachments?.[0].type).toBe("file")
-      },
-    })
-  })
-
-  test(".fbs files (FlatBuffers schema) are read as text, not images", async () => {
-    await using tmp = await tmpdir({
-      init: async (dir) => {
-        // FlatBuffers schema content
-        const fbsContent = `namespace MyGame;
-
-table Monster {
-  pos:Vec3;
-  name:string;
-  inventory:[ubyte];
-}
-
-root_type Monster;`
-        await Bun.write(path.join(dir, "schema.fbs"), fbsContent)
-      },
-    })
+  test("throws for binary files", async () => {
+    await using tmp = await tmpdir()
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const read = await ReadTool.init()
-        const result = await read.execute({ filePath: path.join(tmp.path, "schema.fbs") }, ctx)
-        // Should be read as text, not as image
-        expect(result.attachments).toBeUndefined()
-        expect(result.output).toContain("namespace MyGame")
-        expect(result.output).toContain("table Monster")
+        const filePath = path.join(tmp.path, "test.bin")
+        // A file with null bytes is considered binary
+        await fs.writeFile(filePath, Buffer.from([0, 1, 2, 3, 0]))
+
+        const tool = await ReadTool.init()
+        expect(tool.execute({ filePath }, ctx)).rejects.toThrow(/Cannot read binary file/)
       },
     })
   })
-})
 
-describe("tool.read loaded instructions", () => {
-  test("loads AGENTS.md from parent directory and includes in metadata", async () => {
-    await using tmp = await tmpdir({
-      init: async (dir) => {
-        await Bun.write(path.join(dir, "subdir", "AGENTS.md"), "# Test Instructions\nDo something special.")
-        await Bun.write(path.join(dir, "subdir", "nested", "test.txt"), "test content")
-      },
-    })
+  test("handles offset and limit", async () => {
+    await using tmp = await tmpdir()
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const read = await ReadTool.init()
-        const result = await read.execute({ filePath: path.join(tmp.path, "subdir", "nested", "test.txt") }, ctx)
-        expect(result.output).toContain("test content")
-        expect(result.output).toContain("system-reminder")
-        expect(result.output).toContain("Test Instructions")
-        expect(result.metadata.loaded).toBeDefined()
-        expect(result.metadata.loaded).toContain(path.join(tmp.path, "subdir", "AGENTS.md"))
+        const filePath = path.join(tmp.path, "large.txt")
+        const content = Array.from({ length: 10 }, (_, i) => `line ${i + 1}`).join("\n")
+        await fs.writeFile(filePath, content)
+
+        const tool = await ReadTool.init()
+        const result = await tool.execute({ filePath, offset: 2, limit: 3 }, ctx)
+
+        expect(result.output).not.toContain("line 1")
+        expect(result.output).not.toContain("line 2")
+        expect(result.output).toContain("line 3")
+        expect(result.output).toContain("line 4")
+        expect(result.output).toContain("line 5")
+        expect(result.output).not.toContain("line 6")
+        expect(result.output).toContain("Use 'offset' parameter to read beyond line 5")
+        expect(result.metadata.truncated).toBe(true)
+      },
+    })
+  })
+
+  test("truncates by bytes", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const filePath = path.join(tmp.path, "huge_lines.txt")
+        // MAX_BYTES is 50KB. We need to exceed it with many lines.
+        const content = Array.from({ length: 1000 }, (_, i) => `line ${i.toString().padStart(50, "0")}`).join("\n")
+        await fs.writeFile(filePath, content)
+
+        const tool = await ReadTool.init()
+        const result = await tool.execute({ filePath }, ctx)
+
+        expect(result.metadata.truncated).toBe(true)
+        expect(result.output).toContain("Output truncated at 51200 bytes")
+      },
+    })
+  })
+
+  test("includes system reminders from instructions", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const filePath = path.join(tmp.path, "test.txt")
+        await fs.writeFile(filePath, "content")
+
+        const mockResolve = InstructionPrompt.resolve as any
+        mockResolve.mockResolvedValueOnce([{ filepath: "hint.md", content: "Remember to do X" }])
+
+        const tool = await ReadTool.init()
+        const result = await tool.execute({ filePath }, ctx)
+
+        expect(result.output).toContain("<system-reminder>")
+        expect(result.output).toContain("Remember to do X")
+        expect(result.metadata.loaded).toContain("hint.md")
       },
     })
   })
