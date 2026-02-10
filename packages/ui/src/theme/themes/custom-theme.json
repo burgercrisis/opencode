@@ -4,15 +4,15 @@
   "id": "my-theme",
   "light": {
     "seeds": {
-      "primary": "#3d0b4e",
-      "neutral": "#3c2f3f",
-      "interactive": "#f224f9",
-      "success": "#0b460a",
-      "warning": "#4d400b",
-      "error": "#6a0f35",
-      "info": "#280c55",
-      "diffAdd": "#53e692",
-      "diffDelete": "#550c10"
+      "primary": "#d43fd9",
+      "neutral": "#9b7d9c",
+      "interactive": "#ef1088",
+      "success": "#2dab21",
+      "warning": "#d59c2a",
+      "error": "#d74032",
+      "info": "#7e32d7",
+      "diffAdd": "#4eda41",
+      "diffDelete": "#e17167"
     },
     "overrides": {
       "background-base": "#ceb3f4",
@@ -377,15 +377,15 @@
   },
   "dark": {
     "seeds": {
-      "primary": "#000000",
-      "neutral": "#2B212C",
-      "interactive": "#320121",
-      "success": "#000000",
-      "warning": "#2D2006",
-      "error": "#750b0f",
-      "info": "#1C0835",
-      "diffAdd": "#084506",
-      "diffDelete": "#350C08"
+      "primary": "#d43fd9",
+      "neutral": "#9b7d9c",
+      "interactive": "#ef1088",
+      "success": "#2dab21",
+      "warning": "#d59c2a",
+      "error": "#d74032",
+      "info": "#7e32d7",
+      "diffAdd": "#2dab21",
+      "diffDelete": "#d74032"
     },
     "overrides": {
       "background-base": "#12041a",
