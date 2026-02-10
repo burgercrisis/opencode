@@ -188,10 +188,11 @@ export namespace Project {
       }
 
       // No .git folder found - generate unique ID using path hash
+      const canonicalPath = Filesystem.getCanonicalPath(directory)
       const crypto = await import("crypto")
       const pathHash = crypto
         .createHash("sha256")
-        .update(directory)
+        .update(canonicalPath)
         .digest("hex")
         .substring(0, 40)
       return {

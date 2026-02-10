@@ -103,6 +103,7 @@ export namespace Snapshot {
       return $`git ${args}`
         .env({
           ...process.env,
+          ...options.env,
           GIT_TERMINAL_PROMPT: "0",
           GIT_ASKPASS: "echo",
         })
