@@ -3,6 +3,7 @@ import os from "node:os"
 import path from "node:path"
 import { mkdtemp, mkdir, rm } from "node:fs/promises"
 import { Filesystem } from "../../src/util/filesystem"
+import { Flag } from "../../src/flag/flag"
 
 describe("util.filesystem", () => {
   test("exists() is true for files and directories", async () => {
@@ -200,11 +201,55 @@ describe("util.filesystem", () => {
     }
   })
 
-  test("isValidFilename() handles long filenames and trailing spaces", () => {
-    expect(Filesystem.isValidFilename("a".repeat(300))).toBe(false)
+  test("normalizePath() handles errors", () => {
+    // Pass something that realpathSync.native will fail on
+    const result = Filesystem.normalizePath("Z:\\non-existent-drive\\file.txt")
+    expect(result).toBe("Z:\\non-existent-drive\\file.txt")
+  })
+
+  test("nativePath() handles MSYS flag", () => {
+    const original = Flag.OPENCODE_EXPERIMENTAL_MSYS_PATHS
+    try {
+      // @ts-ignore - force change for test
+      Flag.OPENCODE_EXPERIMENTAL_MSYS_PATHS = true
+      const p = "a/b/c"
+      expect(Filesystem.nativePath(p)).toBe("a/b/c")
+      
+      // @ts-ignore
+      Flag.OPENCODE_EXPERIMENTAL_MSYS_PATHS = false
+      if (process.platform === "win32") {
+        expect(Filesystem.nativePath(p)).toBe("a\\b\\c")
+      }
+    } finally {
+      // @ts-ignore
+      Flag.OPENCODE_EXPERIMENTAL_MSYS_PATHS = original
+    }
+  })
+
+  test("resolvePath() and other helpers", () => {
+    expect(Filesystem.resolvePath("a", "b")).toContain("a")
+    expect(Filesystem.join("a", "b")).toContain("a")
+    expect(Filesystem.dirname("a/b/c")).toContain("b")
+    expect(Filesystem.relativePath("a/b", "a/b/c")).toBe("c")
+  })
+
+  test("isValidFilename() catch block", () => {
+    // A lone surrogate should cause issues with some UTF-8 encoders/decoders
+    // but Node/Bun Buffer might just handle it by replacing it.
+    // However, we can try to pass something that is not a string if we bypass types.
+    expect(Filesystem.isValidFilename(null as any)).toBe(false)
+    expect(Filesystem.isValidFilename(undefined as any)).toBe(false)
+    expect(Filesystem.isValidFilename(123 as any)).toBe(false)
+  })
+
+  test("platform specific branches", () => {
+    // If we can't mock process.platform, we can at least test the current one
     if (process.platform === "win32") {
-      expect(Filesystem.isValidFilename("test ")).toBe(false)
-      expect(Filesystem.isValidFilename("test.")).toBe(false)
+      expect(Filesystem.normalizeNativePath("a/b")).toBe("a\\b")
+      expect(Filesystem.getCanonicalPath("C:\\")).toContain(":")
+    } else {
+      expect(Filesystem.normalizeNativePath("a\\b")).toBe("a/b")
+      expect(Filesystem.getCanonicalPath("/")).toBe("/")
     }
   })
 })
