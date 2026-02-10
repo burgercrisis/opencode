@@ -124,8 +124,11 @@ export namespace Filesystem {
       const absolute = pathResolve(path)
       
       if (process.platform === "win32") {
-        // On Windows, use realpath to get canonical casing and resolve symlinks
-        return realpathSync.native(absolute)
+        // On Windows, use realpath to get canonical casing and resolve symlinks.
+        // realpathSync.native returns \\?\ prefix for long paths, which we strip
+        // for consistent project ID generation and git compatibility.
+        const result = realpathSync.native(absolute)
+        return result.startsWith("\\\\?\\") ? result.slice(4) : result
       }
       // On Unix systems, realpath also resolves symlinks
       return realpathSync(absolute)

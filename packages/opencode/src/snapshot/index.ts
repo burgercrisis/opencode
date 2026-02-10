@@ -168,11 +168,9 @@ export namespace Snapshot {
       // Create the directory if it doesn't exist
       await fs.mkdir(git, { recursive: true }).catch(() => {})
 
-      const initResult = await gitWithRetry(["init", "--bare"], {
+      // Use absolute path for git init to avoid cwd/env issues on Windows
+      const initResult = await gitWithRetry(["init", "--bare", gitNormalized], {
         cwd: git,
-        env: {
-          GIT_DIR: ".",
-        },
       }).catch((error) => {
         log.error("failed to initialize git for snapshot", { error: String(error) })
         return undefined
@@ -188,18 +186,19 @@ export namespace Snapshot {
         return
       }
 
-      await gitWithRetry(["--git-dir", gitNormalized, "config", "core.autocrlf", "false"], { cwd: Instance.directory }).catch((error) => {
+      await gitWithRetry(["--git-dir", gitNormalized, "config", "core.autocrlf", "false"], { cwd: Instance.worktree }).catch((error) => {
         log.warn("failed to set core.autocrlf config", { error: String(error) })
       })
-      log.info("initialized")
+      log.info("initialized", { git: gitNormalized })
     }
 
-    await gitWithRetry(["--git-dir", gitNormalized, "--work-tree", worktreeNormalized, "add", "."], { cwd: Instance.directory }).catch((error) => {
+    // Always run add and write-tree from the worktree root to ensure consistent behavior
+    await gitWithRetry(["--git-dir", gitNormalized, "--work-tree", worktreeNormalized, "add", "-A"], { cwd: Instance.worktree }).catch((error) => {
       log.warn("git add failed with exception", { error: String(error) })
     })
 
     const writeTreeResult = await gitWithRetry(["--git-dir", gitNormalized, "--work-tree", worktreeNormalized, "write-tree"], {
-      cwd: Instance.directory,
+      cwd: Instance.worktree,
       timeout: 30000,
     }).catch((error) => {
       log.error("failed to create snapshot", { error: String(error) })
