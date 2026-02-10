@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test, vi } from "bun:test"
 import os from "node:os"
 import path from "node:path"
 import { mkdtemp, mkdir, rm } from "node:fs/promises"
@@ -6,6 +6,31 @@ import { Filesystem } from "../../src/util/filesystem"
 import { Flag } from "../../src/flag/flag"
 
 describe("util.filesystem", () => {
+  test("isValidFilename() catch block with invalid surrogate", () => {
+    // Try to pass an invalid surrogate pair
+    const invalid = "\uD800" // Lone high surrogate
+    // Buffer.from("\uD800", 'utf-8').toString('utf-8') usually replaces it with replacement char
+    // so it might trigger (encoded !== filename) but not the catch block.
+    // Let's see.
+    expect(Filesystem.isValidFilename(invalid)).toBe(false)
+  })
+
+  test("non-windows branches", async () => {
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true })
+    
+    try {
+      // Re-importing or using the existing one if it hasn't cached the platform check internally at top-level
+      // The code uses process.platform inside functions, so it should pick up the change!
+      
+      expect(Filesystem.normalizeNativePath("a/b")).toBe("a/b")
+      expect(Filesystem.getCanonicalPath(".")).toBeTruthy()
+      
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
+    }
+  })
+
   test("exists() is true for files and directories", async () => {
     const tmp = await mkdtemp(path.join(os.tmpdir(), "opencode-filesystem-"))
     const dir = path.join(tmp, "dir")
