@@ -1,121 +1,136 @@
-import { describe, expect, test } from "bun:test"
-import path from "path"
-import fs from "fs/promises"
-import { pathToFileURL } from "url"
-import type { PermissionNext } from "../../src/permission/next"
-import type { Tool } from "../../src/tool/tool"
-import { Instance } from "../../src/project/instance"
+import { expect, it, describe, mock, beforeEach } from "bun:test"
 import { SkillTool } from "../../src/tool/skill"
-import { tmpdir } from "../fixture/fixture"
-import { Global } from "../../src/global"
+import { Skill } from "../../src/skill"
+import { PermissionNext } from "../../src/permission/next"
+import { Ripgrep } from "../../src/file/ripgrep"
+import path from "path"
 
-const baseCtx: Omit<Tool.Context, "ask"> = {
-  sessionID: "test",
-  messageID: "",
-  callID: "",
-  agent: "build",
-  abort: AbortSignal.any([]),
-  messages: [],
-  metadata: () => {},
-}
+// Mock dependencies
+mock.module("../../src/skill", () => ({
+  Skill: {
+    all: mock(),
+    get: mock(),
+  },
+}))
 
-describe("tool.skill", () => {
-  test("description lists skill location URL", async () => {
-    await using tmp = await tmpdir({
-      git: true,
-      init: async (dir) => {
-        const skillDir = path.join(dir, ".opencode", "skill", "tool-skill")
-        await fs.mkdir(skillDir, { recursive: true })
-        await Bun.write(
-          path.join(skillDir, "SKILL.md"),
-          `---
-name: tool-skill
-description: Skill for tool tests.
----
+mock.module("../../src/permission/next", () => ({
+  PermissionNext: {
+    evaluate: mock(),
+  },
+}))
 
-# Tool Skill
-`,
-        )
+mock.module("../../src/file/ripgrep", () => ({
+  Ripgrep: {
+    files: mock(),
+  },
+}))
+
+describe("SkillTool", () => {
+  const ctx = {
+    agent: {
+      permission: [],
+    },
+    ask: mock(),
+    abort: new AbortController().signal,
+  }
+
+  beforeEach(() => {
+    mock.restore()
+    ;(ctx.ask as any).mockClear()
+    ;(Skill.all as any).mockResolvedValue([
+      {
+        name: "test-skill",
+        description: "A test skill",
+        location: "/path/to/skill/SKILL.md",
+        content: "Skill content",
       },
+    ])
+    ;(Skill.get as any).mockResolvedValue({
+      name: "test-skill",
+      description: "A test skill",
+      location: "/path/to/skill/SKILL.md",
+      content: "Skill content",
     })
-
-    const home = process.env.OPENCODE_TEST_HOME
-    process.env.OPENCODE_TEST_HOME = tmp.path
-    await Global.initialize()
-
-    try {
-      await Instance.provide({
-        directory: tmp.path,
-        fn: async () => {
-          const tool = await SkillTool.init()
-          const skillPath = path.join(tmp.path, ".opencode", "skill", "tool-skill", "SKILL.md")
-          expect(tool.description).toContain(`<location>${pathToFileURL(skillPath).href}</location>`)
-        },
-      })
-    } finally {
-      process.env.OPENCODE_TEST_HOME = home
-    }
+    ;(PermissionNext.evaluate as any).mockReturnValue({ action: "allow" })
+    ;(Ripgrep.files as any).mockImplementation(async function* () {
+      yield "file1.txt"
+      yield "file2.txt"
+      yield "SKILL.md" // Should be skipped
+    })
   })
 
-  test("execute returns skill content block with files", async () => {
-    await using tmp = await tmpdir({
-      git: true,
-      init: async (dir) => {
-        const skillDir = path.join(dir, ".opencode", "skill", "tool-skill")
-        await fs.mkdir(skillDir, { recursive: true })
-        await Bun.write(
-          path.join(skillDir, "SKILL.md"),
-          `---
-name: tool-skill
-description: Skill for tool tests.
----
+  it("initializes with available skills", async () => {
+    const tool = await SkillTool.init(ctx as any)
+    expect(tool.description).toContain("test-skill")
+    expect(tool.description).toContain("A test skill")
+    expect(tool.description).toContain("file:///path/to/skill/SKILL.md")
+  })
 
-# Tool Skill
+  it("initializes with no skills if none available", async () => {
+    ;(Skill.all as any).mockResolvedValue([])
+    const tool = await SkillTool.init(ctx as any)
+    expect(tool.description).toContain("No skills are currently available")
+  })
 
-Use this skill.
-`,
-        )
-        const scriptsDir = path.join(skillDir, "scripts")
-        await fs.mkdir(scriptsDir, { recursive: true })
-        await Bun.write(path.join(scriptsDir, "demo.txt"), "demo")
-      },
+  it("filters skills based on permissions", async () => {
+    ;(PermissionNext.evaluate as any).mockImplementation((type: string, name: string) => {
+      if (name === "denied-skill") return { action: "deny" }
+      return { action: "allow" }
+    })
+    ;(Skill.all as any).mockResolvedValue([
+      { name: "allowed-skill", description: "Allowed", location: "/a/SKILL.md" },
+      { name: "denied-skill", description: "Denied", location: "/b/SKILL.md" },
+    ])
+
+    const tool = await SkillTool.init(ctx as any)
+    expect(tool.description).toContain("allowed-skill")
+    expect(tool.description).not.toContain("denied-skill")
+  })
+
+  it("executes and loads a skill", async () => {
+    const tool = await SkillTool.init(ctx as any)
+    const params = { name: "test-skill" }
+    const result = await tool.execute(params, ctx as any)
+
+    expect(ctx.ask).toHaveBeenCalledWith({
+      permission: "skill",
+      patterns: ["test-skill"],
+      always: ["test-skill"],
+      metadata: {},
     })
 
-    const home = process.env.OPENCODE_TEST_HOME
-    process.env.OPENCODE_TEST_HOME = tmp.path
-    await Global.initialize()
+    expect(result.title).toBe("Loaded skill: test-skill")
+    expect(result.output).toContain("Skill content")
+    expect(result.output).toContain("<skill_files>")
+    expect(result.output).toContain("file1.txt")
+    expect(result.output).toContain("file2.txt")
+    expect(result.output).not.toContain("SKILL.md")
+    expect(result.metadata.name).toBe("test-skill")
+    expect(result.metadata.dir).toBe(path.dirname("/path/to/skill/SKILL.md"))
+  })
 
-    try {
-      await Instance.provide({
-        directory: tmp.path,
-        fn: async () => {
-          const tool = await SkillTool.init()
-          const requests: Array<Omit<PermissionNext.Request, "id" | "sessionID" | "tool">> = []
-          const ctx: Tool.Context = {
-            ...baseCtx,
-            ask: async (req) => {
-              requests.push(req)
-            },
-          }
+  it("throws error if skill not found", async () => {
+    const tool = await SkillTool.init(ctx as any)
+    ;(Skill.get as any).mockResolvedValue(null)
+    ;(Skill.all as any).mockResolvedValue([{ name: "other-skill" }])
 
-          const result = await tool.execute({ name: "tool-skill" }, ctx)
-          const dir = path.join(tmp.path, ".opencode", "skill", "tool-skill")
-          const file = path.resolve(dir, "scripts", "demo.txt")
+    const params = { name: "missing-skill" }
+    expect(tool.execute(params, ctx as any)).rejects.toThrow(
+      'Skill "missing-skill" not found. Available skills: other-skill'
+    )
+  })
 
-          expect(requests.length).toBe(1)
-          expect(requests[0].permission).toBe("skill")
-          expect(requests[0].patterns).toContain("tool-skill")
-          expect(requests[0].always).toContain("tool-skill")
+  it("respects the sampling limit for skill files", async () => {
+    ;(Ripgrep.files as any).mockImplementation(async function* () {
+      for (let i = 0; i < 15; i++) {
+        yield `file${i}.txt`
+      }
+    })
 
-          expect(result.metadata.dir).toBe(dir.replace(/\\/g, "/"))
-          expect(result.output).toContain(`<skill_content name="tool-skill">`)
-          expect(result.output).toContain(`Base directory for this skill: ${pathToFileURL(dir).href}`)
-          expect(result.output).toContain(`<file>${file}</file>`)
-        },
-      })
-    } finally {
-      if (home === undefined) delete process.env.OPENCODE_TEST_HOME
-      else process.env.OPENCODE_TEST_HOME = home
-    }
+    const tool = await SkillTool.init(ctx as any)
+    const result = await tool.execute({ name: "test-skill" }, ctx as any)
+    
+    const fileCount = (result.output.match(/<file>/g) || []).length
+    expect(fileCount).toBe(10)
   })
 })
