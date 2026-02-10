@@ -3,6 +3,7 @@ use tauri_plugin_shell::{ShellExt, process::Command};
 
 const CLI_INSTALL_DIR: &str = ".opencode/bin";
 const CLI_BINARY_NAME: &str = "opencode";
+pub const SIDECAR_NAME: &str = "opencode-cli";
 
 #[derive(serde::Deserialize)]
 pub struct ServerConfig {
@@ -39,7 +40,7 @@ pub fn get_sidecar_path(app: &tauri::AppHandle) -> std::path::PathBuf {
         .expect("Failed to get current binary")
         .parent()
         .expect("Failed to get parent dir")
-        .join("opencode-cli")
+        .join(SIDECAR_NAME)
 }
 
 fn is_cli_installed() -> bool {
@@ -147,25 +148,29 @@ fn get_user_shell() -> String {
     std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string())
 }
 
-pub fn create_command(app: &tauri::AppHandle, args: &str) -> Command {
+fn apply_common_envs(app: &tauri::AppHandle, command: Command) -> Command {
     let state_dir = app
         .path()
         .resolve("", BaseDirectory::AppLocalData)
         .expect("Failed to resolve app local data dir");
 
-    #[cfg(target_os = "windows")]
-    return app
-        .shell()
-        .sidecar("opencode-cli")
-        .unwrap()
-        .args(args.split_whitespace())
+    command
         .env("OPENCODE_EXPERIMENTAL_ICON_DISCOVERY", "true")
         .env("OPENCODE_EXPERIMENTAL_FILEWATCHER", "true")
         .env("OPENCODE_CLIENT", "desktop")
-        .env("XDG_STATE_HOME", &state_dir);
+        .env("XDG_STATE_HOME", state_dir)
+}
+
+pub fn create_command(app: &tauri::AppHandle, args: &str) -> Command {
+    #[cfg(target_os = "windows")]
+    let command = app
+        .shell()
+        .sidecar(SIDECAR_NAME)
+        .unwrap()
+        .args(args.split_whitespace());
 
     #[cfg(not(target_os = "windows"))]
-    return {
+    let command = {
         let sidecar = get_sidecar_path(app);
         let shell = get_user_shell();
 
@@ -181,12 +186,8 @@ pub fn create_command(app: &tauri::AppHandle, args: &str) -> Command {
             vec!["-il", "-c", &cmd]
         };
 
-        app.shell()
-            .command(&shell)
-            .env("OPENCODE_EXPERIMENTAL_ICON_DISCOVERY", "true")
-            .env("OPENCODE_EXPERIMENTAL_FILEWATCHER", "true")
-            .env("OPENCODE_CLIENT", "desktop")
-            .env("XDG_STATE_HOME", &state_dir)
-            .args(shell_args)
+        app.shell().command(&shell).args(shell_args)
     };
+
+    apply_common_envs(app, command)
 }
