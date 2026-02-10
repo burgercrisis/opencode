@@ -69,6 +69,69 @@ describe("Bash Tool Upgrades (Reflecting 5a87a6a Branch Point)", () => {
       expect(result.exitCode).toBe(9009)
       expect(result.hasErrors).toBe(true)
     })
+
+    test("processCmdOutput: detects missing path error", () => {
+      const output = "The system cannot find the path specified"
+      const result = processCmdOutput(output, "cd C:\\does-not-exist")
+      expect(result.exitCode).toBe(1)
+      expect(result.hasErrors).toBe(true)
+    })
+
+    test("processPowerShellOutput: Get-NonExistentCmdlet variants and general not-found replacement", () => {
+      const baseError =
+        "The term 'Get-NonExistentCmdlet' is not recognized as the name of a cmdlet, function, script file, or operable program."
+      const withMissingParams =
+        "Get-NonExistentCmdlet : Cannot process command because of one or more missing mandatory parameters"
+      const genericNotFound =
+        "Some wrapper says Get-NonExistentCmdlet not found but without helper text"
+
+      const r1 = processPowerShellOutput(baseError, "Get-NonExistentCmdlet")
+      const r2 = processPowerShellOutput(withMissingParams, "Get-NonExistentCmdlet")
+      const r3 = processPowerShellOutput(genericNotFound, "Get-NonExistentCmdlet")
+
+      for (const r of [r1, r2, r3]) {
+        expect(r.output).toContain("Error: Command 'Get-NonExistentCmdlet' not found")
+        expect(r.output).toContain("Get-Command Get-NonExistentCmdlet")
+        expect(r.output).toContain("Import-Module <ModuleName>")
+        expect(r.hasErrors).toBe(true)
+      }
+    })
+
+    test("processPowerShellOutput: generic 'The term' replacement keeps other names", () => {
+      const output =
+        "The term 'CustomTool' is not recognized as the name of a cmdlet, function, script file, or operable program."
+      const result = processPowerShellOutput(output, "CustomTool")
+      expect(result.output).toContain("Error: Command 'CustomTool' not found")
+      expect(result.output).toContain("Please check the spelling")
+      expect(result.hasErrors).toBe(true)
+    })
+
+    test("processPowerShellOutput: Get-Credential non-interactive empty output path", () => {
+      const result = processPowerShellOutput("", "Get-Credential something")
+      expect(result.output).toContain("Get-Credential requires interactive input")
+      expect(result.hasErrors).toBe(true)
+    })
+
+    test("processPowerShellOutput: debug-related null reference replacement", () => {
+      const output = "Object reference not set to an instance of an object."
+      const command = "powershell -Debug -Command \"Write-Debug 'x'\""
+      const result = processPowerShellOutput(output, command)
+      expect(result.output).toContain("Debug functionality is not supported in non-interactive PowerShell sessions")
+      expect(result.hasErrors).toBe(true)
+    })
+
+    test("processPowerShellOutput: parameter errors mapped to friendly messages", () => {
+      const missingParam = "Missing an argument for parameter 'Name'"
+      const unknownParam = "A positional parameter cannot be found that matches parameter 'Foo'"
+
+      const r1 = processPowerShellOutput(missingParam, "cmd")
+      const r2 = processPowerShellOutput(unknownParam, "cmd")
+
+      expect(r1.output).toContain("Error: Missing required value for parameter 'Name'")
+      expect(r2.output).toContain("Error: Unknown parameter 'Foo'")
+      expect(r1.hasErrors).toBe(true)
+      expect(r2.hasErrors).toBe(true)
+    })
   })
 
   describe("Integration Tests", () => {
@@ -126,6 +189,26 @@ describe("Bash Tool Upgrades (Reflecting 5a87a6a Branch Point)", () => {
             ctx as any,
           )
           expect(result.metadata.exit).toBe(0)
+        },
+      })
+    })
+
+    test("BashTool: rejects negative timeout value", async () => {
+      await Instance.provide({
+        directory: projectRoot,
+        fn: async () => {
+          const bash = await BashTool.init()
+          await expect(
+            bash.execute(
+              {
+                command: "echo hello",
+                description: "Negative timeout test",
+                // @ts-expect-error deliberate invalid value for coverage
+                timeout: -1,
+              },
+              ctx as any,
+            ),
+          ).rejects.toThrow("Invalid timeout value")
         },
       })
     })
