@@ -14,9 +14,9 @@ describe("utils.gen defaultPathSerializer", () => {
     const url = defaultPathSerializer({
       path: {
         // label style
-        ".tags": ["a", "b"],
+        tags: ["a", "b"],
         // matrix style
-        ";filter*": { status: "open", sort: "desc" },
+        filter: { status: "open", sort: "desc" },
       },
       url: "/items/{.tags}{;filter*}",
     })
