@@ -47,4 +47,26 @@ describe("util.lazy", () => {
     expect(lazyNull()).toBe(null)
     expect(lazyUndefined()).toBe(undefined)
   })
+
+  test("reset clears cached value and causes recomputation", () => {
+    let callCount = 0
+    const getValue = () => {
+      callCount++
+      return `value-${callCount}`
+    }
+
+    const lazyValue = lazy(getValue)
+
+    const first = lazyValue()
+    const second = lazyValue()
+    expect(first).toBe("value-1")
+    expect(second).toBe("value-1")
+    expect(callCount).toBe(1)
+
+    lazyValue.reset()
+
+    const third = lazyValue()
+    expect(third).toBe("value-2")
+    expect(callCount).toBe(2)
+  })
 })
