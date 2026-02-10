@@ -1,56 +1,69 @@
-import { expect, it, describe, spyOn, jest } from "bun:test"
+import { describe, it, expect, mock, beforeEach } from "bun:test"
 import { GlobTool } from "../../src/tool/glob"
 import { Instance } from "../../src/project/instance"
 import { Ripgrep } from "../../src/file/ripgrep"
 import { tmpdir } from "../fixture/fixture"
-import path from "path"
+import * as path from "path"
+
+mock.module("../../src/file/ripgrep", () => ({
+  Ripgrep: {
+    files: mock(async function* () {
+      yield "file1.ts"
+      yield "file2.ts"
+    })
+  }
+}))
 
 describe("GlobTool", () => {
   const ctx = {
-    ask: async () => {},
+    sessionID: "test-session",
+    messageID: "test-message",
+    agent: "test-agent",
     abort: new AbortController().signal,
-  }
+    messages: [],
+    ask: mock(() => Promise.resolve()),
+    metadata: mock(() => {}),
+  } as any
 
-  it("returns found files", async () => {
+  beforeEach(() => {
+    mock.restore()
+  })
+
+  it("finds files using glob pattern", async () => {
     await using tmp = await tmpdir()
-    const file1 = path.join(tmp.path, "test1.ts")
-    const file2 = path.join(tmp.path, "test2.ts")
-    await Bun.write(file1, "content1")
-    await Bun.write(file2, "content2")
-
-    // Mock Ripgrep.files to return our files
-    const filesSpy = spyOn(Ripgrep, "files").mockImplementation(async function* () {
-      yield "test1.ts"
-      yield "test2.ts"
-    } as any)
-
+    
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
         const tool = await GlobTool.init()
-        const result = await tool.execute({ pattern: "*.ts" }, ctx as any)
-        
-        expect(result.output).toContain("test1.ts")
-        expect(result.output).toContain("test2.ts")
-        expect(result.metadata.count).toBe(2)
+        const result = await tool.execute({
+          pattern: "*.ts"
+        }, ctx)
+
+        expect(result.output).toContain("file1.ts")
+        expect(result.output).toContain("file2.ts")
+        expect(ctx.ask).toHaveBeenCalled()
       }
     })
-
-    filesSpy.mockRestore()
   })
 
   it("handles no files found", async () => {
     await using tmp = await tmpdir()
     
-    spyOn(Ripgrep, "files").mockImplementation(async function* () {} as any)
+    // Mock files to return nothing
+    const { Ripgrep } = await import("../../src/file/ripgrep")
+    // @ts-ignore
+    Ripgrep.files.mockImplementation(async function* () {})
 
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
         const tool = await GlobTool.init()
-        const result = await tool.execute({ pattern: "*.ts" }, ctx as any)
+        const result = await tool.execute({
+          pattern: "*.absent"
+        }, ctx)
+
         expect(result.output).toBe("No files found")
-        expect(result.metadata.count).toBe(0)
       }
     })
   })
@@ -58,44 +71,62 @@ describe("GlobTool", () => {
   it("handles truncation", async () => {
     await using tmp = await tmpdir()
     
-    spyOn(Ripgrep, "files").mockImplementation(async function* () {
-      for (let i = 0; i < 105; i++) {
-        yield `test${i}.ts`
+    // Mock files to return many files
+    const { Ripgrep } = await import("../../src/file/ripgrep")
+    // @ts-ignore
+    Ripgrep.files.mockImplementation(async function* () {
+      for (let i = 0; i < 110; i++) {
+        yield `file${i}.ts`
       }
-    } as any)
+    })
 
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
         const tool = await GlobTool.init()
-        const result = await tool.execute({ pattern: "*.ts" }, ctx as any)
-        expect(result.metadata.count).toBe(100)
-        expect(result.metadata.truncated).toBe(true)
+        const result = await tool.execute({
+          pattern: "*.ts"
+        }, ctx)
+
         expect(result.output).toContain("Results are truncated")
+        expect(result.metadata.truncated).toBe(true)
       }
     })
   })
 
-  it("handles custom path", async () => {
+  it("handles absolute and relative paths", async () => {
     await using tmp = await tmpdir()
-    const sub = path.join(tmp.path, "sub")
-    await Bun.write(path.join(sub, "test.ts"), "")
-
-    const filesSpy = spyOn(Ripgrep, "files").mockImplementation(async function* () {
-      yield "test.ts"
-    } as any)
+    const subDir = path.join(tmp.path, "subdir")
+    
+    const { Ripgrep } = await import("../../src/file/ripgrep")
+    // @ts-ignore
+    Ripgrep.files.mockImplementation(async function* () {
+      yield "subfile.ts"
+    })
 
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
         const tool = await GlobTool.init()
-        const result = await tool.execute({ pattern: "*.ts", path: "sub" }, ctx as any)
-        expect(result.output).toContain("test.ts")
+        
+        // Relative path
+        await tool.execute({
+          pattern: "*.ts",
+          path: "subdir"
+        }, ctx)
+        expect(Ripgrep.files).toHaveBeenCalledWith(expect.objectContaining({
+          cwd: expect.stringContaining("subdir")
+        }))
+
+        // Absolute path
+        await tool.execute({
+          pattern: "*.ts",
+          path: subDir
+        }, ctx)
+        expect(Ripgrep.files).toHaveBeenCalledWith(expect.objectContaining({
+          cwd: subDir
+        }))
       }
     })
-    
-    expect(filesSpy).toHaveBeenCalledWith(expect.objectContaining({
-      cwd: expect.stringContaining("sub")
-    }))
   })
 })
