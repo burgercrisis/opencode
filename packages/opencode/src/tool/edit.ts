@@ -50,6 +50,8 @@ export const EditTool = Tool.define("edit", {
     let contentOld = ""
     let contentNew = ""
     await FileTime.withLock(filePath, async () => {
+      if (await Filesystem.isDir(filePath)) throw new Error(`Path is a directory, not a file: ${filePath}`)
+
       const file = Bun.file(filePath)
       const existed = await file.exists()
       const stats = existed ? await file.stat() : null
@@ -77,7 +79,6 @@ export const EditTool = Tool.define("edit", {
       }
 
       if (!stats) throw new Error(`File ${filePath} not found`)
-      if (stats.isDirectory()) throw new Error(`Path is a directory, not a file: ${filePath}`)
 
       await FileTime.assert(ctx.sessionID, filePath)
       contentOld = await file.text()
