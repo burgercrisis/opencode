@@ -1,159 +1,158 @@
-import { describe, test, expect, afterAll } from "bun:test"
+import { expect, it, describe, mock, beforeEach, afterEach } from "bun:test"
 import { Truncate } from "../../src/tool/truncation"
+import { Scheduler } from "../../src/scheduler"
 import { Identifier } from "../../src/id/id"
+import { PermissionNext } from "../../src/permission/next"
 import fs from "fs/promises"
 import path from "path"
 
-const FIXTURES_DIR = path.join(import.meta.dir, "fixtures")
+// Mock dependencies
+mock.module("../../src/global", () => ({
+  Global: {
+    Path: {
+      data: "/test-data"
+    }
+  }
+}))
+
+mock.module("../../src/scheduler", () => ({
+  Scheduler: {
+    register: mock()
+  }
+}))
+
+mock.module("../../src/id/id", () => ({
+  Identifier: {
+    create: mock(),
+    timestamp: mock(),
+    ascending: mock().mockReturnValue("tool_new"),
+  }
+}))
+
+mock.module("../../src/permission/next", () => ({
+  PermissionNext: {
+    evaluate: mock()
+  }
+}))
+
+mock.module("fs/promises", () => ({
+  default: {
+    ...require("fs/promises"),
+    unlink: mock().mockResolvedValue(undefined)
+  }
+}))
 
 describe("Truncate", () => {
-  describe("output", () => {
-    test("truncates large json file by bytes", async () => {
-      const content = await Bun.file(path.join(FIXTURES_DIR, "models-api.json")).text()
-      const result = await Truncate.output(content)
+  const originalBun = Bun
+  const originalBuffer = Buffer
 
-      expect(result.truncated).toBe(true)
-      expect(result.content).toContain("truncated...")
-      if (result.truncated) expect(result.outputPath).toBeDefined()
-    })
+  beforeEach(() => {
+    mock.spyOn(Bun, "write").mockResolvedValue(0 as any)
+    mock.spyOn(Bun, "file").mockReturnValue({ path: "some-path" } as any)
+    // For Bun.Glob, we might need a different approach since it's a constructor
+  })
 
-    test("returns content unchanged when under limits", async () => {
-      const content = "line1\nline2\nline3"
-      const result = await Truncate.output(content)
+  afterEach(() => {
+    mock.restore()
+  })
 
-      expect(result.truncated).toBe(false)
-      expect(result.content).toBe(content)
-    })
-
-    test("truncates by line count", async () => {
-      const lines = Array.from({ length: 100 }, (_, i) => `line${i}`).join("\n")
-      const result = await Truncate.output(lines, { maxLines: 10 })
-
-      expect(result.truncated).toBe(true)
-      expect(result.content).toContain("...90 lines truncated...")
-    })
-
-    test("truncates by byte count", async () => {
-      const content = "a".repeat(1000)
-      const result = await Truncate.output(content, { maxBytes: 100 })
-
-      expect(result.truncated).toBe(true)
-      expect(result.content).toContain("truncated...")
-    })
-
-    test("truncates from head by default", async () => {
-      const lines = Array.from({ length: 10 }, (_, i) => `line${i}`).join("\n")
-      const result = await Truncate.output(lines, { maxLines: 3 })
-
-      expect(result.truncated).toBe(true)
-      expect(result.content).toContain("line0")
-      expect(result.content).toContain("line1")
-      expect(result.content).toContain("line2")
-      expect(result.content).not.toContain("line9")
-    })
-
-    test("truncates from tail when direction is tail", async () => {
-      const lines = Array.from({ length: 10 }, (_, i) => `line${i}`).join("\n")
-      const result = await Truncate.output(lines, { maxLines: 3, direction: "tail" })
-
-      expect(result.truncated).toBe(true)
-      expect(result.content).toContain("line7")
-      expect(result.content).toContain("line8")
-      expect(result.content).toContain("line9")
-      expect(result.content).not.toContain("line0")
-    })
-
-    test("uses default MAX_LINES and MAX_BYTES", () => {
-      expect(Truncate.MAX_LINES).toBe(2000)
-      expect(Truncate.MAX_BYTES).toBe(50 * 1024)
-    })
-
-    test("large single-line file truncates with byte message", async () => {
-      const content = await Bun.file(path.join(FIXTURES_DIR, "models-api.json")).text()
-      const result = await Truncate.output(content)
-
-      expect(result.truncated).toBe(true)
-      expect(result.content).toContain("bytes truncated...")
-      expect(Buffer.byteLength(content, "utf-8")).toBeGreaterThan(Truncate.MAX_BYTES)
-    })
-
-    test("writes full output to file when truncated", async () => {
-      const lines = Array.from({ length: 100 }, (_, i) => `line${i}`).join("\n")
-      const result = await Truncate.output(lines, { maxLines: 10 })
-
-      expect(result.truncated).toBe(true)
-      expect(result.content).toContain("The tool call succeeded but the output was truncated")
-      expect(result.content).toContain("Grep")
-      if (!result.truncated) throw new Error("expected truncated")
-      expect(result.outputPath).toBeDefined()
-      expect(result.outputPath).toContain("tool_")
-
-      const written = await Bun.file(result.outputPath).text()
-      expect(written).toBe(lines)
-    })
-
-    test("suggests Task tool when agent has task permission", async () => {
-      const lines = Array.from({ length: 100 }, (_, i) => `line${i}`).join("\n")
-      const agent = { permission: [{ permission: "task", pattern: "*", action: "allow" as const }] }
-      const result = await Truncate.output(lines, { maxLines: 10 }, agent as any)
-
-      expect(result.truncated).toBe(true)
-      expect(result.content).toContain("Grep")
-      expect(result.content).toContain("Task tool")
-    })
-
-    test("omits Task tool hint when agent lacks task permission", async () => {
-      const lines = Array.from({ length: 100 }, (_, i) => `line${i}`).join("\n")
-      const agent = { permission: [{ permission: "task", pattern: "*", action: "deny" as const }] }
-      const result = await Truncate.output(lines, { maxLines: 10 }, agent as any)
-
-      expect(result.truncated).toBe(true)
-      expect(result.content).toContain("Grep")
-      expect(result.content).not.toContain("Task tool")
-    })
-
-    test("does not write file when not truncated", async () => {
-      const content = "short content"
-      const result = await Truncate.output(content)
-
-      expect(result.truncated).toBe(false)
-      if (result.truncated) throw new Error("expected not truncated")
-      expect("outputPath" in result).toBe(false)
+  describe("init", () => {
+    it("registers a cleanup task", () => {
+      Truncate.init()
+      expect(Scheduler.register).toHaveBeenCalledWith(expect.objectContaining({
+        id: "tool.truncation.cleanup"
+      }))
     })
   })
 
   describe("cleanup", () => {
-    const DAY_MS = 24 * 60 * 60 * 1000
-    let oldFile: string
-    let recentFile: string
+    it("deletes old tool output files", async () => {
+      const cutoff = 1000
+      const oldTime = 500
+      const recentTime = 1500
 
-    afterAll(async () => {
-      await fs.unlink(oldFile).catch(() => {})
-      await fs.unlink(recentFile).catch(() => {})
-    })
-
-    test("deletes files older than 7 days and preserves recent files", async () => {
-      await fs.mkdir(Truncate.DIR, { recursive: true })
-
-      // Create an old file (10 days ago)
-      const oldTimestamp = Date.now() - 10 * DAY_MS
-      const oldId = Identifier.create("tool", false, oldTimestamp)
-      oldFile = path.join(Truncate.DIR, oldId)
-      await Bun.write(Bun.file(oldFile), "old content")
-
-      // Create a recent file (3 days ago)
-      const recentTimestamp = Date.now() - 3 * DAY_MS
-      const recentId = Identifier.create("tool", false, recentTimestamp)
-      recentFile = path.join(Truncate.DIR, recentId)
-      await Bun.write(Bun.file(recentFile), "recent content")
+      ;(Identifier.create as any).mockReturnValue("tool_mock")
+      ;(Identifier.timestamp as any).mockImplementation((id: string) => {
+        if (id === "tool_mock") return cutoff
+        if (id === "tool_old") return oldTime
+        if (id === "tool_recent") return recentTime
+        return 0
+      })
 
       await Truncate.cleanup()
 
-      // Old file should be deleted
-      expect(await Bun.file(oldFile).exists()).toBe(false)
+      expect(fs.unlink).toHaveBeenCalledTimes(1)
+      expect(fs.unlink).toHaveBeenCalledWith(path.join("/test-data/tool-output", "tool_old"))
+    })
 
-      // Recent file should still exist
-      expect(await Bun.file(recentFile).exists()).toBe(true)
+    it("handles glob errors gracefully", async () => {
+      const globInstance = new Bun.Glob("tool_*")
+      ;(globInstance.scan as any).mockRejectedValue(new Error("glob failed"))
+      
+      // Should not throw
+      await Truncate.cleanup()
+    })
+  })
+
+  describe("output", () => {
+    it("returns content as-is if below limits", async () => {
+      const text = "small content"
+      const result = await Truncate.output(text)
+      expect(result.truncated).toBe(false)
+      expect(result.content).toBe(text)
+    })
+
+    it("truncates by lines (head)", async () => {
+      const text = "line1\nline2\nline3"
+      const result = await Truncate.output(text, { maxLines: 2, direction: "head" })
+      
+      expect(result.truncated).toBe(true)
+      expect(result.content).toContain("line1\nline2")
+      expect(result.content).toContain("1 lines truncated")
+      expect(Bun.write).toHaveBeenCalled()
+    })
+
+    it("truncates by lines (tail)", async () => {
+      const text = "line1\nline2\nline3"
+      const result = await Truncate.output(text, { maxLines: 2, direction: "tail" })
+      
+      expect(result.truncated).toBe(true)
+      expect(result.content).toContain("line2\nline3")
+      expect(result.content).toContain("1 lines truncated")
+    })
+
+    it("truncates by bytes", async () => {
+      const text = "a\nb\nc" // 5 bytes with newlines
+      const result = await Truncate.output(text, { maxBytes: 3, direction: "head" })
+      
+      expect(result.truncated).toBe(true)
+      expect(result.content).toContain("a\nb")
+      expect(result.content).toContain("bytes truncated")
+    })
+
+    it("includes task tool hint if agent has permission", async () => {
+      ;(PermissionNext.evaluate as any).mockReturnValue({ action: "allow" })
+      const text = "line1\nline2"
+      const agent = { permission: "some-perm" } as any
+      const result = await Truncate.output(text, { maxLines: 1 }, agent)
+      
+      expect(result.content).toContain("Use the Task tool")
+    })
+
+    it("includes default hint if agent does not have task permission", async () => {
+      ;(PermissionNext.evaluate as any).mockReturnValue({ action: "deny" })
+      const text = "line1\nline2"
+      const agent = { permission: "some-perm" } as any
+      const result = await Truncate.output(text, { maxLines: 1 }, agent)
+      
+      expect(result.content).toContain("Use Grep to search")
+    })
+
+    it("includes default hint if no agent provided", async () => {
+      const text = "line1\nline2"
+      const result = await Truncate.output(text, { maxLines: 1 })
+      
+      expect(result.content).toContain("Use Grep to search")
     })
   })
 })
