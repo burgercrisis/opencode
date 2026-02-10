@@ -340,7 +340,6 @@ export const BlockAnchorReplacer: Replacer = function* (content, find) {
     : { match: null as { startLine: number; endLine: number } | null, max: -1, threshold: MULTIPLE_CANDIDATES_SIMILARITY_THRESHOLD }
 
   const best = candidates.length === 1 ? initialBest : findBest(0, initialBest)
-
   yield* (best.match && best.max >= best.threshold) ? [getMatchContent(best.match.startLine, best.match.endLine)] : []
 }
 
@@ -613,8 +612,9 @@ export function replace(
     MultiOccurrenceReplacer,
   ]
 
-  const matches = replacers.reduce<string[]>((acc, replacer) => {
-    return acc.length > 0 ? acc : [...acc, ...Array.from(replacer(content, oldString))]
+    const matches = replacers.reduce<string[]>((acc, replacer) => {
+      const result = Array.from(replacer(content, oldString))
+    return acc.length > 0 ? acc : [...acc, ...result]
   }, [])
 
   const uniqueMatches = Array.from(new Set(matches))
