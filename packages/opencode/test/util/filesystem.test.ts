@@ -9,10 +9,99 @@ describe("util.filesystem", () => {
   test("isValidFilename() catch block with invalid surrogate", () => {
     // Try to pass an invalid surrogate pair
     const invalid = "\uD800" // Lone high surrogate
-    // Buffer.from("\uD800", 'utf-8').toString('utf-8') usually replaces it with replacement char
-    // so it might trigger (encoded !== filename) but not the catch block.
-    // Let's see.
     expect(Filesystem.isValidFilename(invalid)).toBe(false)
+  })
+
+  test("isValidFilename() validates length", () => {
+    expect(Filesystem.isValidFilename("a".repeat(256))).toBe(false)
+    expect(Filesystem.isValidFilename("a".repeat(255))).toBe(true)
+  })
+
+  test("isValidFilename() validates Windows reserved names", () => {
+    expect(Filesystem.isValidFilename("CON")).toBe(false)
+    expect(Filesystem.isValidFilename("prn")).toBe(false)
+    expect(Filesystem.isValidFilename("AUX.txt")).toBe(false)
+  })
+
+  test("isValidFilename() validates Windows trailing spaces/periods", () => {
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+    try {
+      expect(Filesystem.isValidFilename("test ")).toBe(false)
+      expect(Filesystem.isValidFilename("test.")).toBe(false)
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
+    }
+  })
+
+  test("isBinaryFile() handles null byte detection", async () => {
+    const tmp = await mkdtemp(path.join(os.tmpdir(), "opencode-binary-null-"))
+    const binaryFile = path.join(tmp, "binary.bin")
+    // 3 null bytes triggers binary detection
+    await Bun.write(binaryFile, new Uint8Array([0, 0, 0]))
+    expect(await Filesystem.isBinaryFile(binaryFile)).toBe(true)
+    await rm(tmp, { recursive: true, force: true })
+  })
+
+  test("isBinaryFile() handles control character detection", async () => {
+    const tmp = await mkdtemp(path.join(os.tmpdir(), "opencode-binary-ctrl-"))
+    const binaryFile = path.join(tmp, "binary.bin")
+    // ASCII 7 (BEL) is a control character
+    await Bun.write(binaryFile, new Uint8Array([7]))
+    expect(await Filesystem.isBinaryFile(binaryFile)).toBe(true)
+    await rm(tmp, { recursive: true, force: true })
+  })
+
+  test("validateFilepath() handles empty or null paths", () => {
+    const root = "/tmp"
+    expect(Filesystem.validateFilepath("", root).valid).toBe(false)
+    expect(Filesystem.validateFilepath("file\0.txt", root).valid).toBe(false)
+  })
+
+  test("validateFilepath() detects traversal via normalization", () => {
+    const root = path.resolve("/tmp/project")
+    // normalize(abs) check
+    expect(Filesystem.validateFilepath("src/../../outside.txt", root).valid).toBe(false)
+  })
+
+  test("findUp() stop conditions", async () => {
+    const tmp = await mkdtemp(path.join(os.tmpdir(), "opencode-findup-stop-"))
+    const start = path.join(tmp, "a/b")
+    await mkdir(start, { recursive: true })
+    
+    // Stop at curr === next (root)
+    const found = await Filesystem.findUp("nonexistent", start)
+    expect(found).toEqual([])
+    
+    await rm(tmp, { recursive: true, force: true })
+  })
+
+  test("up() stop conditions", async () => {
+    const tmp = await mkdtemp(path.join(os.tmpdir(), "opencode-up-stop-"))
+    const start = path.join(tmp, "a/b")
+    await mkdir(start, { recursive: true })
+    
+    // Stop at curr === next (root)
+    const matches = []
+    for await (const match of Filesystem.up({ targets: ["nonexistent"], start })) {
+      matches.push(match)
+    }
+    expect(matches).toEqual([])
+    
+    await rm(tmp, { recursive: true, force: true })
+  })
+
+  test("globUp() basic functionality", async () => {
+    const tmp = await mkdtemp(path.join(os.tmpdir(), "opencode-globup-"))
+    const deep = path.join(tmp, "a/b")
+    await mkdir(deep, { recursive: true })
+    await Bun.write(path.join(tmp, "test.txt"), "hello")
+    
+    const matches = await Filesystem.globUp("*.txt", deep, tmp)
+    expect(matches.length).toBeGreaterThan(0)
+    expect(matches[0]).toContain("test.txt")
+    
+    await rm(tmp, { recursive: true, force: true })
   })
 
   test("non-windows branches", async () => {
