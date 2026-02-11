@@ -1,5 +1,21 @@
-import { expect, test, describe } from "bun:test"
+import { expect, test, describe, vi, mock } from "bun:test"
 import { ConfigMarkdown } from "../../src/config/markdown"
+import path from "node:path"
+import os from "node:os"
+import fs from "node:fs/promises"
+
+// @ts-ignore
+const actualMatter = require("gray-matter")
+mock.module("gray-matter", () => {
+  return {
+    default: (content: string, options: any) => {
+      if (content && typeof content === "string" && content.includes("FORCE_FAILURE")) {
+        throw new Error("forced failure")
+      }
+      return actualMatter(content, options)
+    }
+  }
+})
 
 describe("ConfigMarkdown: normal template", () => {
   const template = `This is a @valid/path/to/a/file and it should also match at
@@ -31,6 +47,14 @@ describe("ConfigMarkdown: normal template", () => {
 
   test("should extract valid/path/to/a/file", () => {
     expect(matches[0][1]).toBe("valid/path/to/a/file")
+  })
+
+  test("should extract shell commands", () => {
+    const shellTemplate = "Run !`ls -la` and !`echo hello`"
+    const shellMatches = ConfigMarkdown.shell(shellTemplate)
+    expect(shellMatches.length).toBe(2)
+    expect(shellMatches[0][1]).toBe("ls -la")
+    expect(shellMatches[1][1]).toBe("echo hello")
   })
 
   test("should extract another-valid/path/to/a/file", () => {
@@ -224,5 +248,28 @@ describe("ConfigMarkdown: frontmatter has weird model id", async () => {
     expect(result.data["stuff"]).toBe("This is some stuff\n")
 
     expect(result.content.trim()).toBe("Strictly follow da rules")
+  })
+})
+
+describe("ConfigMarkdown: edge cases", () => {
+  test("fallbackSanitization should handle non-kv lines", () => {
+    const content = "---\nkey: value\nnot-a-kv-line\n---"
+    const sanitized = ConfigMarkdown.fallbackSanitization(content)
+    expect(sanitized).toContain("not-a-kv-line")
+  })
+
+  test("parse should throw FrontmatterError on double failure", async () => {
+    const tmp = path.join(os.tmpdir(), "bad-frontmatter-" + Math.random().toString(36).slice(2) + ".md")
+    // The FORCE_FAILURE string triggers our mock throw
+    await fs.writeFile(tmp, "---\nFORCE_FAILURE\n---")
+    
+    try {
+      await ConfigMarkdown.parse(tmp)
+      throw new Error("Did not throw")
+    } catch (err: any) {
+      expect(err.name).toBe("ConfigFrontmatterError")
+    } finally {
+      await fs.unlink(tmp).catch(() => {})
+    }
   })
 })

@@ -73,7 +73,7 @@ export namespace ConfigMarkdown {
     try {
       const md = matter(template)
       return md
-    } catch {
+    } catch (err) {
       try {
         return matter(fallbackSanitization(template))
       } catch (err) {
