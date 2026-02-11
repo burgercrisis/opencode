@@ -352,10 +352,11 @@ export const WhitespaceNormalizedReplacer: Replacer = function* (content, find) 
   const processSingleLines = (acc: string[], i: number): string[] => {
     if (i >= lines.length) return acc
     const line = lines[i]
+    const lineWords = line.trim().split(/\s+/)
+    const findWords = find.trim().split(/\s+/)
     const isExact = normalizeWhitespace(line) === normalizedFind
     const match = !isExact && normalizeWhitespace(line).includes(normalizedFind) ? (() => {
-      const words = find.trim().split(/\s+/)
-      const pattern = words.length > 0 ? words.map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+") : ""
+      const pattern = findWords.length > 0 ? findWords.map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+") : ""
       return pattern ? line.match(new RegExp(pattern)) : null
     })() : null
 
@@ -369,12 +370,13 @@ export const WhitespaceNormalizedReplacer: Replacer = function* (content, find) 
 
   const processMultiLines = (acc: string[], i: number): string[] => {
     if (i > lines.length - findLines.length) return acc
-    const block = lines.slice(i, i + findLines.length).join("\n")
+    const blockLines = lines.slice(i, i + findLines.length)
+    const block = blockLines.join("\n")
     const nextAcc = normalizeWhitespace(block) === normalizedFind ? [...acc, block] : acc
     return processMultiLines(nextAcc, i + 1)
   }
 
-  if (findLines.length > 1) {
+  if (findLines.length > 1 || (findLines.length === 1 && find.includes("\n"))) {
     yield* processMultiLines([], 0)
   }
 }
@@ -642,9 +644,17 @@ export function replace(
         const replacementIndent = replacementLines[0].match(/^(\s+)/)?.[1] || ""
 
         const finalNewString =
-          searchIndent && !replacementIndent
-            ? replacementLines.map((line) => (line.trim().length === 0 ? line : searchIndent + line)).join("\n")
-            : newString
+          searchLines.length === replacementLines.length
+            ? replacementLines
+                .map((line, i) => {
+                  const sIndent = searchLines[i].match(/^(\s+)/)?.[1] || ""
+                  const rIndent = line.match(/^(\s+)/)?.[1] || ""
+                  return sIndent && !rIndent ? sIndent + line : line
+                })
+                .join("\n")
+            : searchIndent && !replacementIndent
+              ? replacementLines.map((line) => (line.trim().length === 0 ? line : searchIndent + line)).join("\n")
+              : newString
 
         return content.substring(0, index) + finalNewString + content.substring(index + search.length)
       })()

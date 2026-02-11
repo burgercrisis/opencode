@@ -177,23 +177,75 @@ describe("EditTool", () => {
     })
   })
 
-  it("handles indentation flexible replacer", async () => {
+  it("handles LSP diagnostics and errors", async () => {
+    await using tmp = await tmpdir()
+    const filePath = path.join(tmp.path, "error.ts")
+    await Bun.write(filePath, "const x = 1")
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        vi.spyOn(LSP, "diagnostics").mockResolvedValueOnce({
+          [filePath]: [
+            {
+              severity: 1,
+              message: "Type error",
+              range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } },
+            },
+          ],
+        })
+
+        const tool = await EditTool.init()
+        const result = await tool.execute({
+          filePath,
+          oldString: "1",
+          newString: "2"
+        }, ctx)
+
+        expect(result.output).toContain("LSP errors detected")
+        expect(result.output).toContain("Type error")
+      }
+    })
+  })
+
+  it("handles whitespace differences in oldString", async () => {
     await using tmp = await tmpdir()
     const filePath = path.join(tmp.path, "test.txt")
-    await Bun.write(filePath, "    nested code\n    more code")
+    await Bun.write(filePath, "line1\n  line2\nline3")
 
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
         const tool = await EditTool.init()
+        // oldString has different indentation/newlines
+        // The replacer should handle this via normalizeLineEndings and WhitespaceNormalizedReplacer
         await tool.execute({
           filePath,
-          oldString: "nested code\nmore code",
-          newString: "modified code\nstill modified"
+          oldString: "line1\nline2\nline3",
+          newString: "new1\nnew2\nnew3"
         }, ctx)
 
         const content = await Bun.file(filePath).text()
-        expect(content).toBe("    modified code\n    still modified")
+        // On Windows, Bun might write \r\n, but the test expects \n
+        expect(content.replace(/\r\n/g, "\n")).toBe("new1\n  new2\nnew3")
+      }
+    })
+  })
+
+  it("throws for directory path", async () => {
+    await using tmp = await tmpdir()
+    const dirPath = path.join(tmp.path, "subdir")
+    mkdirSync(dirPath)
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const tool = await EditTool.init()
+        await expect(tool.execute({
+          filePath: dirPath,
+          oldString: "foo",
+          newString: "bar"
+        }, ctx)).rejects.toThrow(/Path is a directory/)
       }
     })
   })
