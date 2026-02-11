@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test"
+import { test, expect, beforeEach, afterEach, vi, describe } from "bun:test"
 import { $ } from "bun"
 import { Snapshot } from "../../src/snapshot"
 import { Instance } from "../../src/project/instance"
@@ -7,39 +7,48 @@ import { tmpdir } from "../fixture/fixture"
 import path from "path"
 import fs from "fs/promises"
 
-async function bootstrap() {
-  return tmpdir({
-    git: true,
-    init: async (dir) => {
-      const unique = Math.random().toString(36).slice(2)
-      const aContent = `A${unique}`
-      const bContent = `B${unique}`
-      await Bun.write(`${dir}/a.txt`, aContent)
-      await Bun.write(`${dir}/b.txt`, bContent)
-      await $`git add .`.cwd(dir).quiet()
-      await $`git commit --no-gpg-sign -m init`.cwd(dir).quiet()
-      return {
-        aContent,
-        bContent,
-      }
-    },
+describe("Snapshot", () => {
+  beforeEach(() => {
+    Snapshot.resetForTest()
   })
-}
 
-test("tracks deleted files correctly", async () => {
-  await using tmp = await bootstrap()
-  await Instance.provide({
-    directory: tmp.path,
-    fn: async () => {
-      const before = await Snapshot.track()
-      expect(before).toBeTruthy()
-
-      await $`rm ${tmp.path}/a.txt`.quiet()
-
-      expect((await Snapshot.patch(before!)).files).toContain(Filesystem.normalizeNativePath(path.join(tmp.path, "a.txt")))
-    },
+  afterEach(() => {
+    vi.restoreAllMocks()
   })
-})
+
+  async function bootstrap() {
+    return tmpdir({
+      git: true,
+      init: async (dir) => {
+        const unique = Math.random().toString(36).slice(2)
+        const aContent = `A${unique}`
+        const bContent = `B${unique}`
+        await Bun.write(`${dir}/a.txt`, aContent)
+        await Bun.write(`${dir}/b.txt`, bContent)
+        await $`git add .`.cwd(dir).quiet()
+        await $`git commit --no-gpg-sign -m init`.cwd(dir).quiet()
+        return {
+          aContent,
+          bContent,
+        }
+      },
+    })
+  }
+
+  test("tracks deleted files correctly", async () => {
+    await using tmp = await bootstrap()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const before = await Snapshot.track()
+        expect(before).toBeTruthy()
+
+        await $`rm ${tmp.path}/a.txt`.quiet()
+
+        expect((await Snapshot.patch(before!)).files).toContain(Filesystem.normalizeNativePath(path.join(tmp.path, "a.txt")))
+      },
+    })
+  })
 
 test("revert should remove new files", async () => {
   await using tmp = await bootstrap()
@@ -302,7 +311,7 @@ test("unicode filenames", async () => {
   })
 })
 
-test.skip("unicode filenames modification and restore", async () => {
+test("unicode filenames modification and restore", async () => {
   await using tmp = await bootstrap()
   await Instance.provide({
     directory: tmp.path,
@@ -1056,4 +1065,5 @@ test("diffFull with whitespace changes", async () => {
       expect(whitespaceDiff.additions).toBeGreaterThan(0)
     },
   })
+})
 })

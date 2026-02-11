@@ -565,26 +565,33 @@ export namespace Snapshot {
 
     const lines = numstatResult.stdout.trim().split("\n")
 
-    return Promise.all(
-      lines
-        .filter((l) => l.trim().length > 0)
-        .map(async (line) => {
-          const [add, del, rawFile] = line.split("\t")
-          const file = unquote(rawFile).replace(/\\/g, "/")
-          const status = statusMap.get(file) || "modified"
-          const before = status === "added" ? "" : await show(from, file)
-          const after = status === "deleted" ? "" : await show(to, file)
+    const results: FileDiff[] = []
+    const batchSize = 10
+    for (let i = 0; i < lines.length; i += batchSize) {
+      const batch = lines.slice(i, i + batchSize)
+      const batchResults = await Promise.all(
+        batch
+          .filter((l) => l.trim().length > 0)
+          .map(async (line) => {
+            const [add, del, rawFile] = line.split("\t")
+            const file = unquote(rawFile).replace(/\\/g, "/")
+            const status = statusMap.get(file) || "modified"
+            const before = status === "added" ? "" : await show(from, file)
+            const after = status === "deleted" ? "" : await show(to, file)
 
-          return {
-            file,
-            status,
-            before,
-            after,
-            additions: parseInt(add) || 0,
-            deletions: parseInt(del) || 0
-          }
-        })
-    )
+            return {
+              file,
+              status,
+              before,
+              after,
+              additions: parseInt(add) || 0,
+              deletions: parseInt(del) || 0,
+            }
+          }),
+      )
+      results.push(...batchResults)
+    }
+    return results
   }
 
   export function unquote(path: string): string {
