@@ -1,4 +1,4 @@
-import { describe, it, expect, mock, beforeEach } from "bun:test"
+import { describe, it, expect, mock, beforeEach, afterEach, vi } from "bun:test"
 import { EditTool } from "../../src/tool/edit"
 import { Instance } from "../../src/project/instance"
 import { LSP } from "../../src/lsp"
@@ -7,30 +7,7 @@ import { tmpdir } from "../fixture/fixture"
 import * as path from "path"
 import { Filesystem } from "../../src/util/filesystem"
 import { mkdirSync } from "node:fs"
-
-mock.module("../../src/lsp", () => ({
-  LSP: {
-    touchFile: mock(() => Promise.resolve()),
-    diagnostics: mock(() => Promise.resolve({})),
-    Diagnostic: {
-      pretty: (d: any) => `${d.message} (${d.line}:${d.character})`
-    }
-  }
-}))
-
-mock.module("../../src/bus", () => ({
-  Bus: {
-    publish: mock(() => Promise.resolve())
-  }
-}))
-
-mock.module("../../src/file/time", () => ({
-  FileTime: {
-    withLock: mock((path: string, fn: () => Promise<any>) => fn()),
-    assert: mock(() => Promise.resolve()),
-    read: mock(() => {}),
-  }
-}))
+import { Bus } from "../../src/bus"
 
 describe("EditTool", () => {
   const ctx = {
@@ -44,7 +21,16 @@ describe("EditTool", () => {
   } as any
 
   beforeEach(() => {
-    mock.restore()
+    vi.spyOn(LSP, "touchFile").mockResolvedValue(undefined)
+    vi.spyOn(LSP, "diagnostics").mockResolvedValue({})
+    vi.spyOn(Bus, "publish").mockResolvedValue(undefined)
+    vi.spyOn(FileTime, "withLock").mockImplementation((path: string, fn: () => Promise<any>) => fn())
+    vi.spyOn(FileTime, "assert").mockResolvedValue(undefined)
+    vi.spyOn(FileTime, "read").mockReturnValue(undefined)
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
   })
 
   it("replaces a string in a file", async () => {
@@ -402,22 +388,17 @@ end`
 
     const manyErrors = Array.from({ length: 25 }, (_, i) => ({
       message: `Error ${i}`,
-      line: i,
-      character: 0,
+      range: {
+        start: { line: i, character: 0 },
+        end: { line: i, character: 10 }
+      },
       severity: 1
-    }))
+    })) as any[]
 
-    mock.module("../../src/lsp", () => ({
-      LSP: {
-        touchFile: mock(() => Promise.resolve()),
-        diagnostics: mock(() => Promise.resolve({
-          [Filesystem.normalizePath(filePath)]: manyErrors
-        })),
-        Diagnostic: {
-          pretty: (d: any) => `${d.message} (${d.line}:${d.character})`
-        }
-      }
-    }))
+    vi.spyOn(LSP, "touchFile").mockResolvedValue(undefined)
+    vi.spyOn(LSP, "diagnostics").mockResolvedValue({
+      [Filesystem.normalizePath(filePath)]: manyErrors
+    })
 
     await Instance.provide({
       directory: tmp.path,

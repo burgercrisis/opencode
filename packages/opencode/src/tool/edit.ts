@@ -176,8 +176,8 @@ export const EditTool = Tool.define("edit", {
 export type Replacer = (content: string, find: string) => Generator<string, void, unknown>
 
 // Similarity thresholds for block anchor fallback matching
-const SINGLE_CANDIDATE_SIMILARITY_THRESHOLD = 0.0
-const MULTIPLE_CANDIDATES_SIMILARITY_THRESHOLD = 0.3
+const SINGLE_CANDIDATE_SIMILARITY_THRESHOLD = 0.5
+const MULTIPLE_CANDIDATES_SIMILARITY_THRESHOLD = 0.5
 
 /**
  * Levenshtein distance algorithm implementation
@@ -630,11 +630,23 @@ export function replace(
         const index = content.indexOf(search)
         const lastIndex = content.lastIndexOf(search)
 
-        return index !== lastIndex ? (() => {
+        if (index !== lastIndex) {
           throw new Error(
             "Found multiple matches for oldString. Provide more surrounding lines in oldString to identify the correct match.",
           )
-        })() : content.substring(0, index) + newString + content.substring(index + search.length)
+        }
+
+        const searchLines = search.split("\n")
+        const replacementLines = newString.split("\n")
+        const searchIndent = searchLines[0].match(/^(\s+)/)?.[1] || ""
+        const replacementIndent = replacementLines[0].match(/^(\s+)/)?.[1] || ""
+
+        const finalNewString =
+          searchIndent && !replacementIndent
+            ? replacementLines.map((line) => (line.trim().length === 0 ? line : searchIndent + line)).join("\n")
+            : newString
+
+        return content.substring(0, index) + finalNewString + content.substring(index + search.length)
       })()
     )
   )
