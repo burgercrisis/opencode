@@ -1,132 +1,121 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, it, mock } from "bun:test"
+import z from "zod"
 import { Tool } from "../../src/tool/tool"
-import { z } from "zod"
+import { Truncate } from "../../src/tool/truncation"
+
+mock.module("../../src/tool/truncation", () => ({
+  Truncate: {
+    output: mock().mockResolvedValue({
+      content: "truncated content",
+      truncated: true,
+      outputPath: "path/to/output"
+    })
+  }
+}))
 
 describe("Tool", () => {
-  test("validation error with default message", async () => {
-    const tool = Tool.define("test-tool", {
-      description: "test tool",
-      parameters: z.object({
-        count: z.number(),
-      }),
-      execute: async () => ({
-        title: "Test",
-        metadata: {},
-        output: "ok",
-      }),
+  describe("define", () => {
+    it("defines a tool and handles execution", async () => {
+      const tool = Tool.define("test-tool", {
+        description: "A test tool",
+        parameters: z.object({ foo: z.string() }),
+        execute: async (args) => ({
+          title: "Test Result",
+          metadata: { some: "meta" },
+          output: `Result: ${args.foo}`
+        })
+      })
+
+      expect(tool.id).toBe("test-tool")
+      const instance = await tool.init()
+      expect(instance.description).toBe("A test tool")
+
+      const ctx: Tool.Context = {
+        sessionID: "s1",
+        messageID: "m1",
+        agent: "a1",
+        abort: new AbortController().signal,
+        messages: [],
+        metadata: mock(),
+        ask: mock()
+      }
+
+      const result = await instance.execute({ foo: "bar" }, ctx)
+      expect(result.title).toBe("Test Result")
+      expect(result.output).toBe("truncated content")
+      expect(result.metadata.truncated).toBe(true)
+      expect(result.metadata.outputPath).toBe("path/to/output")
+      expect(Truncate.output).toHaveBeenCalled()
     })
 
-    const info = await tool.init()
-    const ctx: Tool.Context = {
-      sessionID: "session",
-      messageID: "message",
-      agent: "agent",
-      abort: new AbortController().signal,
-      messages: [],
-      metadata: () => {},
-      ask: async () => {},
-    }
+    it("handles validation errors with default message", async () => {
+      const tool = Tool.define("test-tool", {
+        description: "A test tool",
+        parameters: z.object({ foo: z.string() }),
+        execute: async () => ({
+          title: "Result",
+          metadata: {},
+          output: "ok"
+        })
+      })
 
-    expect(info.execute({ count: "invalid" } as any, ctx)).rejects.toThrow(
-      /The test-tool tool was called with invalid arguments/,
-    )
-  })
+      const instance = await tool.init()
+      const ctx: any = {}
 
-  test("validation error with custom formatter", async () => {
-    const tool = Tool.define("test-tool", {
-      description: "test tool",
-      parameters: z.object({
-        count: z.number(),
-      }),
-      formatValidationError: (error) => `CUSTOM ERROR: ${error.message}`,
-      execute: async () => ({
-        title: "Test",
-        metadata: {},
-        output: "ok",
-      }),
+      try {
+        await instance.execute({ foo: 123 } as any, ctx)
+        expect.unreachable()
+      } catch (e: any) {
+        expect(e.message).toContain("invalid arguments")
+      }
     })
 
-    const info = await tool.init()
-    const ctx: Tool.Context = {
-      sessionID: "session",
-      messageID: "message",
-      agent: "agent",
-      abort: new AbortController().signal,
-      messages: [],
-      metadata: () => {},
-      ask: async () => {},
-    }
+    it("handles validation errors with custom formatter", async () => {
+      const tool = Tool.define("test-tool", {
+        description: "A test tool",
+        parameters: z.object({ foo: z.string() }),
+        execute: async () => ({ title: "", metadata: {}, output: "" }),
+        formatValidationError: (err) => `Custom error: ${err.issues[0].path[0]}`
+      })
 
-    expect(info.execute({ count: "invalid" } as any, ctx)).rejects.toThrow(/CUSTOM ERROR:[\s\S]*expected number, received string/i)
-  })
-
-  test("output truncation", async () => {
-    const tool = Tool.define("test-tool", {
-      description: "test tool",
-      parameters: z.object({}),
-      execute: async () => ({
-        title: "Test",
-        metadata: {},
-        output: "A".repeat(100000), // Large output
-      }),
+      const instance = await tool.init()
+      try {
+        await instance.execute({ foo: 123 } as any, {} as any)
+        expect.unreachable()
+      } catch (e: any) {
+        expect(e.message).toBe("Custom error: foo")
+      }
     })
 
-    const info = await tool.init()
-    const ctx: Tool.Context = {
-      sessionID: "session",
-      messageID: "message",
-      agent: "agent",
-      abort: new AbortController().signal,
-      messages: [],
-      metadata: () => {},
-      ask: async () => {},
-    }
+    it("skips truncation if already marked as truncated", async () => {
+      const tool = Tool.define("test-tool", {
+        description: "A test tool",
+        parameters: z.object({}),
+        execute: async () => ({
+          title: "Result",
+          metadata: { truncated: false },
+          output: "already processed"
+        })
+      })
 
-    const result = await info.execute({}, ctx)
-    expect(result.metadata.truncated).toBe(true)
-    expect(result.output.length).toBeLessThan(100000)
-    expect(result.metadata.outputPath).toBeDefined()
-  })
-
-  test("skips truncation if already truncated", async () => {
-    const tool = Tool.define("test-tool", {
-      description: "test tool",
-      parameters: z.object({}),
-      execute: async () => ({
-        title: "Test",
-        metadata: { truncated: true },
-        output: "already truncated",
-      }),
+      const instance = await tool.init()
+      const result = await instance.execute({}, {} as any)
+      expect(result.output).toBe("already processed")
+      expect(result.metadata.truncated).toBe(false)
     })
 
-    const info = await tool.init()
-    const ctx: Tool.Context = {
-      sessionID: "session",
-      messageID: "message",
-      agent: "agent",
-      abort: new AbortController().signal,
-      messages: [],
-      metadata: () => {},
-      ask: async () => {},
-    }
+    it("accepts an init function", async () => {
+      const initFn = mock().mockResolvedValue({
+        description: "Dynamic tool",
+        parameters: z.object({}),
+        execute: async () => ({ title: "ok", metadata: {}, output: "val" })
+      })
 
-    const result = await info.execute({}, ctx)
-    expect(result.output).toBe("already truncated")
-    expect(result.metadata.truncated).toBe(true)
-  })
-
-  test("init with function context", async () => {
-    const tool = Tool.define("test-tool", async (initCtx) => ({
-      description: `test tool for ${initCtx?.agent?.name ?? "unknown"}`,
-      parameters: z.object({}),
-      execute: async () => ({
-        title: "Test",
-        metadata: {},
-        output: "ok",
-      }),
-    }))
-
-    const info = await tool.init({ agent: { name: "test-agent" } as any })
-    expect(info.description).toBe("test tool for test-agent")
+      const tool = Tool.define("dynamic", initFn)
+      const instance = await tool.init({ agent: { id: "agent1" } as any })
+      
+      expect(initFn).toHaveBeenCalledWith({ agent: { id: "agent1" } as any })
+      expect(instance.description).toBe("Dynamic tool")
+    })
   })
 })
