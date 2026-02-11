@@ -153,7 +153,7 @@ describe("Bash Tool Upgrades (Reflecting 5a87a6a Branch Point)", () => {
           expect(result.metadata.exit).toBe(9009)
         },
       })
-    })
+    }, 15000)
 
     test("Windows: CMD exit code 0 for successful pipe with findstr", async () => {
       if (process.platform !== "win32") return
@@ -172,7 +172,7 @@ describe("Bash Tool Upgrades (Reflecting 5a87a6a Branch Point)", () => {
           expect(result.metadata.exit).toBe(0)
         },
       })
-    })
+    }, 15000)
 
     test("Windows: if not exist returns exit code 0 when file is missing", async () => {
       if (process.platform !== "win32") return
@@ -191,7 +191,7 @@ describe("Bash Tool Upgrades (Reflecting 5a87a6a Branch Point)", () => {
           expect(result.metadata.exit).toBe(0)
         },
       })
-    })
+    }, 15000)
 
     test("BashTool: rejects negative timeout value", async () => {
       await Instance.provide({

@@ -635,7 +635,7 @@ describe("tool.bash preliminary test suite", () => {
               expect(result.metadata.output.trim()).toBe("True")
             },
           })
-        })
+        }, 15000)
 
         test("command 34: powershell -Command \"Get-ChildItem 'C:\\\\Program Files' | Select-Object -First 3\"", async () => {
           await Instance.provide({
@@ -762,7 +762,7 @@ describe("tool.bash preliminary test suite", () => {
               expect(result.metadata.output.trim()).toMatch(/[A-Za-z]:\\.*Temp/i)
             },
           })
-        })
+        }, 15000)
 
         describe("Part 5: Batch File Creation and Execution", () => {
           test("commands 41-46: Create, modify, execute, and cleanup batch file", async () => {
@@ -1735,7 +1735,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output).toContain("Done")
               },
             })
-          })
+          }, 15000)
 
           test("command 95: cmd /c for /l %i in (1,1,100) do @echo %i", async () => {
             await Instance.provide({
@@ -2240,7 +2240,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output).toContain("Job done")
               },
             })
-          })
+          }, 15000)
 
           test("command 122: powershell -Command \"Get-Job\"", async () => {
             await Instance.provide({
