@@ -9,6 +9,10 @@ import * as path from "path"
 
 const originalSpawn = Bun.spawn
 
+afterEach(() => {
+  globalThis.Bun.spawn = originalSpawn
+})
+
 mock.module("../../src/shell/shell", () => ({
   Shell: {
     getSpawnConfig: mock(() => ({
