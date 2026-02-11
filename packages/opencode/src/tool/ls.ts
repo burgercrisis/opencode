@@ -62,6 +62,13 @@ export const ListTool = Tool.define("list", {
     }
 
     const normalizedFiles = files.map((f) => f.replace(/\\/g, "/"))
+    if (normalizedFiles.length === 0) {
+      return {
+        title: searchPath,
+        output: "",
+        metadata: { matches: 0, truncated: false },
+      }
+    }
 
     const { dirs, filesByDir } = normalizedFiles.reduce(
       (acc, file) => {
