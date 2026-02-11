@@ -1,16 +1,18 @@
-import { describe, expect, it, mock } from "bun:test"
+import { describe, expect, it, mock, vi, beforeEach, afterEach } from "bun:test"
 import { assertExternalDirectory } from "../../src/tool/external-directory"
 import { Filesystem } from "../../src/util/filesystem"
 import { Instance } from "../../src/project/instance"
 
-mock.module("../../src/project/instance", () => ({
-  Instance: {
-    containsPath: mock().mockImplementation((path: string) => path.includes("in-project")),
-    disposeAll: mock().mockResolvedValue(undefined)
-  }
-}))
-
 describe("assertExternalDirectory", () => {
+  let containsPathSpy: any
+
+  beforeEach(() => {
+    containsPathSpy = vi.spyOn(Instance, "containsPath").mockImplementation((path: string) => path.includes("in-project"))
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
   it("returns undefined if target is missing", async () => {
     const result = await assertExternalDirectory({} as any)
     expect(result).toBeUndefined()
