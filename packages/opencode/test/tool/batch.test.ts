@@ -1,34 +1,33 @@
-import { expect, it, describe, mock, spyOn } from "bun:test"
+import { expect, it, describe, mock, spyOn, beforeEach, afterEach, vi } from "bun:test"
 import { BatchTool } from "../../src/tool/batch"
 import { ToolRegistry } from "../../src/tool/registry"
 import { Session } from "../../src/session"
 import { Identifier } from "../../src/id/id"
 
-// Mock the modules that BatchTool imports dynamically
-mock.module("../../src/session", () => ({
-  Session: {
-    updatePart: mock(() => Promise.resolve()),
-  },
-}))
-
-mock.module("../../src/id/id", () => ({
-  Identifier: {
-    ascending: mock(() => "test-id"),
-  },
-}))
-
-mock.module("../../src/tool/registry", () => ({
-  ToolRegistry: {
-    tools: mock(() => Promise.resolve([])),
-  },
-}))
-
 describe("BatchTool", () => {
+  let mocks: {
+    sessionUpdatePart: any
+    identifierAscending: any
+    toolRegistryTools: any
+  }
+
   const ctx = {
     messageID: "msg-1",
     sessionID: "sess-1",
     abort: new AbortController().signal,
   }
+
+  beforeEach(() => {
+    mocks = {
+      sessionUpdatePart: vi.spyOn(Session, "updatePart").mockResolvedValue(undefined),
+      identifierAscending: vi.spyOn(Identifier, "ascending").mockReturnValue("test-id"),
+      toolRegistryTools: vi.spyOn(ToolRegistry, "tools").mockResolvedValue([]),
+    }
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
 
   it("executes tool calls in parallel", async () => {
     const mockTool = {
@@ -39,8 +38,7 @@ describe("BatchTool", () => {
       execute: mock(() => Promise.resolve({ title: "Result", output: "Success" })),
     }
 
-    // @ts-ignore
-    ToolRegistry.tools.mockResolvedValue([mockTool])
+    mocks.toolRegistryTools.mockResolvedValue([mockTool as any])
 
     const tool = await BatchTool.init()
     const result = await tool.execute({
@@ -52,8 +50,7 @@ describe("BatchTool", () => {
 
     expect(result.output).toContain("All 2 tools executed successfully")
     expect(mockTool.execute).toHaveBeenCalledTimes(2)
-    // @ts-ignore
-    expect(Session.updatePart).toHaveBeenCalled()
+    expect(mocks.sessionUpdatePart).toHaveBeenCalled()
   })
 
   it("handles disallowed tools", async () => {
@@ -65,8 +62,7 @@ describe("BatchTool", () => {
     }, ctx as any)
 
     expect(result.output).toContain("Executed 0/1 tools successfully. 1 failed.")
-    // @ts-ignore
-    expect(Session.updatePart).toHaveBeenCalledWith(expect.objectContaining({
+    expect(mocks.sessionUpdatePart).toHaveBeenCalledWith(expect.objectContaining({
       state: expect.objectContaining({
         status: "error",
         error: expect.stringContaining("not allowed in batch")
@@ -75,8 +71,7 @@ describe("BatchTool", () => {
   })
 
   it("handles missing tools", async () => {
-    // @ts-ignore
-    ToolRegistry.tools.mockResolvedValue([])
+    mocks.toolRegistryTools.mockResolvedValue([])
 
     const tool = await BatchTool.init()
     const result = await tool.execute({
@@ -86,8 +81,7 @@ describe("BatchTool", () => {
     }, ctx as any)
 
     expect(result.output).toContain("Executed 0/1 tools successfully. 1 failed.")
-    // @ts-ignore
-    expect(Session.updatePart).toHaveBeenCalledWith(expect.objectContaining({
+    expect(mocks.sessionUpdatePart).toHaveBeenCalledWith(expect.objectContaining({
       state: expect.objectContaining({
         status: "error",
         error: expect.stringContaining("not in registry")
@@ -103,8 +97,7 @@ describe("BatchTool", () => {
       },
       execute: mock(() => Promise.resolve({ title: "Result", output: "Success" })),
     }
-    // @ts-ignore
-    ToolRegistry.tools.mockResolvedValue([mockTool])
+    mocks.toolRegistryTools.mockResolvedValue([mockTool as any])
 
     const tool = await BatchTool.init()
     const tool_calls = Array(30).fill({ tool: "test-tool", parameters: {} })
