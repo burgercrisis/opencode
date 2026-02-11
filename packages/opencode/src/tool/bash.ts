@@ -65,7 +65,7 @@ export function processPowerShellOutput(output: string, command: string): { outp
   // 1. Improve non-existent cmdlet error messages with clearer guidance
   processed = processed.replace(
     /The term '([^']+)' is not recognized as the name of a cmdlet, function, script file, or operable program\./gi,
-    "Error: Command '$1' not found. Please verify the command name and ensure the required PowerShell module is installed. " +
+    "Error: Command '$1' not found. Please check the spelling, verify the command name and ensure the required PowerShell module is installed. " +
     "Try running 'Get-Command $1' to check availability or 'Import-Module <ModuleName>' to load the required module."
   )
 
@@ -111,7 +111,17 @@ export function processPowerShellOutput(output: string, command: string): { outp
   )
 
   // 3. Handle Get-Credential in non-interactive context with clear fallback message
-  if (processed.includes("Get-Credential")) {
+  if (processed.includes("Get-Credential") || (processed.trim() === "" && command.includes("Get-Credential"))) {
+    // Handle hanging/timeout scenarios by detecting incomplete credential prompts
+    if (processed.trim() === "" && command.includes("Get-Credential")) {
+      const errorMsg = "Error: Get-Credential requires interactive input but is running in a non-interactive environment. " +
+      "Alternative approaches:\n" +
+      "1. Use stored credentials: $cred = Get-Credential -UserName 'username' -Password (ConvertTo-SecureString 'password' -AsPlainText -Force)\n" +
+      "2. Use Windows Credential Manager: Get-StoredCredential\n" +
+      "3. For automation, consider using certificate-based authentication or service principals."
+      return { output: errorMsg, hasErrors: true }
+    }
+
     // Handle the main non-interactive error
     processed = processed.replace(
       /Get-Credential : Cannot prompt for input in this environment/gi,
@@ -143,17 +153,6 @@ export function processPowerShellOutput(output: string, command: string): { outp
         )
       }
       // Keep original error if not related to Get-Credential
-    }
-   
-
-    // Handle hanging/timeout scenarios by detecting incomplete credential prompts
-    if (processed.trim() === "" && command.includes("Get-Credential")) {
-      const errorMsg = "Error: Get-Credential requires interactive input but is running in a non-interactive environment. " +
-      "Alternative approaches:\n" +
-      "1. Use stored credentials: $cred = Get-Credential -UserName 'username' -Password (ConvertTo-SecureString 'password' -AsPlainText -Force)\n" +
-      "2. Use Windows Credential Manager: Get-StoredCredential\n" +
-      "3. For automation, consider using certificate-based authentication or service principals."
-      return { output: errorMsg, hasErrors: true }
     }
   }
 
