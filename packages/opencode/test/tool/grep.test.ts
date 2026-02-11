@@ -1,4 +1,4 @@
-import { describe, expect, test, mock } from "bun:test"
+import { describe, expect, test, mock, vi, afterEach, beforeEach } from "bun:test"
 import { GrepTool } from "../../src/tool/grep"
 import { Instance } from "../../src/project/instance"
 import { tmpdir } from "../fixture/fixture"
@@ -6,15 +6,23 @@ import { Ripgrep } from "../../src/file/ripgrep"
 import * as fs from "fs/promises"
 import * as path from "path"
 
-mock.module("../../src/file/ripgrep", () => ({
-  Ripgrep: {
-    filepath: mock(() => Promise.resolve("rg")),
-  },
-}))
-
-const originalSpawn = Bun.spawn
-
 describe("GrepTool", () => {
+  let mocks: {
+    ripgrepFilepath: any
+    bunSpawn: any
+  }
+
+  beforeEach(() => {
+    mocks = {
+      ripgrepFilepath: vi.spyOn(Ripgrep, "filepath").mockResolvedValue("rg"),
+      bunSpawn: vi.spyOn(Bun, "spawn"),
+    }
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
   const ctx: any = {
     sessionID: "session",
     messageID: "message",
@@ -26,7 +34,7 @@ describe("GrepTool", () => {
   }
 
   function mockSpawn(stdout: string, exitCode = 0) {
-    return mock((args: string[]) => {
+    return (args: string[]) => {
       return {
         stdout: new ReadableStream({
           start(controller) {
@@ -42,7 +50,7 @@ describe("GrepTool", () => {
         exited: Promise.resolve(exitCode),
         kill: () => {},
       }
-    }) as any
+    }
   }
 
   test("greps files and sorts by modification time", async () => {
@@ -58,20 +66,16 @@ describe("GrepTool", () => {
         await fs.writeFile(file2, "target match 2")
 
         const rgOutput = `${file1}|1|target match 1\n${file2}|1|target match 2\n`
-        globalThis.Bun.spawn = mockSpawn(rgOutput)
+        mocks.bunSpawn.mockImplementation(mockSpawn(rgOutput))
 
-        try {
-          const tool = await GrepTool.init()
-          const result = await tool.execute({ pattern: "target" }, ctx)
+        const tool = await GrepTool.init()
+        const result = await tool.execute({ pattern: "target" }, ctx)
 
-          expect(result.output).toContain("Found 2 matches")
-          const lines = result.output.split("\n")
-          const file2Index = lines.findIndex(l => l.includes("file2.txt"))
-          const file1Index = lines.findIndex(l => l.includes("file1.txt"))
-          expect(file2Index).toBeLessThan(file1Index)
-        } finally {
-          globalThis.Bun.spawn = originalSpawn
-        }
+        expect(result.output).toContain("Found 2 matches")
+        const lines = result.output.split("\n")
+        const file2Index = lines.findIndex(l => l.includes("file2.txt"))
+        const file1Index = lines.findIndex(l => l.includes("file1.txt"))
+        expect(file2Index).toBeLessThan(file1Index)
       },
     })
   })
@@ -85,18 +89,14 @@ describe("GrepTool", () => {
         await fs.writeFile(file, "match")
 
         const manyMatches = Array.from({ length: 300 }, (_, i) => `${file}|${i}|match ${i}`).join("\n")
-        globalThis.Bun.spawn = mockSpawn(manyMatches)
+        mocks.bunSpawn.mockImplementation(mockSpawn(manyMatches))
 
-        try {
-          const tool = await GrepTool.init()
-          const result = await tool.execute({ pattern: "match" }, ctx)
+        const tool = await GrepTool.init()
+        const result = await tool.execute({ pattern: "match" }, ctx)
 
-          expect(result.metadata.matches).toBe(250)
-          expect(result.metadata.truncated).toBe(true)
-          expect(result.output).toContain("Results are truncated")
-        } finally {
-          globalThis.Bun.spawn = originalSpawn
-        }
+        expect(result.metadata.matches).toBe(250)
+        expect(result.metadata.truncated).toBe(true)
+        expect(result.output).toContain("Results are truncated")
       },
     })
   })
@@ -106,16 +106,12 @@ describe("GrepTool", () => {
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        globalThis.Bun.spawn = mockSpawn("", 1)
+        mocks.bunSpawn.mockImplementation(mockSpawn("", 1))
 
-        try {
-          const tool = await GrepTool.init()
-          const result = await tool.execute({ pattern: "nothing" }, ctx)
+        const tool = await GrepTool.init()
+        const result = await tool.execute({ pattern: "nothing" }, ctx)
 
-          expect(result.output).toBe("No files found")
-        } finally {
-          globalThis.Bun.spawn = originalSpawn
-        }
+        expect(result.output).toBe("No files found")
       },
     })
   })
@@ -128,16 +124,12 @@ describe("GrepTool", () => {
         const file = path.join(tmp.path, "long.txt")
         await fs.writeFile(file, "match")
         const longLine = "A".repeat(3000)
-        globalThis.Bun.spawn = mockSpawn(`${file}|1|${longLine}`)
+        mocks.bunSpawn.mockImplementation(mockSpawn(`${file}|1|${longLine}`))
 
-        try {
-          const tool = await GrepTool.init()
-          const result = await tool.execute({ pattern: "A" }, ctx)
+        const tool = await GrepTool.init()
+        const result = await tool.execute({ pattern: "A" }, ctx)
 
-          expect(result.output).toContain("A".repeat(2000) + "...")
-        } finally {
-          globalThis.Bun.spawn = originalSpawn
-        }
+        expect(result.output).toContain("A".repeat(2000) + "...")
       },
     })
   })
