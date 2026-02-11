@@ -1,37 +1,28 @@
-import { expect, it, describe, mock, beforeEach } from "bun:test"
+import { expect, it, describe, mock, beforeEach, afterEach, vi } from "bun:test"
 import { LspTool } from "../../src/tool/lsp"
 import { LSP } from "../../src/lsp"
 import { Instance } from "../../src/project/instance"
-import { assertExternalDirectory } from "../../src/tool/external-directory"
+import * as ExternalDirectory from "../../src/tool/external-directory"
 import { tmpdir } from "../fixture/fixture"
 import path from "path"
 
-// Mock dependencies
-mock.module("../../src/lsp", () => ({
-  LSP: {
-    hasClients: mock(),
-    touchFile: mock(),
-    definition: mock(),
-    references: mock(),
-    hover: mock(),
-    documentSymbol: mock(),
-    workspaceSymbol: mock(),
-    implementation: mock(),
-    prepareCallHierarchy: mock(),
-    incomingCalls: mock(),
-    outgoingCalls: mock(),
-    diagnostics: mock(),
-    Diagnostic: {
-      pretty: (d: any) => `Pretty: ${d.message}`,
-    },
-  },
-}))
-
-mock.module("../../src/tool/external-directory", () => ({
-  assertExternalDirectory: mock(),
-}))
-
 describe("LspTool", () => {
+  let mocks: {
+    lspHasClients: any
+    lspTouchFile: any
+    lspDefinition: any
+    lspReferences: any
+    lspHover: any
+    lspDocumentSymbol: any
+    lspWorkspaceSymbol: any
+    lspImplementation: any
+    lspPrepareCallHierarchy: any
+    lspIncomingCalls: any
+    lspOutgoingCalls: any
+    lspDiagnostics: any
+    assertExternal: any
+  }
+
   const ctx: any = {
     sessionID: "session",
     messageID: "message",
@@ -43,11 +34,25 @@ describe("LspTool", () => {
   }
 
   beforeEach(() => {
-    mock.restore()
-    ;(ctx.ask as any).mockClear()
-    ;(assertExternalDirectory as any).mockResolvedValue(undefined)
-    ;(LSP.hasClients as any).mockResolvedValue(true)
-    ;(LSP.touchFile as any).mockResolvedValue(undefined)
+    mocks = {
+      lspHasClients: vi.spyOn(LSP, "hasClients").mockResolvedValue(true),
+      lspTouchFile: vi.spyOn(LSP, "touchFile").mockResolvedValue(undefined),
+      lspDefinition: vi.spyOn(LSP, "definition"),
+      lspReferences: vi.spyOn(LSP, "references"),
+      lspHover: vi.spyOn(LSP, "hover"),
+      lspDocumentSymbol: vi.spyOn(LSP, "documentSymbol"),
+      lspWorkspaceSymbol: vi.spyOn(LSP, "workspaceSymbol"),
+      lspImplementation: vi.spyOn(LSP, "implementation"),
+      lspPrepareCallHierarchy: vi.spyOn(LSP, "prepareCallHierarchy"),
+      lspIncomingCalls: vi.spyOn(LSP, "incomingCalls"),
+      lspOutgoingCalls: vi.spyOn(LSP, "outgoingCalls"),
+      lspDiagnostics: vi.spyOn(LSP, "diagnostics"),
+      assertExternal: vi.spyOn(ExternalDirectory, "assertExternalDirectory").mockResolvedValue(undefined),
+    }
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
   })
 
   it("performs goToDefinition", async () => {
@@ -66,11 +71,11 @@ describe("LspTool", () => {
           character: 1,
         }
         const expectedResult = [{ uri: `file://${filePath}`, range: {} }]
-        ;(LSP.definition as any).mockResolvedValue(expectedResult)
+        mocks.lspDefinition.mockResolvedValue(expectedResult as any)
 
         const result = await tool.execute(params, ctx)
 
-        expect(LSP.definition).toHaveBeenCalled()
+        expect(mocks.lspDefinition).toHaveBeenCalled()
         expect(result.output).toBe(JSON.stringify(expectedResult, null, 2))
       },
     })
@@ -91,7 +96,7 @@ describe("LspTool", () => {
           line: 1,
           character: 1,
         }
-        ;(LSP.diagnostics as any).mockResolvedValue({})
+        mocks.lspDiagnostics.mockResolvedValue({})
 
         const result = await tool.execute(params, ctx)
         expect(result.output).toBe("No diagnostics found for this file.")
@@ -114,13 +119,20 @@ describe("LspTool", () => {
           line: 1,
           character: 1,
         }
-        const diag = { message: "Error" }
-        ;(LSP.diagnostics as any).mockResolvedValue({
+        const diag = {
+          message: "Something is wrong",
+          severity: 1,
+          range: {
+            start: { line: 0, character: 0 },
+            end: { line: 0, character: 1 }
+          }
+        }
+        mocks.lspDiagnostics.mockResolvedValue({
           [filePath]: [diag],
         })
 
         const result = await tool.execute(params, ctx)
-        expect(result.output).toBe("Pretty: Error")
+        expect(result.output).toBe("ERROR [1:1] Something is wrong")
       },
     })
   })
@@ -158,7 +170,7 @@ describe("LspTool", () => {
           line: 1,
           character: 1,
         }
-        ;(LSP.hasClients as any).mockResolvedValue(false)
+        mocks.lspHasClients.mockResolvedValue(false)
 
         expect(tool.execute(params, ctx)).rejects.toThrow("No LSP server available")
       },
@@ -186,11 +198,16 @@ describe("LspTool", () => {
         ] as const
 
         for (const operation of ops) {
-          const mockMethod = operation === "findReferences" ? "references" : 
-                             operation === "goToImplementation" ? "implementation" : 
-                             operation
+          const mockSpy = operation === "findReferences" ? mocks.lspReferences : 
+                             operation === "goToImplementation" ? mocks.lspImplementation : 
+                             operation === "hover" ? mocks.lspHover :
+                             operation === "workspaceSymbol" ? mocks.lspWorkspaceSymbol :
+                             operation === "documentSymbol" ? mocks.lspDocumentSymbol :
+                             operation === "prepareCallHierarchy" ? mocks.lspPrepareCallHierarchy :
+                             operation === "incomingCalls" ? mocks.lspIncomingCalls :
+                             mocks.lspOutgoingCalls
           
-          ;(LSP[mockMethod] as any).mockResolvedValue([])
+          mockSpy.mockResolvedValue([])
           
           const result = await tool.execute({
             operation,
