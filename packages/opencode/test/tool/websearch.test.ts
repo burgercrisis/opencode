@@ -1,24 +1,24 @@
-import { describe, it, expect, mock, beforeEach, spyOn } from "bun:test"
+import { describe, it, expect, mock, beforeEach, afterEach, vi, spyOn } from "bun:test"
 import { WebSearchTool } from "../../src/tool/websearch"
-
-// Mock Truncate.output since Tool.define calls it
-mock.module("../../src/tool/truncation", () => ({
-  Truncate: {
-    output: mock().mockImplementation(async (content) => ({
-      content,
-      truncated: false
-    }))
-  }
-}))
+import { Truncate } from "../../src/tool/truncation"
 
 describe("WebSearchTool", () => {
   let ctx: any
+  let truncateSpy: any
 
   beforeEach(() => {
     ctx = {
       ask: mock().mockResolvedValue(undefined),
       abort: new AbortController().signal,
     }
+    truncateSpy = vi.spyOn(Truncate, "output").mockImplementation(async (content) => ({
+      content,
+      truncated: false
+    }))
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
   })
 
   it("has a name", async () => {
