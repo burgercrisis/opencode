@@ -31,7 +31,6 @@ export namespace SessionCompaction {
     const config = await Config.get()
     if (config.compaction?.auto === false) return false
     if (!input.model.limit) return false
-    if (input.model.limit.context === 0) return false
     const contextLimit = input.model.limit.context || 128_000
     const count = input.tokens.input + input.tokens.cache.read + input.tokens.output
     const output =

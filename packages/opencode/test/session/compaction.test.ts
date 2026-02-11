@@ -112,14 +112,14 @@ describe("session.compaction.isOverflow", () => {
     })
   })
 
-  test("returns false when model context limit is 0", async () => {
+  test("returns true when model context limit is 0 (uses fallback)", async () => {
     await using tmp = await tmpdir()
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
         const model = createModel({ context: 0, output: 32_000 })
         const tokens = { input: 100_000, output: 10_000, reasoning: 0, cache: { read: 0, write: 0 } }
-        expect(await SessionCompaction.isOverflow({ tokens, model })).toBe(false)
+        expect(await SessionCompaction.isOverflow({ tokens, model })).toBe(true)
       },
     })
   })
