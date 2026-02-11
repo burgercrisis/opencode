@@ -98,7 +98,7 @@ export namespace ToolRegistry {
       : [...s.custom, tool]
   }
 
-  async function all(): Promise<Tool.Info[]> {
+  export async function all(): Promise<Tool.Info[]> {
     const custom = await state().then((x) => x.custom)
     const config = await Config.get()
 
