@@ -12,7 +12,9 @@ import { lazy } from "@/util/lazy"
 
 export namespace ModelsDev {
   const log = Log.create({ service: "models.dev" })
-  const filepath = path.join(Global.Path.cache, "models.json")
+  function filepath() {
+    return path.join(Global.Path.cache, "models.json")
+  }
 
   export const Model = z.object({
     id: z.string(),
@@ -109,7 +111,7 @@ export namespace ModelsDev {
   }
 
   export async function refresh() {
-    const file = Bun.file(filepath)
+    const file = Bun.file(filepath())
     log.info("refreshing", {
       file,
     })
