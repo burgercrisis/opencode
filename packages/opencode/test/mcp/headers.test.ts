@@ -1,17 +1,17 @@
-import { test, expect, mock, beforeEach, beforeAll } from "bun:test"
+import { test, expect, vi, beforeEach, afterEach, beforeAll } from "bun:test"
 import path from "path"
 import os from "os"
 import fs from "fs"
 
 // Track what options were passed to each transport constructor
-const transportCalls: Array<{
+let transportCalls: Array<{
   type: "streamable" | "sse"
   url: string
   options: { authProvider?: unknown; requestInit?: RequestInit }
 }> = []
 
 // Mock the transport constructors to capture their arguments
-mock.module("@modelcontextprotocol/sdk/client/streamableHttp.js", () => ({
+vi.mock("@modelcontextprotocol/sdk/client/streamableHttp.js", () => ({
   StreamableHTTPClientTransport: class MockStreamableHTTP {
     constructor(url: URL, options?: { authProvider?: unknown; requestInit?: RequestInit }) {
       transportCalls.push({
@@ -26,7 +26,7 @@ mock.module("@modelcontextprotocol/sdk/client/streamableHttp.js", () => ({
   },
 }))
 
-mock.module("@modelcontextprotocol/sdk/client/sse.js", () => ({
+vi.mock("@modelcontextprotocol/sdk/client/sse.js", () => ({
   SSEClientTransport: class MockSSE {
     constructor(url: URL, options?: { authProvider?: unknown; requestInit?: RequestInit }) {
       transportCalls.push({
@@ -45,21 +45,31 @@ let MCP: any
 let Instance: any
 let tmpdir: any
 
-beforeAll(async () => {
-  const { Global } = await import("../../src/global/index")
-  await Global.initialize()
-  const { Config } = await import("../../src/config/config")
-  Config.global.reset()
-  
-  const mcpMod = await import("../../src/mcp/index")
-  MCP = mcpMod.MCP
-  const instanceMod = await import("../../src/project/instance")
-  Instance = instanceMod.Instance
-  const fixtureMod = await import("../fixture/fixture")
-  tmpdir = fixtureMod.tmpdir
-})
+describe("MCP Headers", () => {
+  beforeAll(async () => {
+    const { Global } = await import("../../src/global/index")
+    await Global.initialize()
+    const { Config } = await import("../../src/config/config")
+    Config.global.reset()
+    
+    const mcpMod = await import("../../src/mcp/index")
+    MCP = mcpMod.MCP
+    const instanceMod = await import("../../src/project/instance")
+    Instance = instanceMod.Instance
+    const fixtureMod = await import("../fixture/fixture")
+    tmpdir = fixtureMod.tmpdir
+  })
 
-test("headers are passed to transports when oauth is enabled (default)", async () => {
+  beforeEach(() => {
+    transportCalls = []
+    vi.resetAllMocks()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  test("headers are passed to transports when oauth is enabled (default)", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {
       await Bun.write(
