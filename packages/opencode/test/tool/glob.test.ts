@@ -1,20 +1,15 @@
-import { describe, it, expect, mock, beforeEach } from "bun:test"
+import { describe, it, expect, mock, beforeEach, afterEach, vi } from "bun:test"
 import { GlobTool } from "../../src/tool/glob"
 import { Instance } from "../../src/project/instance"
 import { Ripgrep } from "../../src/file/ripgrep"
 import { tmpdir } from "../fixture/fixture"
 import * as path from "path"
 
-mock.module("../../src/file/ripgrep", () => ({
-  Ripgrep: {
-    files: mock(async function* () {
-      yield "file1.ts"
-      yield "file2.ts"
-    })
-  }
-}))
-
 describe("GlobTool", () => {
+  let mocks: {
+    ripgrepFiles: any
+  }
+
   const ctx = {
     sessionID: "test-session",
     messageID: "test-message",
@@ -26,7 +21,16 @@ describe("GlobTool", () => {
   } as any
 
   beforeEach(() => {
-    mock.restore()
+    mocks = {
+      ripgrepFiles: vi.spyOn(Ripgrep, "files").mockImplementation(async function* () {
+        yield "file1.ts"
+        yield "file2.ts"
+      } as any),
+    }
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
   })
 
   it("finds files using glob pattern", async () => {
@@ -51,9 +55,7 @@ describe("GlobTool", () => {
     await using tmp = await tmpdir()
     
     // Mock files to return nothing
-    const { Ripgrep } = await import("../../src/file/ripgrep")
-    // @ts-ignore
-    Ripgrep.files.mockImplementation(async function* () {})
+    mocks.ripgrepFiles.mockImplementation(async function* () {} as any)
 
     await Instance.provide({
       directory: tmp.path,
@@ -72,13 +74,11 @@ describe("GlobTool", () => {
     await using tmp = await tmpdir()
     
     // Mock files to return many files
-    const { Ripgrep } = await import("../../src/file/ripgrep")
-    // @ts-ignore
-    Ripgrep.files.mockImplementation(async function* () {
+    mocks.ripgrepFiles.mockImplementation(async function* () {
       for (let i = 0; i < 110; i++) {
         yield `file${i}.ts`
       }
-    })
+    } as any)
 
     await Instance.provide({
       directory: tmp.path,
