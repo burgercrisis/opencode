@@ -105,19 +105,15 @@ describe("util.filesystem", () => {
   })
 
   test("non-windows branches", async () => {
-    if (process.platform === "win32") return // Skip on Windows as path.normalize is platform-dependent
-    const originalPlatform = process.platform
-    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true })
-    
-    try {
-      // Re-importing or using the existing one if it hasn't cached the platform check internally at top-level
-      // The code uses process.platform inside functions, so it should pick up the change!
-      
-      expect(Filesystem.normalizeNativePath("a/b")).toBe("a/b")
-      expect(Filesystem.getCanonicalPath(".")).toBeTruthy()
-      
-    } finally {
-      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
+    // We don't mock process.platform here because node:path behavior is fixed at startup.
+    // Instead, we test the logic assuming we are on whatever platform we are on,
+    // and we already have platform-specific tests elsewhere.
+    // This test was redundant and incorrect in its mocking.
+    const result = Filesystem.normalizeNativePath("a/b")
+    if (process.platform === "win32") {
+      expect(result).toBe("a\\b")
+    } else {
+      expect(result).toBe("a/b")
     }
   })
 
@@ -154,14 +150,10 @@ describe("util.filesystem", () => {
   })
 
   test("normalizePath() handles Windows paths", () => {
-    // This test behavior depends on the platform running the test
     if (process.platform === "win32") {
-      // On Windows, it should try to resolve to real casing
-      // We can't easily test real casing without real files, but we can test it returns a string
       const p = "c:\\Windows"
       expect(typeof Filesystem.normalizePath(p)).toBe("string")
     } else {
-      // On non-Windows, it should just return the path
       const p = "/tmp/foo"
       expect(Filesystem.normalizePath(p)).toBe(p)
     }
@@ -186,26 +178,191 @@ describe("util.filesystem", () => {
 
   test("isValidFilename() validates filenames", () => {
     expect(Filesystem.isValidFilename("test.txt")).toBe(true)
-    expect(Filesystem.isValidFilename("test/file")).toBe(false) // Contains separator
-    expect(Filesystem.isValidFilename("test\\file")).toBe(false) // Contains separator
-    expect(Filesystem.isValidFilename("COM1")).toBe(false) // Reserved
+    expect(Filesystem.isValidFilename("test/file")).toBe(false)
+    expect(Filesystem.isValidFilename("test\\file")).toBe(false)
+    expect(Filesystem.isValidFilename("COM1")).toBe(false)
     expect(Filesystem.isValidFilename("")).toBe(false)
-    
-    // Control chars
     expect(Filesystem.isValidFilename("test\u0000.txt")).toBe(false)
   })
 
   test("validateFilepath() checks boundaries", () => {
     const root = path.resolve("/tmp/project")
-    
-    // Valid path
+    expect(Filesystem.validateFilepath("src/index.ts", root).valid).toBe(true)
     expect(Filesystem.validateFilepath("file.txt", root).valid).toBe(true)
-    
-    // Path traversal
     expect(Filesystem.validateFilepath("../outside.txt", root).valid).toBe(false)
+    const outsidePath = process.platform === "win32" ? "C:\\outside.txt" : "/outside.txt"
+    expect(Filesystem.validateFilepath(outsidePath, root).valid).toBe(false)
+  })
+
+  test("getCanonicalPath() with \\\\?\\ prefix on Windows", () => {
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
     
-    // Absolute path outside
-    expect(Filesystem.validateFilepath(process.platform === "win32" ? "C:\\outside.txt" : "/outside.txt", root).valid).toBe(false)
+    // We mock realpathSync.native to return a \\?\ prefixed path
+    const fs = require("node:fs")
+    const spy = vi.spyOn(fs.realpathSync, "native")
+    spy.mockReturnValue("\\\\?\\C:\\canonical\\path")
+    
+    try {
+      expect(Filesystem.getCanonicalPath("C:\\some\\path")).toBe("C:\\canonical\\path")
+    } finally {
+      spy.mockRestore()
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
+    }
+  })
+
+  test("getCanonicalPath() catch block", () => {
+    expect(Filesystem.getCanonicalPath("/non/existent/path/that/should/fail/realpath")).toBeTruthy()
+  })
+
+  test("normalizeGitPath() handles empty input", () => {
+    expect(Filesystem.normalizeGitPath("")).toBe("")
+  })
+
+  test("normalizeNativePath() handles empty input", () => {
+    expect(Filesystem.normalizeNativePath("")).toBe("")
+  })
+
+  test("isValidFilename() handles null/non-string", () => {
+    // @ts-ignore
+    expect(Filesystem.isValidFilename(null)).toBe(false)
+    // @ts-ignore
+    expect(Filesystem.isValidFilename(123)).toBe(false)
+  })
+
+  test("normalizeNativePath() with mock on Windows", () => {
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+    
+    try {
+      // We want to hit the line that replaces / with \
+      // On real Windows, path.normalize might have already done it.
+      // But we can test the function's logic directly.
+      expect(Filesystem.normalizeNativePath("a/b")).toContain("\\")
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
+    }
+  })
+
+  test("getCanonicalPath() success on linux", () => {
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true })
+    const fs = require("node:fs")
+    const spy = vi.spyOn(fs, "realpathSync")
+    spy.mockReturnValue("/canonical/path")
+    try {
+      expect(Filesystem.getCanonicalPath("/some/path")).toBe("/canonical/path")
+    } finally {
+      spy.mockRestore()
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
+    }
+  })
+
+  test("getCanonicalPath() without \\\\?\\ prefix on Windows", () => {
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+    
+    const fs = require("node:fs")
+    const spy = vi.spyOn(fs.realpathSync, "native")
+    spy.mockReturnValue("C:\\canonical\\path")
+    
+    try {
+      expect(Filesystem.getCanonicalPath("C:\\some\\path")).toBe("C:\\canonical\\path")
+    } finally {
+      spy.mockRestore()
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
+    }
+  })
+
+  test("isValidFilename() catch block", () => {
+    // We mock Buffer.from to throw
+    const originalBufferFrom = Buffer.from
+    // @ts-ignore
+    Buffer.from = () => { throw new Error("fail") }
+    try {
+      expect(Filesystem.isValidFilename("test.txt")).toBe(false)
+    } finally {
+      Buffer.from = originalBufferFrom
+    }
+  })
+
+  test("overlaps() functionality", () => {
+    // We use absolute paths to ensure relativePath works predictably
+    const root = process.platform === "win32" ? "C:\\" : "/"
+    const a = path.join(root, "a", "b")
+    const b = path.join(root, "a", "b", "c")
+    const c = path.join(root, "x", "y")
+
+    expect(Filesystem.overlaps(a, b)).toBe(true)
+    expect(Filesystem.overlaps(b, a)).toBe(true)
+    expect(Filesystem.overlaps(a, c)).toBe(false)
+    expect(Filesystem.overlaps(a, a)).toBe(true)
+  })
+
+  test("normalizePath() windows branch", () => {
+    const originalPlatform = process.platform
+    Object.defineProperty(process, "platform", { value: "win32", configurable: true })
+
+    try {
+      const mockPath = "C:\\Users\\test\\file.ts"
+      const spy = vi.spyOn(require("fs").realpathSync, "native").mockReturnValue(mockPath)
+
+      const result = Filesystem.normalizePath("some/path")
+      expect(result.replace(/\//g, "\\")).toBe(mockPath)
+      spy.mockRestore()
+    } finally {
+      Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true })
+    }
+  })
+
+  test("nativePath() experimental flag branch", () => {
+    const originalPlatform = process.platform
+    Object.defineProperty(process, "platform", { value: "win32", configurable: true })
+    const originalFlag = Flag.OPENCODE_EXPERIMENTAL_MSYS_PATHS
+
+    try {
+      // @ts-ignore
+      Flag.OPENCODE_EXPERIMENTAL_MSYS_PATHS = true
+      const p = "a/b/c"
+      expect(Filesystem.nativePath(p)).toBe(p)
+    } finally {
+      // @ts-ignore
+      Flag.OPENCODE_EXPERIMENTAL_MSYS_PATHS = originalFlag
+      Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true })
+    }
+  })
+
+  test("getCanonicalPath() windows long path prefix", () => {
+    const originalPlatform = process.platform
+    Object.defineProperty(process, "platform", { value: "win32", configurable: true })
+
+    try {
+      const longPath = "\\\\?\\C:\\Very\\Long\\Path"
+      const spy = vi.spyOn(require("fs").realpathSync, "native").mockReturnValue(longPath)
+
+      const result = Filesystem.getCanonicalPath("C:\\Very\\Long\\Path")
+      expect(result).toBe("C:\\Very\\Long\\Path")
+      spy.mockRestore()
+    } finally {
+      Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true })
+    }
+  })
+
+  test("findUp() with OPENCODE_TEST_HOME", async () => {
+    const tmp = await mkdtemp(path.join(os.tmpdir(), "opencode-findup-home-"))
+    const originalHome = process.env.OPENCODE_TEST_HOME
+    process.env.OPENCODE_TEST_HOME = tmp
+
+    try {
+      const start = path.join(tmp, "a/b/c")
+      await mkdir(start, { recursive: true })
+      
+      const found = await Filesystem.findUp("nonexistent", start)
+      expect(found).toEqual([])
+    } finally {
+      process.env.OPENCODE_TEST_HOME = originalHome
+      await rm(tmp, { recursive: true, force: true })
+    }
   })
 
   test("isBinaryFile() detects binary content", async () => {
@@ -219,7 +376,7 @@ describe("util.filesystem", () => {
 
     expect(await Filesystem.isBinaryFile(textFile)).toBe(false)
     expect(await Filesystem.isBinaryFile(binaryFile)).toBe(true)
-    expect(await Filesystem.isBinaryFile(missingFile)).toBe(true) // Fail safe
+    expect(await Filesystem.isBinaryFile(missingFile)).toBe(true)
 
     await rm(tmp, { recursive: true, force: true })
   })
@@ -232,16 +389,6 @@ describe("util.filesystem", () => {
     expect(Filesystem.contains(root, inside)).toBe(true)
     expect(Filesystem.contains(root, outside)).toBe(false)
     expect(Filesystem.contains(root, root)).toBe(true)
-  })
-
-  test("overlaps() checks if paths overlap", () => {
-    const a = path.resolve("/tmp/project/src")
-    const b = path.resolve("/tmp/project/src/file.ts")
-    const c = path.resolve("/tmp/project/test")
-
-    expect(Filesystem.overlaps(a, b)).toBe(true)
-    expect(Filesystem.overlaps(b, a)).toBe(true)
-    expect(Filesystem.overlaps(a, c)).toBe(false)
   })
 
   test("normalizeNativePath() uses correct separators", () => {
@@ -317,7 +464,6 @@ describe("util.filesystem", () => {
   })
 
   test("normalizePath() handles errors", () => {
-    // Pass something that realpathSync.native will fail on
     const result = Filesystem.normalizePath("Z:\\non-existent-drive\\file.txt")
     expect(result).toBe("Z:\\non-existent-drive\\file.txt")
   })
@@ -325,7 +471,7 @@ describe("util.filesystem", () => {
   test("nativePath() handles MSYS flag", () => {
     const original = Flag.OPENCODE_EXPERIMENTAL_MSYS_PATHS
     try {
-      // @ts-ignore - force change for test
+      // @ts-ignore
       Flag.OPENCODE_EXPERIMENTAL_MSYS_PATHS = true
       const p = "a/b/c"
       expect(Filesystem.nativePath(p)).toBe("a/b/c")
@@ -349,16 +495,12 @@ describe("util.filesystem", () => {
   })
 
   test("isValidFilename() catch block", () => {
-    // A lone surrogate should cause issues with some UTF-8 encoders/decoders
-    // but Node/Bun Buffer might just handle it by replacing it.
-    // However, we can try to pass something that is not a string if we bypass types.
     expect(Filesystem.isValidFilename(null as any)).toBe(false)
     expect(Filesystem.isValidFilename(undefined as any)).toBe(false)
     expect(Filesystem.isValidFilename(123 as any)).toBe(false)
   })
 
   test("platform specific branches", () => {
-    // If we can't mock process.platform, we can at least test the current one
     if (process.platform === "win32") {
       expect(Filesystem.normalizeNativePath("a/b")).toBe("a\\b")
       expect(Filesystem.getCanonicalPath("C:\\")).toContain(":")
@@ -369,7 +511,6 @@ describe("util.filesystem", () => {
   })
 
   test("getCanonicalPath() handles errors", () => {
-    // A path that doesn't exist should still return resolved path
     const p = "/non/existent/path/that/will/fail/realpath"
     expect(Filesystem.getCanonicalPath(p)).toBeTruthy()
   })
@@ -378,26 +519,20 @@ describe("util.filesystem", () => {
     const tmp = await mkdtemp(path.join(os.tmpdir(), "opencode-binary-small-"))
     const file = path.join(tmp, "small.txt")
     
-    // Very small file
     await Bun.write(file, "a")
     expect(await Filesystem.isBinaryFile(file)).toBe(false)
     
-    // Large text file (over 8000 bytes)
     await Bun.write(file, "a".repeat(9000))
     expect(await Filesystem.isBinaryFile(file)).toBe(false)
     
-    // Large binary file
     const buf = new Uint8Array(9000)
-    buf.fill(32) // fill with spaces (text)
+    buf.fill(32)
     buf[8500] = 0
     buf[8501] = 0
     buf[8502] = 0
     await Bun.write(file, buf)
-    // It only checks first 8000 bytes, so this should still be "text" (false) 
-    // unless there are nulls/ctrl in the first 8000.
     expect(await Filesystem.isBinaryFile(file)).toBe(false)
 
-    // Actually make it binary in the first 8000
     buf[100] = 0
     buf[101] = 0
     buf[102] = 0
@@ -408,9 +543,7 @@ describe("util.filesystem", () => {
   })
 
   test("isValidFilename() unicode and special cases", () => {
-    // Null byte
     expect(Filesystem.isValidFilename("a\0b")).toBe(false)
-    // Control chars
     expect(Filesystem.isValidFilename("a\x01b")).toBe(false)
     expect(Filesystem.isValidFilename("a\x1Fb")).toBe(false)
     expect(Filesystem.isValidFilename("a\x7Fb")).toBe(false)
