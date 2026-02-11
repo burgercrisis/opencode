@@ -44,6 +44,11 @@ export namespace Log {
    */
   export function resetForTest() {
     loggers.clear()
+    level = "INFO"
+    write = (msg: any) => {
+      process.stderr.write(msg)
+      return msg.length
+    }
   }
 
   export const Default = create({ service: "default" })
