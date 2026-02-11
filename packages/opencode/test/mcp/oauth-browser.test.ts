@@ -1,4 +1,4 @@
-import { test, expect, mock, beforeEach, afterEach, beforeAll, describe } from "bun:test"
+import { test, expect, mock, beforeEach, afterEach, beforeAll, describe, vi } from "bun:test"
 import { EventEmitter } from "events"
 import path from "path"
 import os from "os"

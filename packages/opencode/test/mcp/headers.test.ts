@@ -1,4 +1,4 @@
-import { test, expect, vi, beforeEach, afterEach, beforeAll } from "bun:test"
+import { test, expect, vi, beforeEach, afterEach, beforeAll, describe } from "bun:test"
 import path from "path"
 import os from "os"
 import fs from "fs"
@@ -172,4 +172,5 @@ test("no requestInit when headers are not provided", async () => {
       }
     },
   })
+})
 })
