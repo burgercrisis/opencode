@@ -1,0 +1,53 @@
+{
+  "$schema": "https://opencode.ai/desktop-theme.json",
+  "name": "Flexoki",
+  "id": "flexoki",
+  "dark": {
+    "seeds": {
+      "primary": "#DA702C",
+      "neutral": "#100F0F",
+      "interactive": "#DA702C",
+      "success": "#879A39",
+      "warning": "#DA702C",
+      "error": "#D14D41",
+      "info": "#3AA99F",
+      "diffAdd": "#879A39",
+      "diffDelete": "#D14D41"
+    },
+    "overrides": {
+      "background-base": "#100F0F",
+      "surface-base": "#1C1B1A",
+      "surface-raised": "#282726",
+      "syntax-comment": "#6F6E69",
+      "syntax-keyword": "#879A39",
+      "syntax-function": "#DA702C",
+      "syntax-string": "#3AA99F",
+      "syntax-number": "#8B7EC8",
+      "syntax-property": "#D0A215"
+    }
+  },
+  "light": {
+    "seeds": {
+      "primary": "#205EA6",
+      "neutral": "#FFFCF0",
+      "interactive": "#205EA6",
+      "success": "#66800B",
+      "warning": "#BC5215",
+      "error": "#AF3029",
+      "info": "#24837B",
+      "diffAdd": "#66800B",
+      "diffDelete": "#AF3029"
+    },
+    "overrides": {
+      "background-base": "#FFFCF0",
+      "surface-base": "#F2F0E5",
+      "surface-raised": "#E6E4D9",
+      "syntax-comment": "#6F6E69",
+      "syntax-keyword": "#66800B",
+      "syntax-function": "#BC5215",
+      "syntax-string": "#24837B",
+      "syntax-number": "#5E409D",
+      "syntax-property": "#AD8301"
+    }
+  }
+}

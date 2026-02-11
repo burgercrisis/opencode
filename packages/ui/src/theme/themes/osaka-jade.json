@@ -1,0 +1,52 @@
+{
+  "$schema": "https://opencode.ai/desktop-theme.json",
+  "name": "Osaka Jade",
+  "id": "osaka-jade",
+  "light": {
+    "seeds": {
+      "primary": "#1faa90",
+      "neutral": "#F6F5DD",
+      "interactive": "#a8527a",
+      "success": "#3d7a52",
+      "warning": "#b5a020",
+      "error": "#c7392d",
+      "info": "#1faa90",
+      "diffAdd": "#3d7a52",
+      "diffDelete": "#c7392d"
+    },
+    "overrides": {
+      "background-base": "#F6F5DD",
+      "background-weak": "#E8E7CC",
+      "text-base": "#111c18",
+      "text-weak": "#53685B"
+    }
+  },
+  "dark": {
+    "seeds": {
+      "primary": "#2DD5B7",
+      "neutral": "#111c18",
+      "interactive": "#D2689C",
+      "success": "#549e6a",
+      "warning": "#E5C736",
+      "error": "#FF5345",
+      "info": "#2DD5B7",
+      "diffAdd": "#549e6a",
+      "diffDelete": "#FF5345"
+    },
+    "overrides": {
+      "background-base": "#111c18",
+      "background-weak": "#1a2520",
+      "background-strong": "#161d1a",
+      "background-stronger": "#101512",
+      "text-base": "#C1C497",
+      "text-weak": "#53685B",
+      "text-strong": "#F6F5DD",
+      "syntax-string": "#63b07a",
+      "syntax-primitive": "#FF5345",
+      "syntax-property": "#2DD5B7",
+      "syntax-type": "#549e6a",
+      "syntax-constant": "#D2689C",
+      "syntax-info": "#2DD5B7"
+    }
+  }
+}

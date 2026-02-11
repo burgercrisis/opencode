@@ -1,0 +1,53 @@
+{
+  "$schema": "https://opencode.ai/desktop-theme.json",
+  "name": "Mercury",
+  "id": "mercury",
+  "dark": {
+    "seeds": {
+      "primary": "#8da4f5",
+      "neutral": "#171721",
+      "interactive": "#8da4f5",
+      "success": "#77c599",
+      "warning": "#fc9b6f",
+      "error": "#fc92b4",
+      "info": "#77becf",
+      "diffAdd": "#77c599",
+      "diffDelete": "#fc92b4"
+    },
+    "overrides": {
+      "background-base": "#171721",
+      "surface-base": "#10101a",
+      "surface-raised": "#272735",
+      "syntax-comment": "#70707d",
+      "syntax-keyword": "#8da4f5",
+      "syntax-function": "#8da4f5",
+      "syntax-string": "#77c599",
+      "syntax-number": "#fc9b6f",
+      "syntax-property": "#8da4f5"
+    }
+  },
+  "light": {
+    "seeds": {
+      "primary": "#5266eb",
+      "neutral": "#fbfcfd",
+      "interactive": "#5266eb",
+      "success": "#036e43",
+      "warning": "#a44200",
+      "error": "#b0175f",
+      "info": "#007f95",
+      "diffAdd": "#036e43",
+      "diffDelete": "#b0175f"
+    },
+    "overrides": {
+      "background-base": "#ffffff",
+      "surface-base": "#fbfcfd",
+      "surface-raised": "#f4f5f9",
+      "syntax-comment": "#70707d",
+      "syntax-keyword": "#465bd1",
+      "syntax-function": "#5266eb",
+      "syntax-string": "#036e43",
+      "syntax-number": "#a44200",
+      "syntax-property": "#465bd1"
+    }
+  }
+}

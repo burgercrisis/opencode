@@ -1,0 +1,53 @@
+{
+  "$schema": "https://opencode.ai/desktop-theme.json",
+  "name": "Zenburn",
+  "id": "zenburn",
+  "dark": {
+    "seeds": {
+      "primary": "#8cd0d3",
+      "neutral": "#3f3f3f",
+      "interactive": "#8cd0d3",
+      "success": "#7f9f7f",
+      "warning": "#f0dfaf",
+      "error": "#cc9393",
+      "info": "#dfaf8f",
+      "diffAdd": "#7f9f7f",
+      "diffDelete": "#cc9393"
+    },
+    "overrides": {
+      "background-base": "#3f3f3f",
+      "surface-base": "#4f4f4f",
+      "surface-raised": "#5f5f5f",
+      "syntax-comment": "#7f9f7f",
+      "syntax-keyword": "#f0dfaf",
+      "syntax-function": "#8cd0d3",
+      "syntax-string": "#cc9393",
+      "syntax-number": "#8fb28f",
+      "syntax-property": "#93e0e3"
+    }
+  },
+  "light": {
+    "seeds": {
+      "primary": "#5f7f8f",
+      "neutral": "#ffffef",
+      "interactive": "#5f7f8f",
+      "success": "#5f8f5f",
+      "warning": "#8f8f5f",
+      "error": "#8f5f5f",
+      "info": "#8f7f5f",
+      "diffAdd": "#5f8f5f",
+      "diffDelete": "#8f5f5f"
+    },
+    "overrides": {
+      "background-base": "#ffffef",
+      "surface-base": "#f5f5e5",
+      "surface-raised": "#ebebdb",
+      "syntax-comment": "#5f7f5f",
+      "syntax-keyword": "#8f8f5f",
+      "syntax-function": "#5f7f8f",
+      "syntax-string": "#8f5f5f",
+      "syntax-number": "#5f8f5f",
+      "syntax-property": "#5f8f8f"
+    }
+  }
+}

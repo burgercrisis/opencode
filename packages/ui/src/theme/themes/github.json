@@ -1,0 +1,52 @@
+{
+  "$schema": "https://opencode.ai/desktop-theme.json",
+  "name": "Github",
+  "id": "github",
+  "light": {
+    "seeds": {
+      "primary": "#0969da",
+      "neutral": "#ffffff",
+      "interactive": "#8250df",
+      "success": "#1a7f37",
+      "warning": "#9a6700",
+      "error": "#cf222e",
+      "info": "#bc4c00",
+      "diffAdd": "#1a7f37",
+      "diffDelete": "#cf222e"
+    },
+    "overrides": {
+      "background-base": "#ffffff",
+      "background-weak": "#f6f8fa",
+      "text-base": "#24292f",
+      "text-weak": "#57606a"
+    }
+  },
+  "dark": {
+    "seeds": {
+      "primary": "#58a6ff",
+      "neutral": "#0d1117",
+      "interactive": "#bc8cff",
+      "success": "#3fb950",
+      "warning": "#e3b341",
+      "error": "#f85149",
+      "info": "#d29922",
+      "diffAdd": "#3fb950",
+      "diffDelete": "#f85149"
+    },
+    "overrides": {
+      "background-base": "#0d1117",
+      "background-weak": "#010409",
+      "background-strong": "#161b22",
+      "background-stronger": "#0d1117",
+      "text-base": "#c9d1d9",
+      "text-weak": "#8b949e",
+      "text-strong": "#f0f6fc",
+      "syntax-string": "#39c5cf",
+      "syntax-primitive": "#ff7b72",
+      "syntax-property": "#58a6ff",
+      "syntax-type": "#d29922",
+      "syntax-constant": "#bc8cff",
+      "syntax-info": "#d29922"
+    }
+  }
+}

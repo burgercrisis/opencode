@@ -1,0 +1,52 @@
+{
+  "$schema": "https://opencode.ai/desktop-theme.json",
+  "name": "Kanagawa",
+  "id": "kanagawa",
+  "light": {
+    "seeds": {
+      "primary": "#2D4F67",
+      "neutral": "#F2E9DE",
+      "interactive": "#957FB8",
+      "success": "#98BB6C",
+      "warning": "#D7A657",
+      "error": "#E82424",
+      "info": "#76946A",
+      "diffAdd": "#98BB6C",
+      "diffDelete": "#E82424"
+    },
+    "overrides": {
+      "background-base": "#F2E9DE",
+      "background-weak": "#EAE4D7",
+      "text-base": "#54433A",
+      "text-weak": "#9E9389"
+    }
+  },
+  "dark": {
+    "seeds": {
+      "primary": "#7E9CD8",
+      "neutral": "#1F1F28",
+      "interactive": "#957FB8",
+      "success": "#98BB6C",
+      "warning": "#D7A657",
+      "error": "#E82424",
+      "info": "#76946A",
+      "diffAdd": "#98BB6C",
+      "diffDelete": "#E82424"
+    },
+    "overrides": {
+      "background-base": "#1F1F28",
+      "background-weak": "#2A2A37",
+      "background-strong": "#1a1a24",
+      "background-stronger": "#14141c",
+      "text-base": "#DCD7BA",
+      "text-weak": "#727169",
+      "text-strong": "#f6f5dd",
+      "syntax-string": "#98BB6C",
+      "syntax-primitive": "#E82424",
+      "syntax-property": "#7E9CD8",
+      "syntax-type": "#C38D9D",
+      "syntax-constant": "#957FB8",
+      "syntax-info": "#76946A"
+    }
+  }
+}

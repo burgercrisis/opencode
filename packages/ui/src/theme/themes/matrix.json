@@ -1,0 +1,52 @@
+{
+  "$schema": "https://opencode.ai/desktop-theme.json",
+  "name": "Matrix",
+  "id": "matrix",
+  "light": {
+    "seeds": {
+      "primary": "#1cc24b",
+      "neutral": "#eef3ea",
+      "interactive": "#24f6d9",
+      "success": "#1cc24b",
+      "warning": "#e6ff57",
+      "error": "#ff4b4b",
+      "info": "#30b3ff",
+      "diffAdd": "#1cc24b",
+      "diffDelete": "#ff4b4b"
+    },
+    "overrides": {
+      "background-base": "#eef3ea",
+      "background-weak": "#e4ebe1",
+      "text-base": "#203022",
+      "text-weak": "#748476"
+    }
+  },
+  "dark": {
+    "seeds": {
+      "primary": "#2eff6a",
+      "neutral": "#0a0e0a",
+      "interactive": "#00efff",
+      "success": "#62ff94",
+      "warning": "#e6ff57",
+      "error": "#ff4b4b",
+      "info": "#30b3ff",
+      "diffAdd": "#1cc24b",
+      "diffDelete": "#ff4b4b"
+    },
+    "overrides": {
+      "background-base": "#0a0e0a",
+      "background-weak": "#0e130d",
+      "background-strong": "#080b08",
+      "background-stronger": "#040604",
+      "text-base": "#62ff94",
+      "text-weak": "#8ca391",
+      "text-strong": "#2eff6a",
+      "syntax-string": "#1cc24b",
+      "syntax-primitive": "#ff4b4b",
+      "syntax-property": "#c770ff",
+      "syntax-type": "#e6ff57",
+      "syntax-constant": "#00efff",
+      "syntax-info": "#30b3ff"
+    }
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "$schema": "https://opencode.ai/desktop-theme.json",
+  "name": "Everforest",
+  "id": "everforest",
+  "dark": {
+    "seeds": {
+      "primary": "#a7c080",
+      "neutral": "#2d353b",
+      "interactive": "#a7c080",
+      "success": "#a7c080",
+      "warning": "#e69875",
+      "error": "#e67e80",
+      "info": "#83c092",
+      "diffAdd": "#4fd6be",
+      "diffDelete": "#c53b53"
+    },
+    "overrides": {
+      "background-base": "#2d353b",
+      "surface-base": "#333c43",
+      "surface-raised": "#343f44",
+      "syntax-comment": "#7a8478",
+      "syntax-keyword": "#d699b6",
+      "syntax-function": "#a7c080",
+      "syntax-string": "#a7c080",
+      "syntax-number": "#e69875",
+      "syntax-property": "#83c092"
+    }
+  },
+  "light": {
+    "seeds": {
+      "primary": "#8da101",
+      "neutral": "#fdf6e3",
+      "interactive": "#8da101",
+      "success": "#8da101",
+      "warning": "#f57d26",
+      "error": "#f85552",
+      "info": "#35a77c",
+      "diffAdd": "#1e725c",
+      "diffDelete": "#c53b53"
+    },
+    "overrides": {
+      "background-base": "#fdf6e3",
+      "surface-base": "#efebd4",
+      "surface-raised": "#f4f0d9",
+      "syntax-comment": "#a6b0a0",
+      "syntax-keyword": "#df69ba",
+      "syntax-function": "#8da101",
+      "syntax-string": "#8da101",
+      "syntax-number": "#f57d26",
+      "syntax-property": "#35a77c"
+    }
+  }
+}

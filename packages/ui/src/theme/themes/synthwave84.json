@@ -1,0 +1,53 @@
+{
+  "$schema": "https://opencode.ai/desktop-theme.json",
+  "name": "Synthwave '84",
+  "id": "synthwave84",
+  "dark": {
+    "seeds": {
+      "primary": "#36f9f6",
+      "neutral": "#262335",
+      "interactive": "#36f9f6",
+      "success": "#72f1b8",
+      "warning": "#fede5d",
+      "error": "#fe4450",
+      "info": "#ff8b39",
+      "diffAdd": "#72f1b8",
+      "diffDelete": "#fe4450"
+    },
+    "overrides": {
+      "background-base": "#262335",
+      "surface-base": "#1e1a29",
+      "surface-raised": "#2a2139",
+      "syntax-comment": "#848bbd",
+      "syntax-keyword": "#ff7edb",
+      "syntax-function": "#ff8b39",
+      "syntax-string": "#fede5d",
+      "syntax-number": "#b084eb",
+      "syntax-property": "#36f9f6"
+    }
+  },
+  "light": {
+    "seeds": {
+      "primary": "#00bcd4",
+      "neutral": "#fafafa",
+      "interactive": "#00bcd4",
+      "success": "#4caf50",
+      "warning": "#ff9800",
+      "error": "#f44336",
+      "info": "#ff5722",
+      "diffAdd": "#4caf50",
+      "diffDelete": "#f44336"
+    },
+    "overrides": {
+      "background-base": "#fafafa",
+      "surface-base": "#f5f5f5",
+      "surface-raised": "#eeeeee",
+      "syntax-comment": "#5c5c8a",
+      "syntax-keyword": "#e91e63",
+      "syntax-function": "#ff5722",
+      "syntax-string": "#ff9800",
+      "syntax-number": "#9c27b0",
+      "syntax-property": "#00bcd4"
+    }
+  }
+}

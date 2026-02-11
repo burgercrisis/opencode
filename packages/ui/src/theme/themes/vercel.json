@@ -1,0 +1,52 @@
+{
+  "$schema": "https://opencode.ai/desktop-theme.json",
+  "name": "Vercel",
+  "id": "vercel",
+  "light": {
+    "seeds": {
+      "primary": "#0070F3",
+      "neutral": "#FFFFFF",
+      "interactive": "#0062D1",
+      "success": "#388E3C",
+      "warning": "#FF9500",
+      "error": "#DC3545",
+      "info": "#0070F3",
+      "diffAdd": "#46A758",
+      "diffDelete": "#E5484D"
+    },
+    "overrides": {
+      "background-base": "#FFFFFF",
+      "background-weak": "#FAFAFA",
+      "text-base": "#171717",
+      "text-weak": "#666666"
+    }
+  },
+  "dark": {
+    "seeds": {
+      "primary": "#0070F3",
+      "neutral": "#000000",
+      "interactive": "#52A8FF",
+      "success": "#46A758",
+      "warning": "#FFB224",
+      "error": "#E5484D",
+      "info": "#52A8FF",
+      "diffAdd": "#63C46D",
+      "diffDelete": "#FF6166"
+    },
+    "overrides": {
+      "background-base": "#000000",
+      "background-weak": "#0A0A0A",
+      "background-strong": "#050505",
+      "background-stronger": "#000000",
+      "text-base": "#EDEDED",
+      "text-weak": "#878787",
+      "text-strong": "#ffffff",
+      "syntax-string": "#63C46D",
+      "syntax-primitive": "#FF6166",
+      "syntax-property": "#BF7AF0",
+      "syntax-type": "#0AC7AC",
+      "syntax-constant": "#F2A700",
+      "syntax-info": "#52A8FF"
+    }
+  }
+}

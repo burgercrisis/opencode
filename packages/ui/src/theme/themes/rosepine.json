@@ -1,0 +1,53 @@
+{
+  "$schema": "https://opencode.ai/desktop-theme.json",
+  "name": "Rose Pine",
+  "id": "rosepine",
+  "dark": {
+    "seeds": {
+      "primary": "#9ccfd8",
+      "neutral": "#191724",
+      "interactive": "#9ccfd8",
+      "success": "#31748f",
+      "warning": "#f6c177",
+      "error": "#eb6f92",
+      "info": "#9ccfd8",
+      "diffAdd": "#31748f",
+      "diffDelete": "#eb6f92"
+    },
+    "overrides": {
+      "background-base": "#191724",
+      "surface-base": "#1f1d2e",
+      "surface-raised": "#26233a",
+      "syntax-comment": "#6e6a86",
+      "syntax-keyword": "#31748f",
+      "syntax-function": "#ebbcba",
+      "syntax-string": "#f6c177",
+      "syntax-number": "#c4a7e7",
+      "syntax-property": "#9ccfd8"
+    }
+  },
+  "light": {
+    "seeds": {
+      "primary": "#31748f",
+      "neutral": "#faf4ed",
+      "interactive": "#31748f",
+      "success": "#286983",
+      "warning": "#ea9d34",
+      "error": "#b4637a",
+      "info": "#56949f",
+      "diffAdd": "#286983",
+      "diffDelete": "#b4637a"
+    },
+    "overrides": {
+      "background-base": "#faf4ed",
+      "surface-base": "#fffaf3",
+      "surface-raised": "#f2e9e1",
+      "syntax-comment": "#9893a5",
+      "syntax-keyword": "#286983",
+      "syntax-function": "#d7827e",
+      "syntax-string": "#ea9d34",
+      "syntax-number": "#907aa9",
+      "syntax-property": "#56949f"
+    }
+  }
+}
