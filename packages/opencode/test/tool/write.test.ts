@@ -1,4 +1,4 @@
-import { describe, expect, test, mock } from "bun:test"
+import { describe, expect, test, mock, beforeEach, afterEach, vi } from "bun:test"
 import { WriteTool } from "../../src/tool/write"
 import { Instance } from "../../src/project/instance"
 import { tmpdir } from "../fixture/fixture"
@@ -8,30 +8,29 @@ import { FileTime } from "../../src/file/time"
 import * as fs from "fs/promises"
 import * as path from "path"
 
-mock.module("../../src/lsp", () => ({
-  LSP: {
-    touchFile: mock(() => Promise.resolve()),
-    diagnostics: mock(() => ({})),
-    Diagnostic: {
-      pretty: (d: any) => `Error: ${d.message}`,
-    },
-  },
-}))
-
-mock.module("../../src/bus", () => ({
-  Bus: {
-    publish: mock(() => Promise.resolve()),
-  },
-}))
-
-mock.module("../../src/file/time", () => ({
-  FileTime: {
-    assert: mock(() => Promise.resolve()),
-    read: mock(() => {}),
-  },
-}))
-
 describe("WriteTool", () => {
+  let mocks: {
+    lspTouch: any
+    lspDiagnostics: any
+    busPublish: any
+    fileTimeAssert: any
+    fileTimeRead: any
+  }
+
+  beforeEach(() => {
+    mocks = {
+      lspTouch: vi.spyOn(LSP, "touchFile").mockResolvedValue(undefined),
+      lspDiagnostics: vi.spyOn(LSP, "diagnostics").mockResolvedValue({}),
+      busPublish: vi.spyOn(Bus, "publish").mockResolvedValue(undefined),
+      fileTimeAssert: vi.spyOn(FileTime, "assert").mockResolvedValue(undefined),
+      fileTimeRead: vi.spyOn(FileTime, "read").mockReturnValue(undefined),
+    }
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
   const ctx: any = {
     sessionID: "session",
     messageID: "message",
@@ -72,7 +71,7 @@ describe("WriteTool", () => {
         expect(result.output).toContain("Wrote file successfully.")
         expect(await fs.readFile(filePath, "utf-8")).toBe("new content")
         expect(result.metadata.exists).toBe(true)
-        expect(FileTime.assert).toHaveBeenCalled()
+        expect(mocks.fileTimeAssert).toHaveBeenCalled()
       },
     })
   })
@@ -83,9 +82,14 @@ describe("WriteTool", () => {
       directory: tmp.path,
       fn: async () => {
         const filePath = path.join(tmp.path, "error.ts")
-        const mockDiagnostics = LSP.diagnostics as any
-        mockDiagnostics.mockResolvedValueOnce({
-          [filePath]: [{ severity: 1, message: "Syntax error" }],
+        mocks.lspDiagnostics.mockResolvedValueOnce({
+          [filePath]: [
+            {
+              severity: 1,
+              message: "Syntax error",
+              range: { start: { line: 0, character: 0 }, end: { line: 0, character: 10 } },
+            },
+          ],
         })
 
         const tool = await WriteTool.init()
@@ -102,11 +106,16 @@ describe("WriteTool", () => {
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const filePath = path.join(tmp.path, "ok.ts")
+        const filePath = path.join(tmp.path, "main.ts")
         const otherPath = path.join(tmp.path, "other.ts")
-        const mockDiagnostics = LSP.diagnostics as any
-        mockDiagnostics.mockResolvedValueOnce({
-          [otherPath]: [{ severity: 1, message: "Other error" }],
+        mocks.lspDiagnostics.mockResolvedValueOnce({
+          [otherPath]: [
+            {
+              severity: 1,
+              message: "Other error",
+              range: { start: { line: 0, character: 0 }, end: { line: 0, character: 10 } },
+            },
+          ],
         })
 
         const tool = await WriteTool.init()
@@ -123,11 +132,14 @@ describe("WriteTool", () => {
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const filePath = path.join(tmp.path, "many_errors.ts")
-        const errors = Array.from({ length: 25 }, (_, i) => ({ severity: 1, message: `Error ${i}` }))
-        const mockDiagnostics = LSP.diagnostics as any
-        mockDiagnostics.mockResolvedValueOnce({
-          [filePath]: errors,
+        const filePath = path.join(tmp.path, "many-errors.ts")
+        const diagnostics = Array.from({ length: 25 }, (_, i) => ({
+          severity: 1,
+          message: `Error ${i}`,
+          range: { start: { line: i, character: 0 }, end: { line: i, character: 10 } },
+        }))
+        mocks.lspDiagnostics.mockResolvedValueOnce({
+          [filePath]: diagnostics,
         })
 
         const tool = await WriteTool.init()
