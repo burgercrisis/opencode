@@ -1,7 +1,7 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
+import { describe, it, expect, vi, beforeEach, afterEach } from "bun:test"
 import { WebFetchTool } from "../../src/tool/webfetch"
 import { Instance } from "../../src/project/instance"
-import { mock } from "bun:test"
+import { tmpdir } from "../fixture/fixture"
 
 describe("WebFetchTool", () => {
   let mocks: any
@@ -22,217 +22,257 @@ describe("WebFetchTool", () => {
   })
 
   it("validates URL protocol", async () => {
-    await Instance.provide(async () => {
-      const tool = await WebFetchTool.init()
-      try {
-        await tool.execute({ url: "ftp://example.com" }, ctx as any)
-        throw new Error("Should have thrown")
-      } catch (e: any) {
-        expect(e.message).toBe("URL must start with http:// or https://")
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const tool = await WebFetchTool.init()
+        try {
+          await tool.execute({ url: "ftp://example.com" }, ctx as any)
+          throw new Error("Should have thrown")
+        } catch (e: any) {
+          expect(e.message).toBe("URL must start with http:// or https://")
+        }
       }
     })
   })
 
   it("fetches content successfully as markdown (HTML to Markdown)", async () => {
-    await Instance.provide(async () => {
-      const tool = await WebFetchTool.init()
-      const mockResponse = {
-        ok: true,
-        status: 200,
-        headers: new Headers({ "content-type": "text/html", "content-length": "100" }),
-        arrayBuffer: async () => new TextEncoder().encode("<html><body><h1>Hello</h1></body></html>").buffer,
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const tool = await WebFetchTool.init()
+        const mockResponse = {
+          ok: true,
+          status: 200,
+          headers: new Headers({ "content-type": "text/html", "content-length": "100" }),
+          arrayBuffer: async () => new TextEncoder().encode("<html><body><h1>Hello</h1></body></html>").buffer,
+        }
+
+        mocks.fetch.mockResolvedValue(mockResponse as any)
+
+        const result = await tool.execute({ url: "https://example.com", format: "markdown" }, ctx as any)
+
+        expect(result.title).toContain("https://example.com")
+        expect(result.output).toContain("# Hello")
+        expect(mocks.ask).toHaveBeenCalled()
       }
-
-      mocks.fetch.mockResolvedValue(mockResponse as any)
-
-      const result = await tool.execute({ url: "https://example.com", format: "markdown" }, ctx as any)
-
-      expect(result.title).toContain("https://example.com")
-      expect(result.output).toContain("# Hello")
-      expect(mocks.ask).toHaveBeenCalled()
     })
   })
 
   it("fetches content successfully as text (HTML to Text)", async () => {
-    await Instance.provide(async () => {
-      const tool = await WebFetchTool.init()
-      const mockResponse = {
-        ok: true,
-        status: 200,
-        headers: new Headers({ "content-type": "text/html" }),
-        arrayBuffer: async () => new TextEncoder().encode("<html><body><h1>Hello</h1><p>World</p></body></html>").buffer,
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const tool = await WebFetchTool.init()
+        const mockResponse = {
+          ok: true,
+          status: 200,
+          headers: new Headers({ "content-type": "text/html" }),
+          arrayBuffer: async () => new TextEncoder().encode("<html><body><h1>Hello</h1><p>World</p></body></html>").buffer,
+        }
+
+        mocks.fetch.mockResolvedValue(mockResponse as any)
+
+        const result = await tool.execute({ url: "https://example.com", format: "text" }, ctx as any)
+
+        expect(result.output).toContain("Hello")
+        expect(result.output).toContain("World")
       }
-
-      mocks.fetch.mockResolvedValue(mockResponse as any)
-
-      const result = await tool.execute({ url: "https://example.com", format: "text" }, ctx as any)
-
-      expect(result.output).toContain("Hello")
-      expect(result.output).toContain("World")
     })
   })
 
   it("extracts text from HTML excluding script and style tags", async () => {
-    await Instance.provide(async () => {
-      const tool = await WebFetchTool.init()
-      const html = `
-        <html>
-          <head>
-            <style>body { color: red; }</style>
-            <script>console.log("hello");</script>
-          </head>
-          <body>
-            <p>Visible Content</p>
-            <noscript>Hidden Content</noscript>
-            <iframe>Hidden Content</iframe>
-          </body>
-        </html>
-      `
-      const mockResponse = {
-        ok: true,
-        status: 200,
-        headers: new Headers({ "content-type": "text/html" }),
-        arrayBuffer: async () => new TextEncoder().encode(html).buffer,
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const tool = await WebFetchTool.init()
+        const html = `
+          <html>
+            <head>
+              <style>body { color: red; }</style>
+              <script>console.log("hello");</script>
+            </head>
+            <body>
+              <p>Visible Content</p>
+              <noscript>Hidden Content</noscript>
+              <iframe>Hidden Content</iframe>
+            </body>
+          </html>
+        `
+        const mockResponse = {
+          ok: true,
+          status: 200,
+          headers: new Headers({ "content-type": "text/html" }),
+          arrayBuffer: async () => new TextEncoder().encode(html).buffer,
+        }
+
+        mocks.fetch.mockResolvedValue(mockResponse as any)
+
+        const result = await tool.execute({ url: "https://example.com", format: "text" }, ctx as any)
+
+        expect(result.output).toContain("Visible Content")
+        expect(result.output).not.toContain("console.log")
+        expect(result.output).not.toContain("body { color: red; }")
+        expect(result.output).not.toContain("Hidden Content")
       }
-
-      mocks.fetch.mockResolvedValue(mockResponse as any)
-
-      const result = await tool.execute({ url: "https://example.com", format: "text" }, ctx as any)
-
-      expect(result.output).toContain("Visible Content")
-      expect(result.output).not.toContain("console.log")
-      expect(result.output).not.toContain("body { color: red; }")
-      expect(result.output).not.toContain("Hidden Content")
     })
   })
 
   it("fetches content successfully as html", async () => {
-    await Instance.provide(async () => {
-      const tool = await WebFetchTool.init()
-      const html = "<html><body>Hello</body></html>"
-      const mockResponse = {
-        ok: true,
-        status: 200,
-        headers: new Headers({ "content-type": "text/html" }),
-        arrayBuffer: async () => new TextEncoder().encode(html).buffer,
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const tool = await WebFetchTool.init()
+        const html = "<html><body>Hello</body></html>"
+        const mockResponse = {
+          ok: true,
+          status: 200,
+          headers: new Headers({ "content-type": "text/html" }),
+          arrayBuffer: async () => new TextEncoder().encode(html).buffer,
+        }
+
+        mocks.fetch.mockResolvedValue(mockResponse as any)
+
+        const result = await tool.execute({ url: "https://example.com", format: "html" }, ctx as any)
+
+        expect(result.output).toBe(html)
       }
-
-      mocks.fetch.mockResolvedValue(mockResponse as any)
-
-      const result = await tool.execute({ url: "https://example.com", format: "html" }, ctx as any)
-
-      expect(result.output).toBe(html)
     })
   })
 
   it("handles Cloudflare mitigation retry", async () => {
-    await Instance.provide(async () => {
-      const tool = await WebFetchTool.init()
-      const firstResponse = {
-        ok: false,
-        status: 403,
-        headers: new Headers({ "cf-mitigated": "challenge" }),
-      }
-
-      const secondResponse = {
-        ok: true,
-        status: 200,
-        headers: new Headers({ "content-type": "text/plain" }),
-        arrayBuffer: async () => new TextEncoder().encode("Success").buffer,
-      }
-
-      let callCount = 0
-      mocks.fetch.mockImplementation(async (url: string, init: any) => {
-        callCount++
-        if (callCount === 1) {
-          expect(init?.headers?.["User-Agent"]).toContain("Mozilla")
-          return firstResponse as any
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const tool = await WebFetchTool.init()
+        const firstResponse = {
+          ok: false,
+          status: 403,
+          headers: new Headers({ "cf-mitigated": "challenge" }),
         }
-        expect(init?.headers?.["User-Agent"]).toBe("opencode")
-        return secondResponse as any
-      })
 
-      const result = await tool.execute({ url: "https://example.com" }, ctx as any)
-      expect(result.output).toBe("Success")
-      expect(callCount).toBe(2)
+        const secondResponse = {
+          ok: true,
+          status: 200,
+          headers: new Headers({ "content-type": "text/plain" }),
+          arrayBuffer: async () => new TextEncoder().encode("Success").buffer,
+        }
+
+        let callCount = 0
+        mocks.fetch.mockImplementation(async (url: string, init: any) => {
+          callCount++
+          if (callCount === 1) {
+            expect(init?.headers?.["User-Agent"]).toContain("Mozilla")
+            return firstResponse as any
+          }
+          expect(init?.headers?.["User-Agent"]).toBe("opencode")
+          return secondResponse as any
+        })
+
+        const result = await tool.execute({ url: "https://example.com" }, ctx as any)
+        expect(result.output).toBe("Success")
+        expect(callCount).toBe(2)
+      }
     })
   })
 
   it("throws error on failed request", async () => {
-    await Instance.provide(async () => {
-      const tool = await WebFetchTool.init()
-      const mockResponse = {
-        ok: false,
-        status: 404,
-        headers: new Headers(),
-      }
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const tool = await WebFetchTool.init()
+        const mockResponse = {
+          ok: false,
+          status: 404,
+          headers: new Headers(),
+        }
 
-      mocks.fetch.mockResolvedValue(mockResponse as any)
+        mocks.fetch.mockResolvedValue(mockResponse as any)
 
-      try {
-        await tool.execute({ url: "https://example.com" }, ctx as any)
-        throw new Error("Should have thrown")
-      } catch (e: any) {
-        expect(e.message).toBe("Request failed with status code: 404")
+        try {
+          await tool.execute({ url: "https://example.com" }, ctx as any)
+          throw new Error("Should have thrown")
+        } catch (e: any) {
+          expect(e.message).toBe("Request failed with status code: 404")
+        }
       }
     })
   })
 
   it("throws error if response is too large (Content-Length)", async () => {
-    await Instance.provide(async () => {
-      const tool = await WebFetchTool.init()
-      const mockResponse = {
-        ok: true,
-        status: 200,
-        headers: new Headers({ "content-length": (6 * 1024 * 1024).toString() }),
-      }
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const tool = await WebFetchTool.init()
+        const mockResponse = {
+          ok: true,
+          status: 200,
+          headers: new Headers({ "content-length": (6 * 1024 * 1024).toString() }),
+        }
 
-      mocks.fetch.mockResolvedValue(mockResponse as any)
+        mocks.fetch.mockResolvedValue(mockResponse as any)
 
-      try {
-        await tool.execute({ url: "https://example.com" }, ctx as any)
-        throw new Error("Should have thrown")
-      } catch (e: any) {
-        expect(e.message).toBe("Response too large (exceeds 5MB limit)")
+        try {
+          await tool.execute({ url: "https://example.com" }, ctx as any)
+          throw new Error("Should have thrown")
+        } catch (e: any) {
+          expect(e.message).toBe("Response too large (exceeds 5MB limit)")
+        }
       }
     })
   })
 
   it("throws error if response is too large (ArrayBuffer)", async () => {
-    await Instance.provide(async () => {
-      const tool = await WebFetchTool.init()
-      const mockResponse = {
-        ok: true,
-        status: 200,
-        headers: new Headers({}),
-        arrayBuffer: async () => new ArrayBuffer(6 * 1024 * 1024),
-      }
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const tool = await WebFetchTool.init()
+        const mockResponse = {
+          ok: true,
+          status: 200,
+          headers: new Headers({}),
+          arrayBuffer: async () => new ArrayBuffer(6 * 1024 * 1024),
+        }
 
-      mocks.fetch.mockResolvedValue(mockResponse as any)
+        mocks.fetch.mockResolvedValue(mockResponse as any)
 
-      try {
-        await tool.execute({ url: "https://example.com" }, ctx as any)
-        throw new Error("Should have thrown")
-      } catch (e: any) {
-        expect(e.message).toBe("Response too large (exceeds 5MB limit)")
+        try {
+          await tool.execute({ url: "https://example.com" }, ctx as any)
+          throw new Error("Should have thrown")
+        } catch (e: any) {
+          expect(e.message).toBe("Response too large (exceeds 5MB limit)")
+        }
       }
     })
   })
 
   it("respects custom timeout", async () => {
-    await Instance.provide(async () => {
-      const tool = await WebFetchTool.init()
-      const mockResponse = {
-        ok: true,
-        status: 200,
-        headers: new Headers({ "content-type": "text/plain" }),
-        arrayBuffer: async () => new TextEncoder().encode("Timeout Test").buffer,
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const tool = await WebFetchTool.init()
+        const mockResponse = {
+          ok: true,
+          status: 200,
+          headers: new Headers({ "content-type": "text/plain" }),
+          arrayBuffer: async () => new TextEncoder().encode("Timeout Test").buffer,
+        }
+
+        mocks.fetch.mockResolvedValue(mockResponse as any)
+
+        const result = await tool.execute({ url: "https://example.com", timeout: 1 }, ctx as any)
+        expect(result.output).toBe("Timeout Test")
       }
-
-      mocks.fetch.mockResolvedValue(mockResponse as any)
-
-      const result = await tool.execute({ url: "https://example.com", timeout: 1 }, ctx as any)
-      expect(result.output).toBe("Timeout Test")
     })
   })
 })
