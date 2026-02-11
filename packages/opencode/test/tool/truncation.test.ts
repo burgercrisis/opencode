@@ -1,15 +1,23 @@
 import { expect, it, describe, mock, beforeEach, afterEach, spyOn } from "bun:test"
+
+// Mock dependencies
+mock.module("fs/promises", () => ({
+  default: {
+    unlink: mock().mockResolvedValue(undefined),
+    writeFile: mock().mockResolvedValue(undefined),
+    mkdir: mock().mockResolvedValue(undefined),
+    rm: mock().mockResolvedValue(undefined),
+  },
+  unlink: mock().mockResolvedValue(undefined),
+  writeFile: mock().mockResolvedValue(undefined),
+  mkdir: mock().mockResolvedValue(undefined),
+  rm: mock().mockResolvedValue(undefined),
+}))
+
 import fs from "fs/promises"
-
-const unlinkSpy = spyOn(fs, "unlink").mockResolvedValue(undefined)
-const writeFileSpy = spyOn(fs, "writeFile").mockResolvedValue(undefined)
-const mkdirSpy = spyOn(fs, "mkdir").mockResolvedValue(undefined)
-
-// Also spy on named exports if they exist
-try {
-  const fsp = require("fs/promises")
-  if (fsp.unlink && fsp.unlink !== fs.unlink) spyOn(fsp, "unlink").mockResolvedValue(undefined)
-} catch {}
+const unlinkSpy = fs.unlink as any
+const writeFileSpy = fs.writeFile as any
+const mkdirSpy = fs.mkdir as any
 
 import { Scheduler } from "../../src/scheduler"
 import { Identifier } from "../../src/id/id"
