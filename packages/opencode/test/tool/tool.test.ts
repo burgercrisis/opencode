@@ -1,21 +1,22 @@
-import { describe, expect, it, mock } from "bun:test"
+import { describe, expect, it, mock, vi, afterEach } from "bun:test"
 import z from "zod"
 import { Tool } from "../../src/tool/tool"
 import { Truncate } from "../../src/tool/truncation"
 
-mock.module("../../src/tool/truncation", () => ({
-  Truncate: {
-    output: mock().mockResolvedValue({
-      content: "truncated content",
-      truncated: true,
-      outputPath: "path/to/output"
-    })
-  }
-}))
-
 describe("Tool", () => {
+  const truncateOutputSpy = vi.spyOn(Truncate, "output")
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
   describe("define", () => {
     it("defines a tool and handles execution", async () => {
+      truncateOutputSpy.mockResolvedValue({
+        content: "truncated content",
+        truncated: true,
+        outputPath: "path/to/output"
+      })
       const tool = Tool.define("test-tool", {
         description: "A test tool",
         parameters: z.object({ foo: z.string() }),
