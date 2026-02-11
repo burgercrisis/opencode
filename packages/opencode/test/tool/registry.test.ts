@@ -1,6 +1,12 @@
-
+import { ToolRegistry } from "../../src/tool/registry"
 import { z } from "zod"
-import { mock, spyOn, beforeEach, it, expect, describe } from "bun:test"
+import { mock, spyOn, beforeEach, it, expect, describe, beforeAll, afterAll } from "bun:test"
+import { mkdirSync, rmSync, writeFileSync } from "node:fs"
+import { join, basename, extname } from "node:path"
+import { tmpdir } from "node:os"
+
+const TEST_DIR = join(tmpdir(), "opencode-registry-test-" + Math.random().toString(36).slice(2))
+const TOOL_PATH = join(TEST_DIR, "tool", "mytool.ts")
 
 // Mock dependencies
 let stateValue: any = null
@@ -19,41 +25,55 @@ mock.module("../../src/project/instance", () => ({
   }
 }))
 
+const FlagMock = {
+  OPENCODE_CLIENT: "cli",
+  OPENCODE_EXPERIMENTAL_LSP_TOOL: false,
+  OPENCODE_EXPERIMENTAL_PLAN_MODE: false,
+  OPENCODE_DISABLE_DEFAULT_PLUGINS: false
+}
+mock.module("../../src/flag/flag", () => ({
+  Flag: FlagMock
+}))
+
 mock.module("../../src/config/config", () => ({
   Config: {
-    directories: mock().mockResolvedValue(["/custom-tools"]),
+    directories: mock().mockResolvedValue([TEST_DIR]),
     waitForDependencies: mock().mockResolvedValue(undefined),
     get: mock().mockResolvedValue({ experimental: { batch_tool: true } })
   }
 }))
 
-mock.module("../../src/plugin/plugin", () => ({
+mock.module("../../src/plugin", () => ({
   Plugin: {
-    all: mock().mockResolvedValue([{
-      id: "plugin1",
-      tools: [{ id: "plugin_tool" }]
+    list: mock().mockResolvedValue([{
+      tool: {
+        plugin_tool: {
+          description: "Plugin Tool",
+          args: { text: z.string() },
+          execute: mock().mockResolvedValue("Plugin Success")
+        }
+      }
     }])
   }
 }))
 
 mock.module("../../src/tool/truncation", () => ({
   Truncate: {
-    wrap: (tool: any) => tool
+    output: mock().mockImplementation((res) => Promise.resolve({ content: res, truncated: false }))
   }
 }))
 
-import { ToolRegistry } from "../../src/tool/registry"
-
-const FlagMock = {
-  OPENCODE_CLIENT: "cli",
-  OPENCODE_EXPERIMENTAL_LSP_TOOL: false,
-  OPENCODE_EXPERIMENTAL_PLAN_MODE: false
-}
-mock.module("../../src/flag/flag", () => ({
-  Flag: FlagMock
-}))
-
 describe("ToolRegistry", () => {
+  beforeAll(() => {
+    mkdirSync(join(TEST_DIR, "tool"), { recursive: true })
+    // Create a dummy file so glob finds something
+    writeFileSync(TOOL_PATH, "export default {}")
+  })
+
+  afterAll(() => {
+    rmSync(TEST_DIR, { recursive: true, force: true })
+  })
+
   beforeEach(() => {
     mock.restore()
     stateValue = null
@@ -62,21 +82,15 @@ describe("ToolRegistry", () => {
     FlagMock.OPENCODE_EXPERIMENTAL_LSP_TOOL = false
     FlagMock.OPENCODE_EXPERIMENTAL_PLAN_MODE = false
 
-    spyOn(Bun, "Glob").mockImplementation(() => ({
-      scan: mock().mockReturnValue({
-        async *[Symbol.asyncIterator]() {
-          yield "/custom-tools/mytool.ts"
-        }
-      })
-    } as any))
+    // We don't need to spy on Bun.Glob anymore if we use real files in tmpdir
+    // But registry.ts uses new Bun.Glob(...)
   })
 
   it("loads custom tools from directories", async () => {
-    mock.module("/custom-tools/mytool.ts", () => ({
+    mock.module(TOOL_PATH, () => ({
       default: {
-        id: "mytool",
         description: "Custom Tool",
-        parameters: z.object({ name: z.string() }),
+        args: { name: z.string() },
         execute: mock().mockResolvedValue("Custom Success")
       }
     }))
@@ -116,7 +130,7 @@ describe("ToolRegistry", () => {
     
     await ToolRegistry.register(tool1)
     await ToolRegistry.register(tool2)
-    const custom = (await (await ToolRegistry.state())()).custom
+    const custom = (await ToolRegistry.state()).custom
     expect(custom.find(t => t.id === "test")).toBe(tool2)
   })
 
@@ -153,6 +167,10 @@ describe("ToolRegistry", () => {
 
   it("fromPlugin correctly wraps plugin tools", async () => {
     const tools = await ToolRegistry.tools({ providerID: "a", modelID: "b" })
-    expect(tools.some(t => t.id === "plugin_tool")).toBe(true)
+    const pluginTool = tools.find(t => t.id === "plugin_tool")
+    expect(pluginTool).toBeDefined()
+    
+    const result = await pluginTool!.execute({ text: "hello" }, { sessionID: "s1" } as any)
+    expect(result.output).toBe("Plugin Success")
   })
 })
