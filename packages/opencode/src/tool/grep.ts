@@ -110,7 +110,7 @@ export const GrepTool = Tool.define("grep", {
       return read(total, last)
     }
 
-    const { matches: rawMatches, truncated } = await read([], "").finally(() => reader.releaseLock())
+    const { matches: rawMatches, truncated } = await read([], "")
     const errorOutput = await new Response(proc.stderr).text()
     const exitCode = await proc.exited
 
@@ -118,7 +118,7 @@ export const GrepTool = Tool.define("grep", {
       ? {
           title: pattern,
           metadata: { matches: 0, truncated: false },
-          output: "No files found",
+          output: "No matches found",
         }
       : (exitCode !== 0 && exitCode !== 1 && exitCode !== 2 && !truncated)
         ? (() => { throw new Error(`ripgrep failed: ${errorOutput}`) })()

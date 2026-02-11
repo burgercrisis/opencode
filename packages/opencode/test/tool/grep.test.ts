@@ -80,23 +80,69 @@ describe("GrepTool", () => {
     })
   })
 
-  test("handles match limit and truncation", async () => {
+  test("handles empty results", async () => {
     await using tmp = await tmpdir()
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const file = path.join(tmp.path, "file.txt")
-        await fs.writeFile(file, "match")
-
-        const manyMatches = Array.from({ length: 300 }, (_, i) => `${file}|${i}|match ${i}`).join("\n")
-        mocks.bunSpawn.mockImplementation(mockSpawn(manyMatches))
+        // Return done: true immediately for an empty result
+        mocks.bunSpawn.mockImplementation(() => ({
+          stdout: {
+            getReader: () => ({
+              read: () => Promise.resolve({ done: true, value: undefined })
+            })
+          },
+          stderr: {
+            getReader: () => ({
+              read: () => Promise.resolve({ done: true, value: undefined })
+            })
+          },
+          exited: Promise.resolve(0),
+          kill: () => {}
+        } as any))
 
         const tool = await GrepTool.init()
-        const result = await tool.execute({ pattern: "match" }, ctx)
+        const result = await tool.execute({ pattern: "nothing" }, ctx)
 
-        expect(result.metadata.matches).toBe(250)
-        expect(result.metadata.truncated).toBe(true)
-        expect(result.output).toContain("Results are truncated")
+        expect(result.output).toBe("No matches found")
+        expect(result.metadata.matches).toBe(0)
+      },
+    })
+  })
+
+  test("handles long lines in results", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const file = path.join(tmp.path, "long.txt")
+        const longLine = "a".repeat(3000)
+        const rgOutput = `${file}|1|${longLine}\n`
+        mocks.bunSpawn.mockImplementation(mockSpawn(rgOutput))
+
+        const tool = await GrepTool.init()
+        const result = await tool.execute({ pattern: "a" }, ctx)
+
+        expect(result.output).toContain("a".repeat(2000) + "...")
+        expect(result.output).not.toContain("a".repeat(2001))
+      },
+    })
+  })
+
+  test("passes include pattern to ripgrep", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        mocks.bunSpawn.mockImplementation(mockSpawn(""))
+
+        const tool = await GrepTool.init()
+        await tool.execute({ pattern: "foo", include: "*.ts" }, ctx)
+
+        const calls = mocks.bunSpawn.mock.calls
+        const lastCallArgs = calls[calls.length - 1][0] as string[]
+        expect(lastCallArgs).toContain("--glob")
+        expect(lastCallArgs).toContain("*.ts")
       },
     })
   })
@@ -111,7 +157,7 @@ describe("GrepTool", () => {
         const tool = await GrepTool.init()
         const result = await tool.execute({ pattern: "nothing" }, ctx)
 
-        expect(result.output).toBe("No files found")
+        expect(result.output).toBe("No matches found")
       },
     })
   })
