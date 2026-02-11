@@ -1,72 +1,88 @@
-import { describe, expect, test } from "bun:test"
+import { expect, test, describe, vi } from "bun:test"
 import { Lock } from "../../src/util/lock"
 
-function tick() {
-  return new Promise<void>((r) => queueMicrotask(r))
-}
+describe("Lock", () => {
+  test("read lock should allow multiple readers", async () => {
+    const l1 = await Lock.read("k1")
+    const l2 = await Lock.read("k1")
+    
+    expect(l1).toBeDefined()
+    expect(l2).toBeDefined()
+    
+    l1[Symbol.dispose]()
+    l2[Symbol.dispose]()
+  })
 
-async function flush(n = 5) {
-  for (let i = 0; i < n; i++) await tick()
-}
+  test("write lock should be exclusive", async () => {
+    const w1 = await Lock.write("k2")
+    let w2Resolved = false
+    const w2Promise = Lock.write("k2").then(l => {
+      w2Resolved = true
+      return l
+    })
+    
+    // Give some time for promises to settle
+    await new Promise(r => setTimeout(r, 10))
+    expect(w2Resolved).toBe(false)
+    
+    w1[Symbol.dispose]()
+    const w2 = await w2Promise
+    expect(w2Resolved).toBe(true)
+    w2[Symbol.dispose]()
+  })
 
-describe("util.lock", () => {
-  test("writer exclusivity: blocks reads and other writes while held", async () => {
-    const key = "lock:" + Math.random().toString(36).slice(2)
+  test("readers should wait for writer", async () => {
+    const w1 = await Lock.write("k3")
+    let r1Resolved = false
+    const r1Promise = Lock.read("k3").then(l => {
+      r1Resolved = true
+      return l
+    })
+    
+    await new Promise(r => setTimeout(r, 10))
+    expect(r1Resolved).toBe(false)
+    
+    w1[Symbol.dispose]()
+    const r1 = await r1Promise
+    expect(r1Resolved).toBe(true)
+    r1[Symbol.dispose]()
+  })
 
-    const state = {
-      writer2: false,
-      reader: false,
-      writers: 0,
-    }
+  test("writers should wait for readers", async () => {
+    const r1 = await Lock.read("k4")
+    let w1Resolved = false
+    const w1Promise = Lock.write("k4").then(l => {
+      w1Resolved = true
+      return l
+    })
+    
+    await new Promise(r => setTimeout(r, 10))
+    expect(w1Resolved).toBe(false)
+    
+    r1[Symbol.dispose]()
+    const w1 = await w1Promise
+    expect(w1Resolved).toBe(true)
+    w1[Symbol.dispose]()
+  })
 
-    // Acquire writer1
-    using writer1 = await Lock.write(key)
-    state.writers++
-    expect(state.writers).toBe(1)
-
-    // Start writer2 candidate (should block)
-    const writer2Task = (async () => {
-      const w = await Lock.write(key)
-      state.writers++
-      expect(state.writers).toBe(1)
-      state.writer2 = true
-      // Hold for a tick so reader cannot slip in
-      await tick()
-      return w
-    })()
-
-    // Start reader candidate (should block)
-    const readerTask = (async () => {
-      const r = await Lock.read(key)
-      state.reader = true
-      return r
-    })()
-
-    // Flush microtasks and assert neither acquired
-    await flush()
-    expect(state.writer2).toBe(false)
-    expect(state.reader).toBe(false)
-
-    // Release writer1
-    writer1[Symbol.dispose]()
-    state.writers--
-
-    // writer2 should acquire next
-    const writer2 = await writer2Task
-    expect(state.writer2).toBe(true)
-
-    // Reader still blocked while writer2 held
-    await flush()
-    expect(state.reader).toBe(false)
-
-    // Release writer2
-    writer2[Symbol.dispose]()
-    state.writers--
-
-    // Reader should now acquire
-    const reader = await readerTask
-    expect(state.reader).toBe(true)
-
-    reader[Symbol.dispose]()
+  test("prioritize writers over waiting readers", async () => {
+    const w1 = await Lock.write("k5")
+    
+    const order: string[] = []
+    const r1Promise = Lock.read("k5").then(l => { order.push("reader"); return l })
+    const w2Promise = Lock.write("k5").then(l => { order.push("writer"); return l })
+    
+    await new Promise(r => setTimeout(r, 10))
+    
+    w1[Symbol.dispose]()
+    
+    // w2 should resolve first
+    const w2 = await w2Promise
+    expect(order).toEqual(["writer"])
+    
+    w2[Symbol.dispose]()
+    const r1 = await r1Promise
+    expect(order).toEqual(["writer", "reader"])
+    r1[Symbol.dispose]()
   })
 })

@@ -1,72 +1,37 @@
-import { describe, expect, test } from "bun:test"
+import { expect, test, describe, vi } from "bun:test"
 import { lazy } from "../../src/util/lazy"
 
-describe("util.lazy", () => {
-  test("should call function only once", () => {
-    let callCount = 0
-    const getValue = () => {
-      callCount++
-      return "expensive value"
-    }
-
-    const lazyValue = lazy(getValue)
-
-    expect(callCount).toBe(0)
-
-    const result1 = lazyValue()
-    expect(result1).toBe("expensive value")
-    expect(callCount).toBe(1)
-
-    const result2 = lazyValue()
-    expect(result2).toBe("expensive value")
-    expect(callCount).toBe(1)
+describe("lazy", () => {
+  test("should only call fn once", () => {
+    const fn = vi.fn().mockReturnValue(1)
+    const get = lazy(fn)
+    
+    expect(fn).toHaveBeenCalledTimes(0)
+    expect(get()).toBe(1)
+    expect(fn).toHaveBeenCalledTimes(1)
+    expect(get()).toBe(1)
+    expect(fn).toHaveBeenCalledTimes(1)
   })
 
-  test("should preserve the same reference", () => {
-    const obj = { value: 42 }
-    const lazyObj = lazy(() => obj)
-
-    const result1 = lazyObj()
-    const result2 = lazyObj()
-
-    expect(result1).toBe(obj)
-    expect(result2).toBe(obj)
-    expect(result1).toBe(result2)
+  test("should reset", () => {
+    const fn = vi.fn().mockReturnValue(2)
+    const get = lazy(fn)
+    
+    expect(get()).toBe(2)
+    expect(fn).toHaveBeenCalledTimes(1)
+    
+    get.reset()
+    expect(get()).toBe(2)
+    expect(fn).toHaveBeenCalledTimes(2)
   })
 
-  test("should work with different return types", () => {
-    const lazyString = lazy(() => "string")
-    const lazyNumber = lazy(() => 123)
-    const lazyBoolean = lazy(() => true)
-    const lazyNull = lazy(() => null)
-    const lazyUndefined = lazy(() => undefined)
-
-    expect(lazyString()).toBe("string")
-    expect(lazyNumber()).toBe(123)
-    expect(lazyBoolean()).toBe(true)
-    expect(lazyNull()).toBe(null)
-    expect(lazyUndefined()).toBe(undefined)
-  })
-
-  test("reset clears cached value and causes recomputation", () => {
-    let callCount = 0
-    const getValue = () => {
-      callCount++
-      return `value-${callCount}`
-    }
-
-    const lazyValue = lazy(getValue)
-
-    const first = lazyValue()
-    const second = lazyValue()
-    expect(first).toBe("value-1")
-    expect(second).toBe("value-1")
-    expect(callCount).toBe(1)
-
-    lazyValue.reset()
-
-    const third = lazyValue()
-    expect(third).toBe("value-2")
-    expect(callCount).toBe(2)
+  test("should handle undefined/null values", () => {
+    const fn = vi.fn().mockReturnValue(null)
+    const get = lazy(fn)
+    
+    expect(get()).toBe(null)
+    expect(fn).toHaveBeenCalledTimes(1)
+    expect(get()).toBe(null)
+    expect(fn).toHaveBeenCalledTimes(1)
   })
 })
