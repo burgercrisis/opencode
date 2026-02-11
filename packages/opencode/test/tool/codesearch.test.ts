@@ -101,11 +101,47 @@ describe("CodeSearchTool", () => {
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const networkError = new Error("Network Error")
-        fetchSpy.mockRejectedValue(networkError)
+        fetchSpy.mockRejectedValue(new Error("Network failure"))
 
         const tool = await CodeSearchTool.init()
-        expect(tool.execute({ query: "error", tokensNum: 5000 }, ctx)).rejects.toThrow("Network Error")
+        expect(tool.execute({ query: "error", tokensNum: 5000 }, ctx)).rejects.toThrow("Network failure")
+      }
+    })
+  })
+
+  it("handles malformed JSON response", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        fetchSpy.mockResolvedValue({
+          ok: true,
+          text: () => Promise.resolve("data: { invalid json }\n"),
+        } as any)
+
+        const tool = await CodeSearchTool.init()
+        const result = await tool.execute({ query: "malformed", tokensNum: 5000 }, ctx)
+
+        expect(result.output).toContain("No code snippets or documentation found")
+      }
+    })
+  })
+
+  it("handles empty SSE data prefix", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const mockResponseText = '{"jsonrpc":"2.0","result":{"content":[{"type":"text","text":"Direct JSON"}]}}'
+        fetchSpy.mockResolvedValue({
+          ok: true,
+          text: () => Promise.resolve(mockResponseText),
+        } as any)
+
+        const tool = await CodeSearchTool.init()
+        const result = await tool.execute({ query: "direct", tokensNum: 5000 }, ctx)
+
+        expect(result.output).toBe("Direct JSON")
       }
     })
   })

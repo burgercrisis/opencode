@@ -97,6 +97,20 @@ export const CodeSearchTool = Tool.define("codesearch", {
       }
 
       const responseText = await response.text()
+      if (responseText.trim().startsWith("{")) {
+        try {
+          const data: McpCodeResponse = JSON.parse(responseText)
+          if (data.result?.content?.[0]?.text) {
+            return {
+              output: data.result.content[0].text,
+              title: `Code search: ${params.query}`,
+              metadata: {},
+            }
+          }
+        } catch (e) {
+          // Fall through to SSE parsing
+        }
+      }
 
       // Parse SSE response
       const lines = responseText.split("\n")
