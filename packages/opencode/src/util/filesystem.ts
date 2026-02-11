@@ -62,7 +62,10 @@ export namespace Filesystem {
   }
 
   export function join(...segments: string[]) {
-    return nativePath(path.join(...segments))
+    // Filter out undefined segments before joining
+    const validSegments = segments.filter(segment => segment !== undefined && segment !== null)
+    if (validSegments.length === 0) return ""
+    return nativePath(path.join(...validSegments))
   }
 
   export function dirname(p: string) {

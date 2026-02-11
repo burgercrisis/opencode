@@ -16,6 +16,7 @@ describe("util.filesystem", () => {
   })
 
   test("non-windows branches", async () => {
+    if (process.platform === "win32") return // Skip on Windows as path.normalize is platform-dependent
     const originalPlatform = process.platform
     Object.defineProperty(process, 'platform', { value: 'linux', configurable: true })
     
