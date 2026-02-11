@@ -84,25 +84,56 @@ describe("ListTool", () => {
     })
   })
 
-  test("renders tree structure correctly", async () => {
+  test("handles empty file list", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        mocks.ripgrepFiles.mockImplementation(async function* () {} as any)
+
+        const tool = await ListTool.init()
+        const result = await tool.execute({ path: tmp.path }, ctx)
+
+        expect(result.output).toBe("")
+      },
+    })
+  })
+
+  test("handles deep directory structure", async () => {
     await using tmp = await tmpdir()
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
         mocks.ripgrepFiles.mockImplementationOnce(async function* () {
-          yield "a.txt"
-          yield "b/c.txt"
-          yield "b/d/e.txt"
+          yield "level1/level2/level3/file.txt"
         } as any)
 
         const tool = await ListTool.init()
         const result = await tool.execute({}, ctx)
 
-        expect(result.output.replace(/\\/g, "/")).toContain("a.txt")
-        expect(result.output.replace(/\\/g, "/")).toContain("b/")
-        expect(result.output.replace(/\\/g, "/")).toContain("  c.txt")
-        expect(result.output.replace(/\\/g, "/")).toContain("  d/")
-        expect(result.output.replace(/\\/g, "/")).toContain("    e.txt")
+        expect(result.output).toContain("level1/")
+        expect(result.output).toContain("  level2/")
+        expect(result.output).toContain("    level3/")
+        expect(result.output).toContain("      file.txt")
+      },
+    })
+  })
+
+  test("normalizes backslashes to forward slashes", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        mocks.ripgrepFiles.mockImplementationOnce(async function* () {
+          yield "win\\path\\file.txt"
+        } as any)
+
+        const tool = await ListTool.init()
+        const result = await tool.execute({}, ctx)
+
+        expect(result.output).toContain("win/")
+        expect(result.output).toContain("  path/")
+        expect(result.output).toContain("    file.txt")
       },
     })
   })
