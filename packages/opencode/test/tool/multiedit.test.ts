@@ -1,73 +1,74 @@
-import { expect, it, describe, mock, beforeEach } from "bun:test"
+import { expect, it, describe, mock, beforeEach, afterEach, vi } from "bun:test"
 import { MultiEditTool } from "../../src/tool/multiedit"
 import { EditTool } from "../../src/tool/edit"
+import { Instance } from "../../src/project/instance"
+import { tmpdir } from "../fixture/fixture"
 import path from "path"
-
-mock.module("../../src/project/instance", () => ({
-  Instance: {
-    worktree: "/test",
-    disposeAll: mock(),
-    resetForTest: mock(),
-  },
-}))
-
-mock.module("../../src/tool/edit", () => ({
-  EditTool: {
-    init: mock().mockResolvedValue({
-      execute: mock().mockResolvedValue({
-        output: "edit result",
-        metadata: { diff: "some diff" },
-      }),
-    }),
-  },
-}))
 
 describe("MultiEditTool", () => {
   let ctx: any
+  let editToolExecute: any
 
   beforeEach(() => {
     ctx = {
-      ask: mock().mockResolvedValue(true),
+      ask: vi.fn(async () => true),
     }
+    editToolExecute = vi.fn(async () => ({
+      output: "edit result",
+      metadata: { diff: "some diff" },
+    }))
+    vi.spyOn(EditTool, "init").mockResolvedValue({
+      execute: editToolExecute,
+    } as any)
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
   })
 
   it("executes multiple edits sequentially", async () => {
-    const editToolMock = await EditTool.init()
-    const tool = await MultiEditTool.init()
-    const params = {
-      filePath: "/test/file.ts",
-      edits: [
-        { filePath: "/test/file.ts", oldString: "old1", newString: "new1" },
-        { filePath: "/test/file.ts", oldString: "old2", newString: "new2" },
-      ],
-    }
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const tool = await MultiEditTool.init()
+        const file = path.join(tmp.path, "file.ts")
+        const params = {
+          filePath: file,
+          edits: [
+            { filePath: file, oldString: "old1", newString: "new1" },
+            { filePath: file, oldString: "old2", newString: "new2" },
+          ],
+        }
 
-    const result = await tool.execute(params, ctx)
+        const result = await tool.execute(params, ctx)
 
-    expect(editToolMock.execute).toHaveBeenCalledTimes(2)
-    expect(editToolMock.execute).toHaveBeenNthCalledWith(
-      1,
-      {
-        filePath: "/test/file.ts",
-        oldString: "old1",
-        newString: "new1",
-        replaceAll: undefined,
-      },
-      ctx
-    )
-    expect(editToolMock.execute).toHaveBeenNthCalledWith(
-      2,
-      {
-        filePath: "/test/file.ts",
-        oldString: "old2",
-        newString: "new2",
-        replaceAll: undefined,
-      },
-      ctx
-    )
+        expect(editToolExecute).toHaveBeenCalledTimes(2)
+        expect(editToolExecute).toHaveBeenNthCalledWith(
+          1,
+          {
+            filePath: file,
+            oldString: "old1",
+            newString: "new1",
+            replaceAll: undefined,
+          },
+          ctx
+        )
+        expect(editToolExecute).toHaveBeenNthCalledWith(
+          2,
+          {
+            filePath: file,
+            oldString: "old2",
+            newString: "new2",
+            replaceAll: undefined,
+          },
+          ctx
+        )
 
-    expect(result.title).toBe("file.ts")
-    expect(result.output).toBe("edit result")
-    expect(result.metadata.results).toHaveLength(2)
+        expect(result.title).toBe("file.ts")
+        expect(result.output).toBe("edit result")
+        expect(result.metadata.results).toHaveLength(2)
+      }
+    })
   })
 })
