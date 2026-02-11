@@ -127,25 +127,70 @@ describe("WriteTool", () => {
     })
   })
 
-  test("limits the number of diagnostics shown", async () => {
+  test("limits the number of files with diagnostics", async () => {
     await using tmp = await tmpdir()
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const filePath = path.join(tmp.path, "many-errors.ts")
-        const diagnostics = Array.from({ length: 25 }, (_, i) => ({
-          severity: 1,
-          message: `Error ${i}`,
-          range: { start: { line: i, character: 0 }, end: { line: i, character: 10 } },
-        }))
+        const filePath = path.join(tmp.path, "main.ts")
+        const otherDiagnostics: Record<string, any> = {}
+        for (let i = 0; i < 10; i++) {
+          otherDiagnostics[path.join(tmp.path, `other${i}.ts`)] = [
+            {
+              severity: 1,
+              message: `Error in ${i}`,
+              range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } },
+            },
+          ]
+        }
+
+        mocks.lspDiagnostics.mockResolvedValueOnce(otherDiagnostics)
+
+        const tool = await WriteTool.init()
+        const result = await tool.execute({ filePath, content: "code" }, ctx)
+
+        // MAX_PROJECT_DIAGNOSTICS_FILES is 5
+        const occurrences = (result.output.match(/<diagnostics file=/g) || []).length
+        expect(occurrences).toBe(5)
+      },
+    })
+  })
+
+  test("handles relative paths", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const tool = await WriteTool.init()
+        const result = await tool.execute({ filePath: "relative.txt", content: "relative content" }, ctx)
+
+        expect(result.output).toContain("Wrote file successfully.")
+        expect(await fs.readFile(path.join(tmp.path, "relative.txt"), "utf-8")).toBe("relative content")
+      },
+    })
+  })
+
+  test("handles diagnostic severity other than 1", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const filePath = path.join(tmp.path, "warning.ts")
         mocks.lspDiagnostics.mockResolvedValueOnce({
-          [filePath]: diagnostics,
+          [filePath]: [
+            {
+              severity: 2, // Warning
+              message: "Some warning",
+              range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } },
+            },
+          ],
         })
 
         const tool = await WriteTool.init()
-        const result = await tool.execute({ filePath, content: "bad code" }, ctx)
+        const result = await tool.execute({ filePath, content: "code" }, ctx)
 
-        expect(result.output).toContain("and 5 more")
+        expect(result.output).not.toContain("LSP errors detected")
+        expect(result.output).toBe("Wrote file successfully.")
       },
     })
   })
