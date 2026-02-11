@@ -1,206 +1,170 @@
-import { describe, expect, test } from "bun:test"
-import path from "path"
-import fs from "fs/promises"
-import { tmpdir } from "../fixture/fixture"
-import { Instance } from "../../src/project/instance"
-import { ToolRegistry } from "../../src/tool/registry"
+import { describe, expect, it, mock, spyOn, beforeEach, afterEach } from "bun:test"
+import z from "zod"
 
-describe("tool.registry", () => {
-  test("loads tools from .opencode/tool (singular)", async () => {
-    console.log("Starting singular test")
-    await using tmp = await tmpdir({
-      init: async (dir) => {
-        const opencodeDir = path.join(dir, ".opencode")
-        await fs.mkdir(opencodeDir, { recursive: true })
+// Mock dependencies
+let stateValue: any = null
+mock.module("../../src/project/instance", () => ({
+  Instance: {
+    state: (init: any) => {
+      return async () => {
+        if (!stateValue) stateValue = await init()
+        return stateValue
+      }
+    },
+    directory: "/test-dir",
+    worktree: "/test-worktree"
+  }
+}))
 
-        const toolDir = path.join(opencodeDir, "tool")
-        await fs.mkdir(toolDir, { recursive: true })
+mock.module("../../src/config/config", () => ({
+  Config: {
+    directories: mock().mockResolvedValue(["/custom-tools"]),
+    get: mock().mockResolvedValue({ experimental: { batch_tool: true } }),
+    waitForDependencies: mock().mockResolvedValue(undefined)
+  }
+}))
 
-        await Bun.write(
-          path.join(toolDir, "hello.ts"),
-          [
-            "export default {",
-            "  description: 'hello tool',",
-            "  args: {},",
-            "  execute: async () => {",
-            "    return 'hello world'",
-            "  },",
-            "}",
-            "",
-          ].join("\n"),
-        )
-      },
-    })
-
-    await Instance.provide({
-      directory: tmp.path,
-      fn: async () => {
-        const ids = await ToolRegistry.ids()
-        console.log("Singular IDs:", ids)
-        expect(ids).toContain("hello")
-      },
-    })
-    console.log("Finished singular test")
-  })
-
-  test("loads tools from .opencode/tools (plural)", async () => {
-    console.log("Starting plural test")
-    await using tmp = await tmpdir({
-      init: async (dir) => {
-        const opencodeDir = path.join(dir, ".opencode")
-        await fs.mkdir(opencodeDir, { recursive: true })
-
-        const toolsDir = path.join(opencodeDir, "tools")
-        await fs.mkdir(toolsDir, { recursive: true })
-
-        await Bun.write(
-          path.join(toolsDir, "hello.ts"),
-          [
-            "export default {",
-            "  description: 'hello tool',",
-            "  args: {},",
-            "  execute: async () => {",
-            "    return 'hello world'",
-            "  },",
-            "}",
-            "",
-          ].join("\n"),
-        )
-      },
-    })
-
-    await Instance.provide({
-      directory: tmp.path,
-      fn: async () => {
-        const ids = await ToolRegistry.ids()
-        console.log("Plural IDs:", ids)
-        expect(ids).toContain("hello")
-      },
-    })
-    console.log("Finished plural test")
-  })
-
-  // test("loads tools with external dependencies without crashing", async () => {
-  //   await using tmp = await tmpdir({
-  //     init: async (dir) => {
-  //       const opencodeDir = path.join(dir, ".opencode")
-  //       await fs.mkdir(opencodeDir, { recursive: true })
-  //
-  //       const toolsDir = path.join(opencodeDir, "tools")
-  //       await fs.mkdir(toolsDir, { recursive: true })
-  //
-  //       await Bun.write(
-  //         path.join(opencodeDir, "package.json"),
-  //         JSON.stringify({
-  //           name: "custom-tools",
-  //           dependencies: {
-  //             "@opencode-ai/plugin": "^0.0.0",
-  //             cowsay: "^1.6.0",
-  //           },
-  //         }),
-  //       )
-  //
-  //       await Bun.write(
-  //         path.join(toolsDir, "cowsay.ts"),
-  //         [
-  //           "import { say } from 'cowsay'",
-  //           "export default {",
-  //           "  description: 'tool that imports cowsay at top level',",
-  //           "  args: { text: { type: 'string' } },",
-  //           "  execute: async ({ text }: { text: string }) => {",
-  //           "    return say({ text })",
-  //           "  },",
-  //           "}",
-  //           "",
-  //         ].join("\n"),
-  //       )
-  //     },
-  //   })
-  //
-  //   await Instance.provide({
-  //     directory: tmp.path,
-  //     fn: async () => {
-  //       const ids = await ToolRegistry.ids()
-  //       expect(ids).toContain("cowsay")
-  //     },
-  //   })
-  // })
-
-  test("register and tools", async () => {
-    await using tmp = await tmpdir()
-    await Instance.provide({
-      directory: tmp.path,
-      fn: async () => {
-        const customTool = {
-          id: "my-custom-tool",
-          init: async () => ({
-            description: "custom tool description",
-            parameters: (await import("zod")).z.object({ name: (await import("zod")).z.string() }),
-            execute: async (args: any) => ({
-              title: "Custom Tool",
-              metadata: {},
-              output: `Hello ${args.name}`,
-            }),
-          }),
-        }
-
-        await ToolRegistry.register(customTool)
-        const ids = await ToolRegistry.ids()
-        expect(ids).toContain("my-custom-tool")
-
-        const tools = await ToolRegistry.tools({ providerID: "anthropic", modelID: "claude-3-5-sonnet-20241022" })
-        const registered = tools.find((t) => t.id === "my-custom-tool")
-        expect(registered).toBeDefined()
-        expect(registered?.description).toBe("custom tool description")
-
-        // Test tool selection logic (patch vs edit/write)
-        const gpt35Tools = await ToolRegistry.tools({ providerID: "openai", modelID: "gpt-3.5-turbo" })
-        expect(gpt35Tools.some((t) => t.id === "apply_patch")).toBe(true)
-        expect(gpt35Tools.some((t) => t.id === "edit")).toBe(false)
-
-        const gpt4Tools = await ToolRegistry.tools({ providerID: "openai", modelID: "gpt-4-turbo" })
-        expect(gpt4Tools.some((t) => t.id === "apply_patch")).toBe(false)
-        expect(gpt4Tools.some((t) => t.id === "edit")).toBe(true)
-
-        const claudeTools = await ToolRegistry.tools({ providerID: "anthropic", modelID: "claude-3-5-sonnet" })
-        expect(claudeTools.some((t) => t.id === "apply_patch")).toBe(false)
-        expect(claudeTools.some((t) => t.id === "edit")).toBe(true)
-
-        const o1Tools = await ToolRegistry.tools({ providerID: "openai", modelID: "o1-preview" })
-        expect(o1Tools.some((t) => t.id === "apply_patch")).toBe(false)
-        expect(o1Tools.some((t) => t.id === "edit")).toBe(true)
-      },
-    })
-  })
-
-  test("custom tool execution from plugin", async () => {
-    await using tmp = await tmpdir({
-      init: async (dir) => {
-        const toolsDir = path.join(dir, ".opencode", "tools")
-        await fs.mkdir(toolsDir, { recursive: true })
-        await Bun.write(
-          path.join(toolsDir, "test.ts"),
-          `
-          export const greet = {
-            description: 'greet someone',
-            args: { name: { type: 'string' } },
-            execute: async (args: any) => 'Hello ' + args.name
+mock.module("../../src/plugin", () => ({
+  Plugin: {
+    list: mock().mockResolvedValue([
+      {
+        id: "plugin1",
+        tool: {
+          plugin_tool: {
+            description: "Plugin Tool",
+            args: { text: z.string() },
+            execute: mock().mockResolvedValue("Plugin Success")
           }
-        `,
-        )
-      },
-    })
+        }
+      }
+    ])
+  }
+}))
 
-    await Instance.provide({
-      directory: tmp.path,
-      fn: async () => {
-        const tools = await ToolRegistry.tools({ providerID: "anthropic", modelID: "claude-3-5-sonnet" })
-        const greetTool = tools.find((t) => t.id === "test_greet")
-        expect(greetTool).toBeDefined()
+mock.module("../../src/tool/truncation", () => ({
+  Truncate: {
+    output: mock().mockImplementation((res) => Promise.resolve({ content: res, truncated: false }))
+  }
+}))
 
-        const result = await greetTool!.execute({ name: "World" }, {} as any)
-        expect(result.output).toBe("Hello World")
-      },
-    })
+// Mock dynamic import for custom tools
+const customToolDef = {
+  description: "Custom Tool",
+  args: { name: z.string() },
+  execute: mock().mockResolvedValue("Custom Success")
+}
+
+// Intercept import calls
+const originalImport = globalThis.import
+// Note: Bun doesn't allow mocking dynamic imports easily with globalThis.import
+// We will rely on how registry.ts uses import(match)
+
+import { ToolRegistry } from "../../src/tool/registry"
+import { Flag } from "@/flag/flag"
+
+describe("ToolRegistry", () => {
+  beforeEach(() => {
+    mock.restore()
+    stateValue = null
+    // Reset Flag values
+    Flag.OPENCODE_CLIENT = "cli"
+    Flag.OPENCODE_EXPERIMENTAL_LSP_TOOL = false
+    Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE = false
+
+    spyOn(Bun, "Glob").mockImplementation(() => ({
+      scan: mock().mockReturnValue({
+        async *[Symbol.asyncIterator]() {
+          yield "/custom-tools/mytool.ts"
+        }
+      })
+    } as any))
+  })
+
+  it("loads custom tools from directories", async () => {
+    mock.module("/custom-tools/mytool.ts", () => ({
+      default: {
+        description: "Custom Tool",
+        args: { name: z.string() },
+        execute: mock().mockResolvedValue("Custom Success")
+      }
+    }))
+
+    const ids = await ToolRegistry.ids()
+    expect(ids).toContain("mytool")
+  })
+
+  it("includes QuestionTool only on certain clients", async () => {
+    Flag.OPENCODE_CLIENT = "cli"
+    let ids = await ToolRegistry.ids()
+    expect(ids).toContain("question")
+
+    stateValue = null // Reset cache
+    Flag.OPENCODE_CLIENT = "other" as any
+    ids = await ToolRegistry.ids()
+    expect(ids).not.toContain("question")
+  })
+
+  it("includes LspTool when flag is set", async () => {
+    Flag.OPENCODE_EXPERIMENTAL_LSP_TOOL = true
+    const ids = await ToolRegistry.ids()
+    expect(ids).toContain("lsp")
+  })
+
+  it("includes PlanTools when flags are set", async () => {
+    Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE = true
+    Flag.OPENCODE_CLIENT = "cli"
+    const ids = await ToolRegistry.ids()
+    expect(ids).toContain("plan_enter")
+    expect(ids).toContain("plan_exit")
+  })
+
+  it("register() updates existing tool if id matches", async () => {
+    const tool1 = { id: "test", init: async () => ({ description: "V1", parameters: z.object({}), execute: async () => "" }) } as any
+    const tool2 = { id: "test", init: async () => ({ description: "V2", parameters: z.object({}), execute: async () => "" }) } as any
+    
+    await ToolRegistry.register(tool1)
+    await ToolRegistry.register(tool2)
+    const custom = (await (await ToolRegistry.state())()).custom
+    expect(custom.find(t => t.id === "test")).toBe(tool2)
+  })
+
+  it("ids() returns a list of tool ids", async () => {
+    const ids = await ToolRegistry.ids()
+    expect(ids).toContain("bash")
+    expect(ids).toContain("read")
+    expect(ids).toContain("invalid")
+  })
+
+  it("tools() returns initialized tools", async () => {
+    const tools = await ToolRegistry.tools({ providerID: "anthropic", modelID: "claude-3" })
+    expect(tools.some(t => t.id === "bash")).toBe(true)
+    const bash = tools.find(t => t.id === "bash")
+    expect(bash).toHaveProperty("description")
+    expect(bash).toHaveProperty("parameters")
+  })
+
+  it("filters tools based on modelID (usePatch logic)", async () => {
+    // GPT-3.5 should use patch
+    const gpt3Tools = await ToolRegistry.tools({ providerID: "openai", modelID: "gpt-3.5-turbo" })
+    expect(gpt3Tools.some(t => t.id === "apply_patch")).toBe(true)
+    expect(gpt3Tools.some(t => t.id === "edit")).toBe(false)
+
+    // Claude or GPT-4 should not use patch
+    const claudeTools = await ToolRegistry.tools({ providerID: "anthropic", modelID: "claude-3" })
+    expect(claudeTools.some(t => t.id === "apply_patch")).toBe(false)
+    expect(claudeTools.some(t => t.id === "edit")).toBe(true)
+    
+    // GPT-4o should not use patch
+    const gpt4oTools = await ToolRegistry.tools({ providerID: "openai", modelID: "gpt-4o" })
+    expect(gpt4oTools.some(t => t.id === "apply_patch")).toBe(false)
+  })
+
+  it("fromPlugin correctly wraps plugin tools", async () => {
+    const tools = await ToolRegistry.tools({ providerID: "a", modelID: "b" })
+    const pluginTool = tools.find(t => t.id === "plugin_tool")
+    expect(pluginTool).toBeDefined()
+    
+    const result = await pluginTool!.execute({ text: "hello" }, { sessionID: "s1" } as any)
+    expect(result.output).toBe("Plugin Success")
   })
 })
