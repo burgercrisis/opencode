@@ -1,4 +1,4 @@
-import { test, expect, mock, beforeEach, beforeAll } from "bun:test"
+import { test, expect, mock, beforeEach, afterEach, beforeAll, describe } from "bun:test"
 import { EventEmitter } from "events"
 import path from "path"
 import os from "os"
@@ -8,7 +8,7 @@ import fs from "fs"
 let openShouldFail = false
 let openCalledWith: string | undefined
 
-mock.module("open", () => ({
+vi.mock("open", () => ({
   default: async (url: string) => {
     openCalledWith = url
 
@@ -33,14 +33,14 @@ class MockUnauthorizedError extends Error {
 }
 
 // Track what options were passed to each transport constructor
-const transportCalls: Array<{
+let transportCalls: Array<{
   type: "streamable" | "sse"
   url: string
   options: { authProvider?: unknown }
 }> = []
 
 // Mock the transport constructors
-mock.module("@modelcontextprotocol/sdk/client/streamableHttp.js", () => ({
+vi.mock("@modelcontextprotocol/sdk/client/streamableHttp.js", () => ({
   StreamableHTTPClientTransport: class MockStreamableHTTP {
     url: string
     authProvider: { redirectToAuthorization?: (url: URL) => Promise<void> } | undefined
@@ -66,7 +66,7 @@ mock.module("@modelcontextprotocol/sdk/client/streamableHttp.js", () => ({
   },
 }))
 
-mock.module("@modelcontextprotocol/sdk/client/sse.js", () => ({
+vi.mock("@modelcontextprotocol/sdk/client/sse.js", () => ({
   SSEClientTransport: class MockSSE {
     constructor(url: URL) {
       transportCalls.push({
@@ -82,7 +82,7 @@ mock.module("@modelcontextprotocol/sdk/client/sse.js", () => ({
 }))
 
 // Mock the MCP SDK Client to trigger OAuth flow
-mock.module("@modelcontextprotocol/sdk/client/index.js", () => ({
+vi.mock("@modelcontextprotocol/sdk/client/index.js", () => ({
   Client: class MockClient {
     async connect(transport: { start: () => Promise<void> }) {
       await transport.start()
@@ -96,15 +96,9 @@ mock.module("@modelcontextprotocol/sdk/client/index.js", () => ({
 }))
 
 // Mock UnauthorizedError in the auth module
-mock.module("@modelcontextprotocol/sdk/client/auth.js", () => ({
+vi.mock("@modelcontextprotocol/sdk/client/auth.js", () => ({
   UnauthorizedError: MockUnauthorizedError,
 }))
-
-beforeEach(() => {
-  openShouldFail = false
-  openCalledWith = undefined
-  transportCalls.length = 0
-})
 
 let MCP: any
 let Bus: any
@@ -112,25 +106,32 @@ let McpOAuthCallback: any
 let Instance: any
 let tmpdir: any
 
-beforeAll(async () => {
-  const { Global } = await import("../../src/global/index")
-  await Global.initialize()
-  const { Config } = await import("../../src/config/config")
-  Config.global.reset()
-  
-  const mcpMod = await import("../../src/mcp/index")
-  MCP = mcpMod.MCP
-  const busMod = await import("../../src/bus/index")
-  Bus = busMod.Bus
-  const oauthMod = await import("../../src/mcp/oauth-callback")
-  McpOAuthCallback = oauthMod.McpOAuthCallback
-  const instanceMod = await import("../../src/project/instance")
-  Instance = instanceMod.Instance
-  const fixtureMod = await import("../fixture/fixture")
-  tmpdir = fixtureMod.tmpdir
-})
+describe("MCP OAuth Browser", () => {
+  beforeAll(async () => {
+    const { Global } = await import("../../src/global/index")
+    await Global.initialize()
+    const { Config } = await import("../../src/config/config")
+    Config.global.reset()
+    
+    const mcpMod = await import("../../src/mcp/index")
+    MCP = mcpMod.MCP
+    const busMod = await import("../../src/bus/index")
+    Bus = busMod.Bus
+    const oauthMod = await import("../../src/mcp/oauth-callback")
+    McpOAuthCallback = oauthMod.McpOAuthCallback
+    const instanceMod = await import("../../src/project/instance")
+    Instance = instanceMod.Instance
+    const fixtureMod = await import("../fixture/fixture")
+    tmpdir = fixtureMod.tmpdir
+  })
 
-test("BrowserOpenFailed event is published when open() throws", async () => {
+  beforeEach(() => {
+    openShouldFail = false
+    openCalledWith = undefined
+    transportCalls = []
+  })
+
+  test("BrowserOpenFailed event is published when open() throws", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {
       await Bun.write(
@@ -271,4 +272,5 @@ test("open() is called with the authorization URL", async () => {
       expect(openCalledWith!).toContain("https://")
     },
   })
+})
 })
