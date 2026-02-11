@@ -95,3 +95,21 @@ afterEach(async () => {
   Global.resetForTest()
   Log.resetForTest()
 })
+
+const { BunProc } = await import("../src/bun/index")
+const originalInstall = BunProc.install
+BunProc.install = async (pkg: string, version = "latest") => {
+  const mockPath = path.join(dir, "cache", "mock-" + pkg.replace(/[\/@]/g, "-") + ".ts")
+  await fs.mkdir(path.dirname(mockPath), { recursive: true })
+
+  if (pkg === "@aws-sdk/credential-providers") {
+    await fs.writeFile(mockPath, "export const fromNodeProviderChain = () => ({})")
+  } else if (pkg === "opencode-anthropic-auth") {
+    await fs.writeFile(mockPath, "export default async () => ({ hooks: {} })")
+  } else {
+    // Default mock for any other package
+    await fs.writeFile(mockPath, "export default async () => ({ hooks: {} })")
+  }
+  return mockPath
+}
+

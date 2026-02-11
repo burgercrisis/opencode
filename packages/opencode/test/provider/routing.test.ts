@@ -1,4 +1,4 @@
-import { test, expect, vi, beforeEach, afterEach } from "bun:test"
+import { test, expect, vi, beforeEach, afterEach, describe } from "bun:test"
 import path from "path"
 import * as AnthropicSDK from "@ai-sdk/anthropic"
 import * as AzureSDK from "@ai-sdk/azure"
@@ -112,5 +112,6 @@ describe("Provider Routing", () => {
         expect(gptLang.modelId).toBe("gpt-4")
       }
     },
+  })
   })
 })

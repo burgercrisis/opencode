@@ -952,7 +952,7 @@ export namespace Provider {
           return {
             ...acc,
             [providerID]: mergeDeep(acc[providerID] ?? database[providerID], {
-              source: "custom",
+              ...(acc[providerID] ? {} : { source: "custom" }),
               options: result.options,
             } as any),
           }
