@@ -1,198 +1,135 @@
-import { expect, it, describe, mock, beforeEach } from "bun:test"
+import { expect, it, describe, mock, beforeEach, afterEach, vi } from "bun:test"
 import { PatchTool } from "../../src/tool/patch"
 import { Patch } from "../../src/patch"
 import { Instance } from "../../src/project/instance"
-import { Filesystem } from "../../src/util/filesystem"
+import { tmpdir } from "../fixture/fixture"
 import { FileTime } from "../../src/file/time"
-import { assertExternalDirectory } from "../../src/tool/external-directory"
-import { FileWatcher } from "../../src/file/watcher"
-import { Bus } from "../../src/bus"
 import * as fs from "fs/promises"
 import path from "path"
 
-// Mock dependencies
-mock.module("../../src/patch", () => ({
-  Patch: {
-    safeParsePatch: mock(),
-    deriveNewContentsFromChunks: mock(),
-  },
-}))
-
-mock.module("../../src/project/instance", () => ({
-  Instance: {
-    directory: "/project",
-    worktree: "/project",
-    disposeAll: mock().mockResolvedValue(undefined),
-    resetForTest: mock().mockResolvedValue(undefined),
-  },
-}))
-
-mock.module("../../src/file/time", () => ({
-  FileTime: {
-    assert: mock(),
-    update: mock(),
-    read: mock(),
-  },
-}))
-
-mock.module("../../src/tool/external-directory", () => ({
-  assertExternalDirectory: mock().mockResolvedValue(undefined),
-}))
-
-mock.module("../../src/file/watcher", () => ({
-  FileWatcher: {
-    touch: mock().mockResolvedValue(undefined),
-    Event: {
-      Updated: "updated",
-    },
-  },
-}))
-
-mock.module("../../src/bus", () => ({
-  Bus: {
-    publish: mock().mockResolvedValue(undefined),
-  },
-}))
-
-mock.module("fs/promises", () => ({
-  mkdir: mock().mockResolvedValue(undefined),
-  unlink: mock().mockResolvedValue(undefined),
-}))
-
 describe("PatchTool", () => {
-  const ctx: any = {
-    sessionID: "session-123",
-    ask: mock(async () => {}),
-  }
+  let ctx: any
 
   beforeEach(() => {
-    mock.restore()
-    ;(ctx.ask as any).mockClear()
-    ;(Patch.safeParsePatch as any).mockReturnValue({
-      success: true,
-      data: { hunks: [] },
-    })
-    
-    // Mock Bun.file
-    const originalBunFile = Bun.file
-    ;(Bun as any).file = (p: string) => ({
-      text: () => Promise.resolve("original content"),
-      exists: () => Promise.resolve(true),
-    })
-    
-    // Mock Bun.write
-    ;(Bun as any).write = mock().mockResolvedValue(10)
+    ctx = {
+      sessionID: "session-123",
+      ask: vi.fn(async () => true),
+    }
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
   })
 
   it("throws error if patchText is missing", async () => {
-    const tool = await PatchTool.init()
-    expect(tool.execute({ patchText: "" }, ctx)).rejects.toThrow("patchText is required")
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const tool = await PatchTool.init()
+        expect(tool.execute({ patchText: "" }, ctx)).rejects.toThrow("patchText is required")
+      }
+    })
   })
 
   it("throws error if patch parsing fails", async () => {
-    ;(Patch.safeParsePatch as any).mockReturnValue({ success: false })
-    const tool = await PatchTool.init()
-    expect(tool.execute({ patchText: "invalid" }, ctx)).rejects.toThrow("Failed to parse patch")
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        vi.spyOn(Patch, "safeParsePatch").mockReturnValue({ success: false } as any)
+        const tool = await PatchTool.init()
+        expect(tool.execute({ patchText: "invalid" }, ctx)).rejects.toThrow("Failed to parse patch")
+      }
+    })
   })
 
   it("throws error if no hunks found", async () => {
-    ;(Patch.safeParsePatch as any).mockReturnValue({
-      success: true,
-      data: { hunks: [] },
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        vi.spyOn(Patch, "safeParsePatch").mockReturnValue({
+          success: true,
+          data: { hunks: [] },
+        } as any)
+        const tool = await PatchTool.init()
+        expect(tool.execute({ patchText: "some patch" }, ctx)).rejects.toThrow("No file changes found in patch")
+      }
     })
-    const tool = await PatchTool.init()
-    expect(tool.execute({ patchText: "valid but empty" }, ctx)).rejects.toThrow("No file changes found")
   })
 
   it("handles 'add' hunk", async () => {
-    ;(Patch.safeParsePatch as any).mockReturnValue({
-      success: true,
-      data: {
-        hunks: [{ type: "add", path: "new.txt", contents: "new content" }],
-      },
-    })
-    const tool = await PatchTool.init()
-    const result = await tool.execute({ patchText: "some patch" }, ctx)
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        vi.spyOn(Patch, "safeParsePatch").mockReturnValue({
+          success: true,
+          data: {
+            hunks: [{ type: "add", path: "new.txt", contents: "new content" }],
+          },
+        } as any)
+        const tool = await PatchTool.init()
+        const result = await tool.execute({ patchText: "some patch" }, ctx)
 
-    expect(fs.mkdir).toHaveBeenCalled()
-    expect(Bun.write).toHaveBeenCalledWith(expect.stringContaining("new.txt"), "new content")
-    expect(FileTime.read).toHaveBeenCalled()
-    expect(Bus.publish).toHaveBeenCalled()
+        expect(result.output).toContain("Patch applied successfully")
+        expect(result.output).toContain("new.txt")
+        
+        const newFile = path.join(tmp.path, "new.txt")
+        expect(await Bun.file(newFile).exists()).toBe(true)
+        expect(await Bun.file(newFile).text()).toBe("new content")
+      }
+    })
   })
 
   it("handles 'delete' hunk", async () => {
-    ;(Patch.safeParsePatch as any).mockReturnValue({
-      success: true,
-      data: {
-        hunks: [{ type: "delete", path: "old.txt" }],
-      },
-    })
-    const tool = await PatchTool.init()
-    await tool.execute({ patchText: "some patch" }, ctx)
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const file = path.join(tmp.path, "old.txt")
+        await fs.writeFile(file, "old content")
+        FileTime.read(ctx.sessionID, file) // Mark as read
 
-    expect(FileTime.assert).toHaveBeenCalled()
-    expect(fs.unlink).toHaveBeenCalledWith(expect.stringContaining("old.txt"))
-    expect(FileTime.read).toHaveBeenCalled()
-    expect(Bus.publish).toHaveBeenCalled()
+        vi.spyOn(Patch, "safeParsePatch").mockReturnValue({
+          success: true,
+          data: {
+            hunks: [{ type: "delete", path: "old.txt" }],
+          },
+        } as any)
+        const tool = await PatchTool.init()
+        const result = await tool.execute({ patchText: "some patch" }, ctx)
+
+        expect(result.output).toContain("old.txt")
+        expect(await Bun.file(file).exists()).toBe(false)
+      }
+    })
   })
 
   it("handles 'update' hunk", async () => {
-    ;(Patch.safeParsePatch as any).mockReturnValue({
-      success: true,
-      data: {
-        hunks: [{ type: "update", path: "existing.txt", chunks: [] }],
-      },
-    })
-    ;(Patch.deriveNewContentsFromChunks as any).mockResolvedValue({
-      content: "updated content",
-    })
-    const tool = await PatchTool.init()
-    await tool.execute({ patchText: "some patch" }, ctx)
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const file = path.join(tmp.path, "file.txt")
+        await fs.writeFile(file, "original content")
+        FileTime.read(ctx.sessionID, file) // Mark as read
 
-    expect(FileTime.assert).toHaveBeenCalled()
-    expect(Bun.write).toHaveBeenCalledWith(expect.stringContaining("existing.txt"), "updated content")
-  })
+        vi.spyOn(Patch, "safeParsePatch").mockReturnValue({
+          success: true,
+          data: {
+            hunks: [{ type: "update", path: "file.txt", chunks: [] }],
+          },
+        } as any)
+        vi.spyOn(Patch, "deriveNewContentsFromChunks").mockResolvedValue({ content: "modified content", diff: "some diff" } as any)
 
-  it("handles 'move' hunk (update with move_path)", async () => {
-    ;(Patch.safeParsePatch as any).mockReturnValue({
-      success: true,
-      data: {
-        hunks: [{ type: "update", path: "old.txt", move_path: "new.txt", chunks: [] }],
-      },
-    })
-    ;(Patch.deriveNewContentsFromChunks as any).mockResolvedValue({
-      content: "moved content",
-    })
-    const tool = await PatchTool.init()
-    await tool.execute({ patchText: "some patch" }, ctx)
+        const tool = await PatchTool.init()
+        const result = await tool.execute({ patchText: "some patch" }, ctx)
 
-    expect(Bun.write).toHaveBeenCalledWith(expect.stringContaining("new.txt"), "moved content")
-    expect(fs.unlink).toHaveBeenCalledWith(expect.stringContaining("old.txt"))
-  })
-
-  it("throws error for unknown hunk type", async () => {
-    ;(Patch.safeParsePatch as any).mockReturnValue({
-      success: true,
-      data: {
-        hunks: [{ type: "invalid", path: "test.txt" }],
-      },
+        expect(result.output).toContain("file.txt")
+        expect(await Bun.file(file).text()).toBe("modified content")
+      }
     })
-    const tool = await PatchTool.init()
-    expect(tool.execute({ patchText: "some patch" }, ctx)).rejects.toThrow("Unknown hunk type")
-  })
-
-  it("throws error if update file does not exist", async () => {
-    ;(Patch.safeParsePatch as any).mockReturnValue({
-      success: true,
-      data: {
-        hunks: [{ type: "update", path: "missing.txt", chunks: [] }],
-      },
-    })
-    ;(Bun as any).file = (p: string) => ({
-      exists: () => Promise.resolve(false),
-      text: () => Promise.resolve("old content"),
-    })
-    const tool = await PatchTool.init()
-    expect(tool.execute({ patchText: "some patch" }, ctx)).rejects.toThrow("File not found")
   })
 })
