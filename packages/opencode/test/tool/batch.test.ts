@@ -116,11 +116,11 @@ describe("BatchTool", () => {
 
         const tool = await BatchTool.init()
         const result = await tool.execute({
-          tool_calls: Array(11).fill({ tool: "test-tool", parameters: {} })
+          tool_calls: Array(26).fill({ tool: "test-tool", parameters: {} })
         }, ctx as any)
 
-        expect(result.output).toContain("Max 10 tool calls allowed")
-        expect(mockTool.execute).not.toHaveBeenCalled()
+        expect(result.output).toContain("Executed 25/26 tools successfully. 1 failed.")
+        expect(mockTool.execute).toHaveBeenCalledTimes(25)
       }
     })
   })
