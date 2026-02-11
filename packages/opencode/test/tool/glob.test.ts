@@ -97,7 +97,7 @@ describe("GlobTool", () => {
   it("handles absolute and relative paths", async () => {
     await using tmp = await tmpdir()
     const subDir = path.join(tmp.path, "subdir")
-    
+
     const { Ripgrep } = await import("../../src/file/ripgrep")
     // @ts-ignore
     Ripgrep.files.mockImplementation(async function* () {
@@ -108,7 +108,7 @@ describe("GlobTool", () => {
       directory: tmp.path,
       fn: async () => {
         const tool = await GlobTool.init()
-        
+
         // Relative path
         await tool.execute({
           pattern: "*.ts",
@@ -126,6 +126,51 @@ describe("GlobTool", () => {
         expect(Ripgrep.files).toHaveBeenCalledWith(expect.objectContaining({
           cwd: subDir
         }))
+      }
+    })
+  })
+
+  it("handles file stats error gracefully", async () => {
+    await using tmp = await tmpdir()
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        // Mock Bun.file().stat() to fail
+        vi.spyOn(Bun, "file").mockReturnValue({
+          stat: () => Promise.reject(new Error("stat failed"))
+        } as any)
+
+        const tool = await GlobTool.init()
+        const result = await tool.execute({ pattern: "*.ts" }, ctx)
+
+        expect(result.output).toContain("file1.ts")
+        expect(result.metadata.count).toBe(2)
+      }
+    })
+  })
+
+  it("sorts files by mtime", async () => {
+    await using tmp = await tmpdir()
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const now = Date.now()
+        vi.spyOn(Bun, "file").mockImplementation((path: string) => {
+          const mtime = path.includes("file1.ts") ? now : now + 1000
+          return {
+            stat: () => Promise.resolve({ mtime: new Date(mtime) })
+          } as any
+        })
+
+        const tool = await GlobTool.init()
+        const result = await tool.execute({ pattern: "*.ts" }, ctx)
+
+        const lines = result.output.split("\n")
+        // file2 should be first because it's newer (mtime + 1000)
+        expect(lines[0]).toContain("file2.ts")
+        expect(lines[1]).toContain("file1.ts")
       }
     })
   })
