@@ -367,4 +367,62 @@ describe("util.filesystem", () => {
       expect(Filesystem.getCanonicalPath("/")).toBe("/")
     }
   })
+
+  test("getCanonicalPath() handles errors", () => {
+    // A path that doesn't exist should still return resolved path
+    const p = "/non/existent/path/that/will/fail/realpath"
+    expect(Filesystem.getCanonicalPath(p)).toBeTruthy()
+  })
+
+  test("isBinaryFile() sample limit and small files", async () => {
+    const tmp = await mkdtemp(path.join(os.tmpdir(), "opencode-binary-small-"))
+    const file = path.join(tmp, "small.txt")
+    
+    // Very small file
+    await Bun.write(file, "a")
+    expect(await Filesystem.isBinaryFile(file)).toBe(false)
+    
+    // Large text file (over 8000 bytes)
+    await Bun.write(file, "a".repeat(9000))
+    expect(await Filesystem.isBinaryFile(file)).toBe(false)
+    
+    // Large binary file
+    const buf = new Uint8Array(9000)
+    buf.fill(32) // fill with spaces (text)
+    buf[8500] = 0
+    buf[8501] = 0
+    buf[8502] = 0
+    await Bun.write(file, buf)
+    // It only checks first 8000 bytes, so this should still be "text" (false) 
+    // unless there are nulls/ctrl in the first 8000.
+    expect(await Filesystem.isBinaryFile(file)).toBe(false)
+
+    // Actually make it binary in the first 8000
+    buf[100] = 0
+    buf[101] = 0
+    buf[102] = 0
+    await Bun.write(file, buf)
+    expect(await Filesystem.isBinaryFile(file)).toBe(true)
+
+    await rm(tmp, { recursive: true, force: true })
+  })
+
+  test("isValidFilename() unicode and special cases", () => {
+    // Null byte
+    expect(Filesystem.isValidFilename("a\0b")).toBe(false)
+    // Control chars
+    expect(Filesystem.isValidFilename("a\x01b")).toBe(false)
+    expect(Filesystem.isValidFilename("a\x1Fb")).toBe(false)
+    expect(Filesystem.isValidFilename("a\x7Fb")).toBe(false)
+  })
+
+  test("validateFilepath() null bytes", () => {
+    expect(Filesystem.validateFilepath("a\0b", "/tmp").valid).toBe(false)
+  })
+
+  test("join() handles undefined/null segments", () => {
+    expect(Filesystem.join("a", undefined as any, "b")).toContain("a")
+    expect(Filesystem.join("a", null as any, "b")).toContain("a")
+    expect(Filesystem.join()).toBe("")
+  })
 })
