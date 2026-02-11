@@ -1,25 +1,28 @@
-import { describe, it, expect, mock, beforeEach } from "bun:test"
+import { describe, it, expect, mock, beforeEach, afterEach, vi } from "bun:test"
 import { TodoWriteTool, TodoReadTool } from "../../src/tool/todo"
 import { Todo } from "../../src/session/todo"
 
-mock.module("../../src/session/todo", () => ({
-  Todo: {
-    update: mock(async () => {}),
-    get: mock(async () => []),
-  }
-}))
-
 describe("TodoTools", () => {
+  let mocks: {
+    todoUpdate: any
+    todoGet: any
+  }
+
   const ctx = {
     sessionID: "test-session",
     ask: mock(async () => {}),
   }
 
   beforeEach(() => {
-    mock.restore()
+    mocks = {
+      todoUpdate: vi.spyOn(Todo, "update").mockResolvedValue(undefined),
+      todoGet: vi.spyOn(Todo, "get").mockResolvedValue([]),
+    }
     ctx.ask = mock(async () => {})
-    ;(Todo.update as any).mockClear()
-    ;(Todo.get as any).mockClear()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
   })
 
   describe("TodoWriteTool", () => {
@@ -32,9 +35,9 @@ describe("TodoTools", () => {
 
       const result = await tool.execute({ todos: todos as any }, ctx as any)
 
-      expect(Todo.update).toHaveBeenCalledWith({
+      expect(mocks.todoUpdate).toHaveBeenCalledWith({
         sessionID: ctx.sessionID,
-        todos: todos,
+        todos: todos as any,
       })
       expect(result.title).toBe("1 todos")
       expect(result.metadata.todos).toEqual(todos)
@@ -48,11 +51,11 @@ describe("TodoTools", () => {
       const todos = [
         { id: "1", content: "Task 1", status: "pending", priority: "high" },
       ]
-      ;(Todo.get as any).mockResolvedValue(todos)
+      mocks.todoGet.mockResolvedValue(todos as any)
 
       const result = await tool.execute({}, ctx as any)
 
-      expect(Todo.get).toHaveBeenCalledWith(ctx.sessionID)
+      expect(mocks.todoGet).toHaveBeenCalledWith(ctx.sessionID)
       expect(result.title).toBe("1 todos")
       expect(result.metadata.todos).toEqual(todos)
       expect(ctx.ask).toHaveBeenCalled()
