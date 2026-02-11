@@ -1,20 +1,15 @@
-import { describe, expect, test, mock } from "bun:test"
+import { describe, expect, test, mock, beforeEach, afterEach, vi } from "bun:test"
 import { ListTool } from "../../src/tool/ls"
 import { Instance } from "../../src/project/instance"
 import { tmpdir } from "../fixture/fixture"
 import { Ripgrep } from "../../src/file/ripgrep"
 import * as path from "path"
 
-mock.module("../../src/file/ripgrep", () => ({
-  Ripgrep: {
-    files: mock(async function* () {
-      yield "file1.txt"
-      yield "dir1/file2.txt"
-    }),
-  },
-}))
-
 describe("ListTool", () => {
+  let mocks: {
+    ripgrepFiles: any
+  }
+
   const ctx: any = {
     sessionID: "session",
     messageID: "message",
@@ -24,6 +19,19 @@ describe("ListTool", () => {
     metadata: () => {},
     ask: async () => {},
   }
+
+  beforeEach(() => {
+    mocks = {
+      ripgrepFiles: vi.spyOn(Ripgrep, "files").mockImplementation(async function* () {
+        yield "file1.txt"
+        yield "dir1/file2.txt"
+      } as any),
+    }
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
 
   test("lists files in a directory", async () => {
     await using tmp = await tmpdir()
@@ -36,7 +44,7 @@ describe("ListTool", () => {
         expect(result.output).toContain("file1.txt")
         expect(result.output).toContain("dir1/")
         expect(result.output).toContain("file2.txt")
-        expect(Ripgrep.files).toHaveBeenCalled()
+        expect(mocks.ripgrepFiles).toHaveBeenCalled()
       },
     })
   })
@@ -49,7 +57,7 @@ describe("ListTool", () => {
         const tool = await ListTool.init()
         await tool.execute({ ignore: ["*.log"] }, ctx)
 
-        const calls = (Ripgrep.files as any).mock.calls
+        const calls = mocks.ripgrepFiles.mock.calls
         const lastCall = calls[calls.length - 1]
         expect(lastCall[0].glob).toContain("!*.log")
       },
@@ -61,12 +69,11 @@ describe("ListTool", () => {
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const mockRipgrepFiles = Ripgrep.files as any
-        mockRipgrepFiles.mockImplementationOnce(async function* () {
+        mocks.ripgrepFiles.mockImplementationOnce(async function* () {
           for (let i = 0; i < 150; i++) {
             yield `file${i}.txt`
           }
-        })
+        } as any)
 
         const tool = await ListTool.init()
         const result = await tool.execute({}, ctx)
@@ -82,12 +89,11 @@ describe("ListTool", () => {
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const mockRipgrepFiles = Ripgrep.files as any
-        mockRipgrepFiles.mockImplementationOnce(async function* () {
+        mocks.ripgrepFiles.mockImplementationOnce(async function* () {
           yield "a.txt"
           yield "b/c.txt"
           yield "b/d/e.txt"
-        })
+        } as any)
 
         const tool = await ListTool.init()
         const result = await tool.execute({}, ctx)
