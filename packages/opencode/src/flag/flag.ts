@@ -44,9 +44,9 @@ export namespace Flag {
   export const OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX = number("OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX")
   export const OPENCODE_EXPERIMENTAL_OXFMT = OPENCODE_EXPERIMENTAL || truthy("OPENCODE_EXPERIMENTAL_OXFMT")
   export const OPENCODE_EXPERIMENTAL_LSP_TY = truthy("OPENCODE_EXPERIMENTAL_LSP_TY")
-  export const OPENCODE_EXPERIMENTAL_LSP_TOOL = OPENCODE_EXPERIMENTAL || truthy("OPENCODE_EXPERIMENTAL_LSP_TOOL")
+  export declare const OPENCODE_EXPERIMENTAL_LSP_TOOL: boolean
   export const OPENCODE_DISABLE_FILETIME_CHECK = truthy("OPENCODE_DISABLE_FILETIME_CHECK")
-  export const OPENCODE_EXPERIMENTAL_PLAN_MODE = OPENCODE_EXPERIMENTAL || truthy("OPENCODE_EXPERIMENTAL_PLAN_MODE")
+  export declare const OPENCODE_EXPERIMENTAL_PLAN_MODE: boolean
   export const OPENCODE_EXPERIMENTAL_MSYS_PATHS = truthy("OPENCODE_EXPERIMENTAL_MSYS_PATHS")
   export const OPENCODE_EXPERIMENTAL_NO_BOOTSTRAP = truthy("OPENCODE_EXPERIMENTAL_NO_BOOTSTRAP")
   export const OPENCODE_EXPERIMENTAL_MARKDOWN = truthy("OPENCODE_EXPERIMENTAL_MARKDOWN")
@@ -62,6 +62,24 @@ export namespace Flag {
   }
 }
 
+// Dynamic getter for OPENCODE_EXPERIMENTAL_PLAN_MODE
+Object.defineProperty(Flag, "OPENCODE_EXPERIMENTAL_PLAN_MODE", {
+  get() {
+    return Flag.OPENCODE_EXPERIMENTAL || truthy("OPENCODE_EXPERIMENTAL_PLAN_MODE")
+  },
+  enumerable: true,
+  configurable: true,
+})
+
+// Dynamic getter for OPENCODE_EXPERIMENTAL_LSP_TOOL
+Object.defineProperty(Flag, "OPENCODE_EXPERIMENTAL_LSP_TOOL", {
+  get() {
+    return Flag.OPENCODE_EXPERIMENTAL || truthy("OPENCODE_EXPERIMENTAL_LSP_TOOL")
+  },
+  enumerable: true,
+  configurable: true,
+})
+
 // Dynamic getter for OPENCODE_DISABLE_PROJECT_CONFIG
 // This must be evaluated at access time, not module load time,
 // because external tooling may set this env var at runtime
@@ -70,7 +88,7 @@ Object.defineProperty(Flag, "OPENCODE_DISABLE_PROJECT_CONFIG", {
     return truthy("OPENCODE_DISABLE_PROJECT_CONFIG")
   },
   enumerable: true,
-  configurable: false,
+  configurable: true,
 })
 
 // Dynamic getter for OPENCODE_CONFIG_DIR
@@ -81,7 +99,7 @@ Object.defineProperty(Flag, "OPENCODE_CONFIG_DIR", {
     return process.env["OPENCODE_CONFIG_DIR"]?.replace(/\0/g, "").trim()
   },
   enumerable: true,
-  configurable: false,
+  configurable: true,
 })
 
 // Dynamic getter for OPENCODE_CLIENT
@@ -92,5 +110,5 @@ Object.defineProperty(Flag, "OPENCODE_CLIENT", {
     return process.env["OPENCODE_CLIENT"] ?? "cli"
   },
   enumerable: true,
-  configurable: false,
+  configurable: true,
 })
