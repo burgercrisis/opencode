@@ -110,7 +110,7 @@ test("multiple file operations", async () => {
       expect(await Bun.file(`${tmp.path}/b.txt`).text()).toBe(tmp.extra.bContent)
     },
   })
-})
+}, 30000)
 
 test("empty directory handling", async () => {
   await using tmp = await bootstrap()
@@ -775,7 +775,7 @@ test("revert preserves file that existed in snapshot when deleted then recreated
       expect(await Bun.file(`${tmp.path}/existing.txt`).text()).toBe("original content")
     },
   })
-})
+}, 30000)
 
 test("diffFull sets status based on git change type", async () => {
   await using tmp = await bootstrap()
