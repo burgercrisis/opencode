@@ -1,107 +1,81 @@
-import { describe, expect, test, spyOn, beforeEach, afterEach } from "bun:test"
-import { z } from "zod"
+import { describe, expect, it, mock, spyOn } from "bun:test"
 import { QuestionTool } from "../../src/tool/question"
-import * as QuestionModule from "../../src/question"
+import { Question } from "../../src/question"
 
-const ctx = {
-  sessionID: "test-session",
-  messageID: "test-message",
-  callID: "test-call",
-  agent: "test-agent",
-  abort: AbortSignal.any([]),
-  messages: [],
-  metadata: () => {},
-  ask: async () => {},
-}
-
-describe("tool.question", () => {
-  let askSpy: any
-
-  beforeEach(() => {
-    askSpy = spyOn(QuestionModule.Question, "ask").mockImplementation(async () => {
-      return []
-    })
+describe("QuestionTool", () => {
+  it("has correct id and description", () => {
+    expect(QuestionTool.id).toBe("question")
   })
 
-  afterEach(() => {
+  it("asks questions and formats output (with callID)", async () => {
+    const questions = [
+      { question: "Color?", header: "Color", options: [{ label: "Red", description: "Red color" }] },
+      { question: "Age?", header: "Age", options: [{ label: "25", description: "25 years" }] }
+    ]
+    const answers = [["Red"], ["25"]]
+    const askSpy = spyOn(Question, "ask").mockResolvedValue(answers as any)
+
+    const ctx = {
+      sessionID: "s1",
+      messageID: "m1",
+      callID: "c1",
+      agent: "a1"
+    } as any
+
+    const tool = await QuestionTool.init(ctx)
+    const result = await tool.execute({ questions: questions as any }, ctx)
+
+    expect(askSpy).toHaveBeenCalledWith({
+      sessionID: "s1",
+      questions: questions,
+      tool: { messageID: "m1", callID: "c1" }
+    })
+
+    expect(result.title).toBe("Asked 2 questions")
+    expect(result.output).toContain('"Color?"="Red"')
+    expect(result.output).toContain('"Age?"="25"')
+    expect(result.metadata.answers).toEqual(answers)
+    
     askSpy.mockRestore()
   })
 
-  test("should successfully execute with valid question parameters", async () => {
-    const tool = await QuestionTool.init()
-    const questions = [
-      {
-        question: "What is your favorite color?",
-        header: "Color",
-        options: [
-          { label: "Red", description: "The color of passion" },
-          { label: "Blue", description: "The color of sky" },
-        ],
-        multiple: false,
-      },
-    ]
+  it("asks questions and formats output (without callID)", async () => {
+    const questions = [{ question: "Happy?", header: "Happy", options: [{ label: "true", description: "Yes" }] }]
+    const answers = [["true"]]
+    const askSpy = spyOn(Question, "ask").mockResolvedValue(answers as any)
 
-    askSpy.mockResolvedValueOnce([["Red"]])
+    const ctx = {
+      sessionID: "s1",
+      messageID: "m1",
+      agent: "a1"
+    } as any
 
-    const result = await tool.execute({ questions }, ctx)
-    expect(askSpy).toHaveBeenCalledTimes(1)
+    const tool = await QuestionTool.init(ctx)
+    const result = await tool.execute({ questions: questions as any }, ctx)
+
+    expect(askSpy).toHaveBeenCalledWith({
+      sessionID: "s1",
+      questions: questions,
+      tool: undefined
+    })
+
     expect(result.title).toBe("Asked 1 question")
+    expect(result.output).toContain('"Happy?"="true"')
+    
+    askSpy.mockRestore()
   })
 
-  test("should now pass with a header longer than 12 but less than 30 chars", async () => {
-    const tool = await QuestionTool.init()
-    const questions = [
-      {
-        question: "What is your favorite animal?",
-        header: "This Header is Over 12",
-        options: [{ label: "Dog", description: "Man's best friend" }],
-      },
-    ]
+  it("handles unanswered questions", async () => {
+    const questions = [{ question: "Empty?", header: "Empty", options: [] }]
+    const answers = [undefined]
+    const askSpy = spyOn(Question, "ask").mockResolvedValue(answers as any)
 
-    askSpy.mockResolvedValueOnce([["Dog"]])
+    const ctx = { sessionID: "s1", messageID: "m1", agent: "a1" } as any
+    const tool = await QuestionTool.init(ctx)
+    const result = await tool.execute({ questions: questions as any }, ctx)
 
-    const result = await tool.execute({ questions }, ctx)
-    expect(result.output).toContain(`"What is your favorite animal?"="Dog"`)
+    expect(result.output).toContain('"Empty?"="Unanswered"')
+    
+    askSpy.mockRestore()
   })
-
-  // intentionally removed the zod validation due to tool call errors, hoping prompting is gonna be good enough
-  //   test("should throw an Error for header exceeding 30 characters", async () => {
-  //     const tool = await QuestionTool.init()
-  //     const questions = [
-  //       {
-  //         question: "What is your favorite animal?",
-  //         header: "This Header is Definitely More Than Thirty Characters Long",
-  //         options: [{ label: "Dog", description: "Man's best friend" }],
-  //       },
-  //     ]
-  //     try {
-  //       await tool.execute({ questions }, ctx)
-  //       // If it reaches here, the test should fail
-  //       expect(true).toBe(false)
-  //     } catch (e: any) {
-  //       expect(e).toBeInstanceOf(Error)
-  //       expect(e.cause).toBeInstanceOf(z.ZodError)
-  //     }
-  //   })
-
-  //   test("should throw an Error for label exceeding 30 characters", async () => {
-  //     const tool = await QuestionTool.init()
-  //     const questions = [
-  //       {
-  //         question: "A question with a very long label",
-  //         header: "Long Label",
-  //         options: [
-  //           { label: "This is a very, very, very long label that will exceed the limit", description: "A description" },
-  //         ],
-  //       },
-  //     ]
-  //     try {
-  //       await tool.execute({ questions }, ctx)
-  //       // If it reaches here, the test should fail
-  //       expect(true).toBe(false)
-  //     } catch (e: any) {
-  //       expect(e).toBeInstanceOf(Error)
-  //       expect(e.cause).toBeInstanceOf(z.ZodError)
-  //     }
-  //   })
 })
