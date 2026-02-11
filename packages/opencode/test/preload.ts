@@ -98,6 +98,20 @@ afterEach(async () => {
 
 const { BunProc } = await import("../src/bun/index")
 const originalInstall = BunProc.install
+const originalRun = BunProc.run
+
+BunProc.run = async (args: string[], options?: any) => {
+  if (args[0] === "install" || (args[0]?.endsWith("bun.exe") && args[1] === "install")) {
+    const cwd = options?.cwd || process.cwd()
+    const pkgJsonPath = path.join(cwd, "package.json")
+    if (!fsSync.existsSync(pkgJsonPath)) {
+      await fs.writeFile(pkgJsonPath, JSON.stringify({ name: "mock-pkg" }))
+    }
+    return { exitCode: 0, stdout: "", stderr: "" } as any
+  }
+  return originalRun(args, options)
+}
+
 BunProc.install = async (pkg: string, version = "latest") => {
   const mockPath = path.join(dir, "cache", "mock-" + pkg.replace(/[\/@]/g, "-") + ".ts")
   await fs.mkdir(path.dirname(mockPath), { recursive: true })
