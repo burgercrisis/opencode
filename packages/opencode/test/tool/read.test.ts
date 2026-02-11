@@ -136,21 +136,74 @@ describe("ReadTool", () => {
     })
   })
 
-  test("truncates by bytes", async () => {
+  test("truncates long lines", async () => {
     await using tmp = await tmpdir()
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const filePath = path.join(tmp.path, "huge_lines.txt")
-        // MAX_BYTES is 50KB. We need to exceed it with many lines.
-        const content = Array.from({ length: 1000 }, (_, i) => `line ${i.toString().padStart(50, "0")}`).join("\n")
-        await fs.writeFile(filePath, content)
+        const filePath = path.join(tmp.path, "long_line.txt")
+        const longLine = "a".repeat(3000)
+        await fs.writeFile(filePath, longLine)
 
         const tool = await ReadTool.init()
         const result = await tool.execute({ filePath }, ctx)
 
-        expect(result.metadata.truncated).toBe(true)
-        expect(result.output).toContain("Output truncated at 51200 bytes")
+        expect(result.output).toContain("a".repeat(2000) + "...")
+        expect(result.output).not.toContain("a".repeat(2001))
+      },
+    })
+  })
+
+  test("handles empty file", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const filePath = path.join(tmp.path, "empty.txt")
+        await fs.writeFile(filePath, "")
+
+        const tool = await ReadTool.init()
+        const result = await tool.execute({ filePath }, ctx)
+
+        expect(result.output).toContain("(End of file - total 1 lines)")
+        expect(result.metadata.truncated).toBe(false)
+      },
+    })
+  })
+
+  test("respects bypassCwdCheck in extra", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        // Use a path that is definitely outside both project and home
+        const filePath = "C:\\Users\\user\\Desktop\\outside.txt"
+        // Mock fs.writeFile and file.exists/text so we don't actually touch the filesystem
+        vi.spyOn(fs, "writeFile").mockResolvedValue(undefined)
+        vi.spyOn(Bun, "file").mockImplementation((path: string) => ({
+          exists: () => Promise.resolve(true),
+          text: () => Promise.resolve("outside"),
+          arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)),
+          type: "text/plain"
+        } as any))
+
+        const tool = await ReadTool.init()
+        // Should trigger ask for external_directory normally
+        const askSpy = vi.spyOn(ctx, "ask")
+        await tool.execute({ filePath }, ctx)
+        expect(askSpy).toHaveBeenCalledWith(expect.objectContaining({
+          permission: "external_directory"
+        }))
+
+        // Should pass with bypass without external_directory permission
+        askSpy.mockClear()
+        const result = await tool.execute({ filePath }, { ...ctx, extra: { bypassCwdCheck: true } })
+        expect(result.output).toContain("outside")
+        // Check that it asked for "read" but NOT "external_directory"
+        const calls = askSpy.mock.calls
+        const permissions = calls.map(c => (c[0] as any).permission)
+        expect(permissions).toContain("read")
+        expect(permissions).not.toContain("external_directory")
       },
     })
   })
