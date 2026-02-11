@@ -1,4 +1,4 @@
-import { describe, expect, test, mock, beforeEach } from "bun:test"
+import { describe, expect, test, mock, beforeEach, afterEach, vi } from "bun:test"
 import { ReadTool } from "../../src/tool/read"
 import { Instance } from "../../src/project/instance"
 import { tmpdir } from "../fixture/fixture"
@@ -7,19 +7,12 @@ import { LSP } from "../../src/lsp"
 import * as fs from "fs/promises"
 import * as path from "path"
 
-mock.module("../../src/session/instruction", () => ({
-  InstructionPrompt: {
-    resolve: mock(() => Promise.resolve([])),
-  },
-}))
-
-mock.module("../../src/lsp", () => ({
-  LSP: {
-    touchFile: mock(() => Promise.resolve()),
-  },
-}))
-
 describe("ReadTool", () => {
+  let mocks: {
+    instructionPromptResolve: any
+    lspTouchFile: any
+  }
+
   const ctx: any = {
     sessionID: "session",
     messageID: "message",
@@ -29,6 +22,17 @@ describe("ReadTool", () => {
     metadata: () => {},
     ask: async () => {},
   }
+
+  beforeEach(() => {
+    mocks = {
+      instructionPromptResolve: vi.spyOn(InstructionPrompt, "resolve").mockResolvedValue([]),
+      lspTouchFile: vi.spyOn(LSP, "touchFile").mockResolvedValue(undefined),
+    }
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
 
   test("reads a text file", async () => {
     await using tmp = await tmpdir()
