@@ -222,13 +222,6 @@ export namespace Filesystem {
     const abs = pathIsAbsolute(p) ? p : pathResolve(root, p)
     if (!contains(root, abs)) return { valid: false, reason: 'Path outside project directory' }
     
-    if (p.includes('..')) {
-      const normalizedAbs = pathNormalize(abs)
-      if (!contains(root, normalizedAbs)) {
-        return { valid: false, reason: 'Symbolic link or path traversal detected' }
-      }
-    }
-    
     return { valid: true }
   }
 

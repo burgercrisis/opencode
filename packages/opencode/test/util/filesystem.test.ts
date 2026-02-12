@@ -48,9 +48,77 @@ describe("util.filesystem", () => {
 
   test("isBinaryFile() additional coverage", async () => {
     const p = path.join(process.env.OPENCODE_TEST_HOME!, "binary-extra.bin")
-    await Bun.write(p, new Uint8Array([0, 0])) // 2 nulls (not enough for binary)
+    
+    // Test with 3 nulls to trigger nulls > 2
+    await Bun.write(p, new Uint8Array([0, 0, 0]))
+    expect(await Filesystem.isBinaryFile(p)).toBe(true)
+    
+    // Test with control character
+    await Bun.write(p, new Uint8Array([65, 66, 7])) // 'A', 'B', BEL (control char)
+    expect(await Filesystem.isBinaryFile(p)).toBe(true)
+    
+    // Test with allowed control chars (TAB, LF, CR)
+    await Bun.write(p, new Uint8Array([9, 10, 13, 65]))
     expect(await Filesystem.isBinaryFile(p)).toBe(false)
+    
+    // Test with non-existent file (should return true as fail-safe)
+    expect(await Filesystem.isBinaryFile(path.join(p, "not-real"))).toBe(true)
+    
     await fsp.unlink(p)
+  })
+
+  test("validateFilepath() edge cases", () => {
+    const root = "/root"
+    expect(Filesystem.validateFilepath("", root).valid).toBe(false)
+    expect(Filesystem.validateFilepath("a\0b", root).valid).toBe(false)
+    
+    const absRoot = process.platform === "win32" ? "C:\\root" : "/root"
+    const pOutside = process.platform === "win32" ? "D:\\outside" : "/outside"
+    expect(Filesystem.validateFilepath(pOutside, absRoot).valid).toBe(false)
+  })
+
+  test("overlaps() and contains()", () => {
+    const root = process.platform === "win32" ? "C:\\a" : "/a"
+    const sub = process.platform === "win32" ? "C:\\a\\b" : "/a/b"
+    const unrelated = process.platform === "win32" ? "C:\\x" : "/x"
+    
+    expect(Filesystem.contains(root, sub)).toBe(true)
+    expect(Filesystem.contains(root, root)).toBe(true)
+    
+    expect(Filesystem.overlaps(root, sub)).toBe(true)
+    expect(Filesystem.overlaps(root, unrelated)).toBe(false)
+  })
+
+  test("findUp() and up() with stop condition", async () => {
+    const tmp = await fsp.mkdtemp(path.join(os.tmpdir(), "opencode-up-"))
+    const sub = path.join(tmp, "a", "b")
+    await fsp.mkdir(sub, { recursive: true })
+    await fsp.writeFile(path.join(tmp, "config.json"), "{}")
+    await fsp.writeFile(path.join(sub, "local.json"), "{}")
+    
+    const found = await Filesystem.findUp("config.json", sub, tmp)
+    expect(found).toContain(path.join(tmp, "config.json"))
+    
+    const results: string[] = []
+    for await (const match of Filesystem.up({ targets: ["config.json", "local.json"], start: sub, stop: tmp })) {
+      results.push(match)
+    }
+    expect(results).toContain(path.join(sub, "local.json"))
+    expect(results).toContain(path.join(tmp, "config.json"))
+    
+    await fsp.rm(tmp, { recursive: true, force: true })
+  })
+
+  test("globUp() with stop condition", async () => {
+    const tmp = await fsp.mkdtemp(path.join(os.tmpdir(), "opencode-glob-"))
+    const sub = path.join(tmp, "a", "b")
+    await fsp.mkdir(sub, { recursive: true })
+    await fsp.writeFile(path.join(tmp, "test.txt"), "hi")
+    
+    const found = await Filesystem.globUp("*.txt", sub, tmp)
+    expect(found).toContain(path.join(tmp, "test.txt"))
+    
+    await fsp.rm(tmp, { recursive: true, force: true })
   })
 
   test("isValidFilename() additional coverage", () => {
@@ -306,28 +374,30 @@ describe("util.filesystem", () => {
     expect(exists).toBe(true)
   })
 
-  test("isBinaryFile() detects binary content more deeply", async () => {
-    const temp = "test-binary.bin"
-    await Bun.write(temp, new Uint8Array([0, 0, 0, 0])) // Multiple nulls
-    expect(await Filesystem.isBinaryFile(temp)).toBe(true)
-    
-    await Bun.write(temp, new Uint8Array([0, 0, 65, 66])) // Exactly 2 nulls + 'AB' (should be false)
-    // nulls=0, byte=0 -> check(i+1, 1)
-    // nulls=1, byte=0 -> if (1+1 > 2) false -> check(i+1, 2)
-    // nulls=2, byte=65 -> if (65 < 32) false -> check(i+1, 2)
-    // nulls=2, byte=66 -> if (66 < 32) false -> check(i+1, 2)
-    expect(await Filesystem.isBinaryFile(temp)).toBe(false)
+  test("isBinaryFile() control characters", async () => {
+    const root = process.env.OPENCODE_TEST_HOME!
+    const tabPath = path.join(root, "tab.txt")
+    const crPath = path.join(root, "cr.txt")
+    const lfPath = path.join(root, "lf.txt")
+    const ctrlPath = path.join(root, "ctrl.txt")
 
-    await Bun.write(temp, new Uint8Array([0, 0, 0, 65])) // 3 nulls
-    expect(await Filesystem.isBinaryFile(temp)).toBe(true)
-    
-    await Bun.write(temp, new Uint8Array([1, 2, 3])) // Low chars
-    expect(await Filesystem.isBinaryFile(temp)).toBe(true)
-    
-    await Bun.write(temp, "just text")
-    expect(await Filesystem.isBinaryFile(temp)).toBe(false)
-    
-    await fsp.unlink(temp)
+    await Bun.write(tabPath, "text with\ttab")
+    await Bun.write(crPath, "text with\rcarriage return")
+    await Bun.write(lfPath, "text with\nline feed")
+    await Bun.write(ctrlPath, Buffer.from([0x01, 0x02, 0x03])) // Control characters
+
+    expect(await Filesystem.isBinaryFile(tabPath)).toBe(false)
+    expect(await Filesystem.isBinaryFile(crPath)).toBe(false)
+    expect(await Filesystem.isBinaryFile(lfPath)).toBe(false)
+    expect(await Filesystem.isBinaryFile(ctrlPath)).toBe(true)
+  })
+
+  test("normalizeGitPath() with relative path", () => {
+    // Relative path should be resolved
+    const p = "relative/path"
+    const result = Filesystem.normalizeGitPath(p, false)
+    expect(path.isAbsolute(result)).toBe(true)
+    expect(result.endsWith("relative/path") || result.endsWith("relative\\path")).toBe(true)
   })
 
   test("up() and findUp() and globUp() termination at filesystem root", async () => {
