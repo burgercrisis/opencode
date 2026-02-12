@@ -69,6 +69,10 @@ export namespace Filesystem {
   }
 
   export function dirname(p: string) {
+    if (p === undefined || p === null) {
+      console.warn("[Filesystem.dirname] called with undefined or null path")
+      return ""
+    }
     return nativePath(path.dirname(p))
   }
 
