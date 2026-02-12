@@ -208,6 +208,26 @@ describe("ReadTool", () => {
     })
   })
 
+  test("truncates based on MAX_BYTES", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const filePath = path.join(tmp.path, "bytes.txt")
+        // MAX_BYTES is 50KB. Create a file larger than that.
+        const chunk = "a".repeat(1000)
+        const content = Array.from({ length: 60 }, () => chunk).join("\n")
+        await fs.writeFile(filePath, content)
+
+        const tool = await ReadTool.init()
+        const result = await tool.execute({ filePath }, ctx)
+
+        expect(result.output).toContain("Output truncated at 51200 bytes")
+        expect(result.metadata.truncated).toBe(true)
+      },
+    })
+  })
+
   test("includes system reminders from instructions", async () => {
     await using tmp = await tmpdir()
     await Instance.provide({
