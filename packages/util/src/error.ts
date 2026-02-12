@@ -1,5 +1,4 @@
-import z from "zod"
-
+import { z } from "zod"
 export abstract class NamedError extends Error {
   abstract schema(): z.core.$ZodType
   abstract toObject(): { name: string; data: any }
