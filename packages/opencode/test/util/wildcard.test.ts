@@ -26,15 +26,43 @@ describe("Wildcard", () => {
   })
 
   describe("all", () => {
-    test("should find best match", () => {
+    test("should find best match and handle sorting", () => {
       const patterns = {
         "*": "fallback",
         "h*": "starts-with-h",
         "hello": "exact",
+        "abc": "abc",
+        "abd": "abd",
       }
       expect(Wildcard.all("hello", patterns)).toBe("exact")
       expect(Wildcard.all("hi", patterns)).toBe("starts-with-h")
       expect(Wildcard.all("bye", patterns)).toBe("fallback")
+      expect(Wildcard.all("abc", patterns)).toBe("abc")
+      expect(Wildcard.all("abd", patterns)).toBe("abd")
+    })
+  })
+
+  describe("matchSequence edge cases", () => {
+    test("should handle empty patterns", () => {
+      expect(Wildcard.allStructured({ head: "a", tail: [] }, { "a": "val" })).toBe("val")
+    })
+
+    test("should handle * in sequence", () => {
+      const patterns = { "git * status": "status" }
+      expect(Wildcard.allStructured({ head: "git", tail: ["status"] }, patterns)).toBe("status")
+    })
+  })
+
+  describe("all sorting logic", () => {
+    test("should sort by length then alphabetically", () => {
+      const patterns = {
+        "aaaa": "len4-a",
+        "bbbb": "len4-b",
+        "ccc": "len3",
+      }
+      expect(Wildcard.all("aaaa", patterns)).toBe("len4-a")
+      expect(Wildcard.all("bbbb", patterns)).toBe("len4-b")
+      expect(Wildcard.all("ccc", patterns)).toBe("len3")
     })
   })
 
@@ -56,6 +84,31 @@ describe("Wildcard", () => {
         "git * commit": "git-commit",
       }
       expect(Wildcard.allStructured({ head: "git", tail: ["add", ".", "commit"] }, patterns)).toBe("git-commit")
+      expect(Wildcard.allStructured({ head: "git", tail: ["commit"] }, patterns)).toBe("git-commit")
+    })
+
+    test("should return acc if matchSequence fails", () => {
+      const patterns = { "git checkout": "val" }
+      expect(Wildcard.allStructured({ head: "git", tail: ["status"] }, patterns)).toBeUndefined()
+    })
+
+    test("should handle multiple patterns in sequence", () => {
+      const patterns = {
+        "a b c": "match"
+      }
+      expect(Wildcard.allStructured({ head: "a", tail: ["b", "c"] }, patterns)).toBe("match")
+      expect(Wildcard.allStructured({ head: "a", tail: ["x", "b", "c"] }, patterns)).toBe("match")
+      expect(Wildcard.allStructured({ head: "a", tail: ["b", "x", "c"] }, patterns)).toBe("match")
+      expect(Wildcard.allStructured({ head: "a", tail: ["x", "y"] }, patterns)).toBeUndefined()
+    })
+
+    test("should handle items.some branch in matchSequence", () => {
+      const patterns = { "a b": "val" }
+      expect(Wildcard.allStructured({ head: "a", tail: ["c"] }, patterns)).toBeUndefined()
+      
+      const patterns2 = { "git * commit": "val" }
+      expect(Wildcard.allStructured({ head: "git", tail: ["add", "commit"] }, patterns2)).toBe("val")
+      expect(Wildcard.allStructured({ head: "git", tail: ["add", "push"] }, patterns2)).toBeUndefined()
     })
   })
 })
