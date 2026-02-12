@@ -1,8 +1,8 @@
 import { expect, test, describe } from "bun:test"
 import { AsyncQueue, work } from "../../src/util/queue"
 
-describe("AsyncQueue", () => {
-  test("should push and pop items", async () => {
+describe("util.queue", () => {
+  test("AsyncQueue should push and pull items", async () => {
     const queue = new AsyncQueue<number>()
     queue.push(1)
     queue.push(2)
@@ -11,50 +11,87 @@ describe("AsyncQueue", () => {
     expect(await queue.next()).toBe(2)
   })
 
-  test("should resolve pending next calls", async () => {
+  test("AsyncQueue should wait for items", async () => {
     const queue = new AsyncQueue<number>()
     const nextPromise = queue.next()
     
-    queue.push(10)
-    expect(await nextPromise).toBe(10)
+    queue.push(3)
+    expect(await nextPromise).toBe(3)
   })
 
-  test("should work as an async iterator", async () => {
+  test("AsyncQueue should work as async iterator with for-await", async () => {
     const queue = new AsyncQueue<number>()
     queue.push(1)
     queue.push(2)
     queue.push(3)
     
     const results: number[] = []
-    let count = 0
     for await (const item of queue) {
       results.push(item)
-      count++
-      if (count === 3) break
+      if (results.length === 3) break
     }
     
     expect(results).toEqual([1, 2, 3])
   })
-})
 
-describe("work", () => {
-  test("should process items with concurrency", async () => {
+  test("work() should handle concurrency higher than item count", async () => {
+    const items = [1, 2]
+    const processed: number[] = []
+    await work(10, items, async (item) => {
+      processed.push(item)
+    })
+    expect(processed.length).toBe(2)
+  })
+
+  test("work() should process items in parallel", async () => {
     const items = [1, 2, 3, 4, 5]
     const processed: number[] = []
-    
     await work(2, items, async (item) => {
       processed.push(item)
     })
-    
-    // items.pop() means it processes in reverse order
+    expect(processed.length).toBe(5)
     expect(processed.sort()).toEqual([1, 2, 3, 4, 5])
   })
 
-  test("should handle empty items", async () => {
-    const processed: number[] = []
-    await work(2, [], async (item) => {
-      processed.push(item as any)
-    })
-    expect(processed).toEqual([])
+  test("AsyncQueue should resolve next() when push() is called later", async () => {
+    const queue = new AsyncQueue<number>()
+    const nextPromise = queue.next()
+    
+    // This triggers line 13's resolver.push
+    setTimeout(() => queue.push(42), 10)
+    
+    expect(await nextPromise).toBe(42)
+  })
+
+  test("AsyncQueue iterator should wait for items", async () => {
+    const queue = new AsyncQueue<number>()
+    const results: number[] = []
+    
+    const pushPromise = (async () => {
+      await new Promise(r => setTimeout(r, 10))
+      queue.push(1)
+      await new Promise(r => setTimeout(r, 10))
+      queue.push(2)
+    })()
+    
+    for await (const item of queue) {
+      results.push(item)
+      if (results.length === 2) break
+    }
+    
+    await pushPromise
+    expect(results).toEqual([1, 2])
+  })
+
+  test("AsyncQueue.push should resolve multiple waiting next() calls", async () => {
+    const queue = new AsyncQueue<number>()
+    const p1 = queue.next()
+    const p2 = queue.next()
+    
+    queue.push(10)
+    queue.push(20)
+    
+    expect(await p1).toBe(10)
+    expect(await p2).toBe(20)
   })
 })
