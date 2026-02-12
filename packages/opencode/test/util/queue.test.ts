@@ -61,6 +61,34 @@ describe("util.queue", () => {
     expect(processed.length).toBe(0)
   })
 
+  test("work() should handle concurrency of 0 (though not recommended)", async () => {
+    const items = [1, 2]
+    const processed: number[] = []
+    await work(0, items, async (item) => {
+      processed.push(item)
+    })
+    expect(processed.length).toBe(0)
+  })
+
+  test("AsyncQueue should handle rapid push/pull", async () => {
+    const queue = new AsyncQueue<number>()
+    const results: number[] = []
+    
+    const p = (async () => {
+      for (let i = 0; i < 100; i++) {
+        results.push(await queue.next())
+      }
+    })()
+
+    for (let i = 0; i < 100; i++) {
+      queue.push(i)
+    }
+
+    await p
+    expect(results.length).toBe(100)
+    expect(results[99]).toBe(99)
+  })
+
   test("AsyncQueue should resolve next() when push() is called later", async () => {
     const queue = new AsyncQueue<number>()
     const nextPromise = queue.next()
