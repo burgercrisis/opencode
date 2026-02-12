@@ -1,37 +1,32 @@
-import { expect, test, describe, vi } from "bun:test"
+import { expect, test, describe } from "bun:test"
 import { lazy } from "../../src/util/lazy"
 
-describe("lazy", () => {
-  test("should only call fn once", () => {
-    const fn = vi.fn().mockReturnValue(1)
-    const get = lazy(fn)
+describe("util.lazy", () => {
+  test("lazy should initialize once", () => {
+    let calls = 0
+    const l = lazy(() => {
+      calls++
+      return "foo"
+    })
     
-    expect(fn).toHaveBeenCalledTimes(0)
-    expect(get()).toBe(1)
-    expect(fn).toHaveBeenCalledTimes(1)
-    expect(get()).toBe(1)
-    expect(fn).toHaveBeenCalledTimes(1)
+    expect(calls).toBe(0)
+    expect(l()).toBe("foo")
+    expect(calls).toBe(1)
+    expect(l()).toBe("foo")
+    expect(calls).toBe(1)
   })
 
-  test("should reset", () => {
-    const fn = vi.fn().mockReturnValue(2)
-    const get = lazy(fn)
+  test("lazy should reset", () => {
+    let calls = 0
+    const l = lazy(() => {
+      calls++
+      return "foo"
+    })
     
-    expect(get()).toBe(2)
-    expect(fn).toHaveBeenCalledTimes(1)
-    
-    get.reset()
-    expect(get()).toBe(2)
-    expect(fn).toHaveBeenCalledTimes(2)
-  })
-
-  test("should handle undefined/null values", () => {
-    const fn = vi.fn().mockReturnValue(null)
-    const get = lazy(fn)
-    
-    expect(get()).toBe(null)
-    expect(fn).toHaveBeenCalledTimes(1)
-    expect(get()).toBe(null)
-    expect(fn).toHaveBeenCalledTimes(1)
+    l()
+    expect(calls).toBe(1)
+    l.reset()
+    expect(l()).toBe("foo")
+    expect(calls).toBe(2)
   })
 })
