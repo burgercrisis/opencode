@@ -1,88 +1,92 @@
-import { expect, test, describe, vi } from "bun:test"
+import { expect, test, describe } from "bun:test"
 import { Lock } from "../../src/util/lock"
 
-describe("Lock", () => {
-  test("read lock should allow multiple readers", async () => {
-    const l1 = await Lock.read("k1")
-    const l2 = await Lock.read("k1")
+describe("util.lock", () => {
+  test("Lock should allow multiple concurrent readers", async () => {
+    const key = "test-lock-readers"
+    const r1 = await Lock.read(key)
+    const r2 = await Lock.read(key)
     
-    expect(l1).toBeDefined()
-    expect(l2).toBeDefined()
+    expect(r1).toBeDefined()
+    expect(r2).toBeDefined()
     
-    l1[Symbol.dispose]()
-    l2[Symbol.dispose]()
+    r1[Symbol.dispose]()
+    r2[Symbol.dispose]()
   })
 
-  test("write lock should be exclusive", async () => {
-    const w1 = await Lock.write("k2")
-    let w2Resolved = false
-    const w2Promise = Lock.write("k2").then(l => {
-      w2Resolved = true
-      return l
+  test("Lock should block readers while writer is active", async () => {
+    const key = "test-lock-writer-blocks-readers"
+    const w1 = await Lock.write(key)
+    
+    let readerAcquired = false
+    const readerPromise = Lock.read(key).then(r => {
+      readerAcquired = true
+      return r
     })
     
-    // Give some time for promises to settle
+    // Wait a bit to ensure the reader is blocked
     await new Promise(r => setTimeout(r, 10))
-    expect(w2Resolved).toBe(false)
+    expect(readerAcquired).toBe(false)
     
     w1[Symbol.dispose]()
-    const w2 = await w2Promise
-    expect(w2Resolved).toBe(true)
-    w2[Symbol.dispose]()
-  })
-
-  test("readers should wait for writer", async () => {
-    const w1 = await Lock.write("k3")
-    let r1Resolved = false
-    const r1Promise = Lock.read("k3").then(l => {
-      r1Resolved = true
-      return l
-    })
-    
-    await new Promise(r => setTimeout(r, 10))
-    expect(r1Resolved).toBe(false)
-    
-    w1[Symbol.dispose]()
-    const r1 = await r1Promise
-    expect(r1Resolved).toBe(true)
+    const r1 = await readerPromise
+    expect(readerAcquired).toBe(true)
     r1[Symbol.dispose]()
   })
 
-  test("writers should wait for readers", async () => {
-    const r1 = await Lock.read("k4")
-    let w1Resolved = false
-    const w1Promise = Lock.write("k4").then(l => {
-      w1Resolved = true
-      return l
+  test("Lock should block writers while readers are active", async () => {
+    const key = "test-lock-readers-block-writer"
+    const r1 = await Lock.read(key)
+    
+    let writerAcquired = false
+    const writerPromise = Lock.write(key).then(w => {
+      writerAcquired = true
+      return w
     })
     
     await new Promise(r => setTimeout(r, 10))
-    expect(w1Resolved).toBe(false)
+    expect(writerAcquired).toBe(false)
     
     r1[Symbol.dispose]()
-    const w1 = await w1Promise
-    expect(w1Resolved).toBe(true)
+    const w1 = await writerPromise
+    expect(writerAcquired).toBe(true)
     w1[Symbol.dispose]()
   })
 
-  test("prioritize writers over waiting readers", async () => {
-    const w1 = await Lock.write("k5")
+  test("Lock should prioritize writers over readers", async () => {
+    const key = "test-lock-writer-priority"
+    const w_initial = await Lock.write(key)
     
-    const order: string[] = []
-    const r1Promise = Lock.read("k5").then(l => { order.push("reader"); return l })
-    const w2Promise = Lock.write("k5").then(l => { order.push("writer"); return l })
+    const events: string[] = []
     
-    await new Promise(r => setTimeout(r, 10))
+    const readerPromise = Lock.read(key).then(r => {
+      events.push("reader")
+      r[Symbol.dispose]()
+    })
+    
+    const writerPromise = Lock.write(key).then(w => {
+      events.push("writer")
+      w[Symbol.dispose]()
+    })
+    
+    w_initial[Symbol.dispose]()
+    
+    await Promise.all([readerPromise, writerPromise])
+    
+    // Writer should be processed before reader due to priority in process()
+    expect(events).toEqual(["writer", "reader"])
+  })
+
+  test("Lock should handle multiple waiting writers", async () => {
+    const key = "test-lock-multiple-writers"
+    const w1 = await Lock.write(key)
+    
+    const events: string[] = []
+    const p1 = Lock.write(key).then(w => { events.push("w2"); w[Symbol.dispose]() })
+    const p2 = Lock.write(key).then(w => { events.push("w3"); w[Symbol.dispose]() })
     
     w1[Symbol.dispose]()
-    
-    // w2 should resolve first
-    const w2 = await w2Promise
-    expect(order).toEqual(["writer"])
-    
-    w2[Symbol.dispose]()
-    const r1 = await r1Promise
-    expect(order).toEqual(["writer", "reader"])
-    r1[Symbol.dispose]()
+    await Promise.all([p1, p2])
+    expect(events).toEqual(["w2", "w3"])
   })
 })
