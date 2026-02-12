@@ -53,6 +53,14 @@ describe("util.queue", () => {
     expect(processed.sort()).toEqual([1, 2, 3, 4, 5])
   })
 
+  test("work() should handle empty items", async () => {
+    const processed: number[] = []
+    await work(2, [], async (item) => {
+      processed.push(item)
+    })
+    expect(processed.length).toBe(0)
+  })
+
   test("AsyncQueue should resolve next() when push() is called later", async () => {
     const queue = new AsyncQueue<number>()
     const nextPromise = queue.next()
