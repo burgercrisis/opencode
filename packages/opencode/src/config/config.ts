@@ -1289,14 +1289,6 @@ export namespace Config {
       return res
     }
     const configPath = Global.Path.config
-    // Debug: print all char codes of configPath
-    let debug = ""
-    for (let i = 0; i < configPath.length; i++) {
-      debug += configPath.charCodeAt(i) + ","
-    }
-    if (configPath.includes("\0")) {
-      console.error(`!!! configPath has null byte! codes: ${debug}`)
-    }
     
     let result: Info = pipe(
       {},
@@ -1335,14 +1327,17 @@ export namespace Config {
       
     if (!filepath) return {}
     log.info("loading", { path: filepath })
-    let text = await Bun.file(filepath)
-      .text()
-      .catch((err) => {
-        if (err.code === "ENOENT") return
-        throw new JsonError({ path: filepath }, { cause: err })
+    try {
+      const text = await fsp.readFile(filepath, "utf8").catch((err) => {
+        if (err.code === "ENOENT") return undefined
+        throw err
       })
-    if (!text) return {}
-    return load(text, filepath)
+      if (!text) return {}
+      return load(text, filepath)
+    } catch (err: any) {
+      log.error("error reading config file", { path: filepath, error: err })
+      throw new JsonError({ path: filepath }, { cause: err })
+    }
   }
 
   async function load(text: string, configFilepath: string) {

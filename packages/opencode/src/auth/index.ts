@@ -1,4 +1,5 @@
 import path from "path"
+import fsp from "fs/promises"
 import { Global } from "../global"
 import z from "zod"
 
@@ -44,8 +45,10 @@ export namespace Auth {
   }
 
   export async function all(): Promise<Record<string, Info>> {
-    const file = Bun.file(filepath())
-    const data = await file.json().catch(() => ({}) as Record<string, unknown>)
+    const data = await fsp
+      .readFile(filepath(), "utf8")
+      .then((t) => JSON.parse(t))
+      .catch(() => ({}) as Record<string, unknown>)
     return Object.entries(data).reduce(
       (acc, [key, value]) => {
         const parsed = Info.safeParse(value)
@@ -58,15 +61,15 @@ export namespace Auth {
   }
 
   export async function set(key: string, info: Info) {
-    const file = Bun.file(filepath())
     const data = await all()
-    await Bun.write(file, JSON.stringify({ ...data, [key]: info }, null, 2), { mode: 0o600 })
+    await fsp.writeFile(filepath(), JSON.stringify({ ...data, [key]: info }, null, 2), {
+      mode: 0o600,
+    })
   }
 
   export async function remove(key: string) {
-    const file = Bun.file(filepath())
     const data = await all()
     delete data[key]
-    await Bun.write(file, JSON.stringify(data, null, 2), { mode: 0o600 })
+    await fsp.writeFile(filepath(), JSON.stringify(data, null, 2), { mode: 0o600 })
   }
 }
