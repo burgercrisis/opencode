@@ -22,25 +22,33 @@ export const ApplyPatchTool = Tool.define("apply_patch", {
   description: DESCRIPTION,
   parameters: PatchParams,
   async execute(params, ctx) {
-    const _validateParams = !params.patchText ? (() => { throw new Error("patchText is required") })() : null
+    if (!params.patchText) throw new Error("patchText is required")
 
-    const parsed = (() => {
-      const result = Patch.safeParsePatch(params.patchText)
-      return result.success ? result.data : (() => { throw new Error(`apply_patch verification failed: ${result.error.message}`) })()
-    })()
+    const result = Patch.safeParsePatch(params.patchText)
+    const parsed = result.success ? result.data : (() => { throw new Error(`apply_patch verification failed: ${result.error.message}`) })()
     const hunks = parsed.hunks
 
-    const _validateHunks = hunks.length === 0 ? (() => {
+    if (hunks.length === 0) {
       const normalized = params.patchText.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim()
-      return normalized === "*** Begin Patch\n*** End Patch" 
-        ? (() => { throw new Error("patch rejected: empty patch") })() 
-        : (() => { throw new Error("apply_patch verification failed: no hunks found") })()
-    })() : null
+      if (normalized === "*** Begin Patch\n*** End Patch") throw new Error("patch rejected: empty patch")
+      throw new Error("apply_patch verification failed: no hunks found")
+    }
 
     const groupedHunks = hunks.reduce((acc, hunk) => {
       const existing = acc.get(hunk.path) || []
       return acc.set(hunk.path, [...existing, hunk])
     }, new Map<string, Patch.Hunk[]>())
+
+    const getDiffCounts = (old: string, content: string) =>
+      diffLines(old, content).reduce(
+        (cAcc, change) =>
+          change.added
+            ? { ...cAcc, additions: cAcc.additions + (change.count || 0) }
+            : change.removed
+            ? { ...cAcc, deletions: cAcc.deletions + (change.count || 0) }
+            : cAcc,
+        { additions: 0, deletions: 0 },
+      )
 
     const fileChanges = await Array.from(groupedHunks.entries()).reduce(async (accPromise, [relPath, fileHunks]) => {
       const acc = await accPromise
@@ -49,89 +57,68 @@ export const ApplyPatchTool = Tool.define("apply_patch", {
 
       const change = await (async () => {
         const first = fileHunks[0]
-        const isAdd = first.type === "add"
-        const isDelete = first.type === "delete"
+        if (first.type === "add") {
+          const old = ""
+          const content = first.contents.length === 0 || first.contents.endsWith("\n") ? first.contents : `${first.contents}\n`
+          const diff = trimDiff(createTwoFilesPatch(filePath, filePath, old, content))
+          const counts = getDiffCounts(old, content)
 
-        return isAdd
-          ? (() => {
-              const old = ""
-              const content = first.contents.length === 0 || first.contents.endsWith("\n") ? first.contents : `${first.contents}\n`
-              const diff = trimDiff(createTwoFilesPatch(filePath, filePath, old, content))
-              const counts = diffLines(old, content).reduce(
-                (cAcc, change) =>
-                  change.added
-                    ? { ...cAcc, additions: cAcc.additions + (change.count || 0) }
-                    : change.removed
-                    ? { ...cAcc, deletions: cAcc.deletions + (change.count || 0) }
-                    : cAcc,
-                { additions: 0, deletions: 0 },
-              )
+          return {
+            filePath,
+            oldContent: old,
+            newContent: content,
+            type: "add" as const,
+            diff,
+            additions: counts.additions,
+            deletions: counts.deletions,
+          }
+        }
 
-              return {
-                filePath,
-                oldContent: old,
-                newContent: content,
-                type: "add" as const,
-                diff,
-                additions: counts.additions,
-                deletions: counts.deletions,
-              }
-            })()
-          : isDelete
-          ? (async () => {
-              const old = await Bun.file(filePath).text()
-              const diff = trimDiff(createTwoFilesPatch(filePath, filePath, old, ""))
-              return {
-                filePath,
-                oldContent: old,
-                newContent: "",
-                type: "delete" as const,
-                diff,
-                additions: 0,
-                deletions: old.split("\n").length,
-              }
-            })()
-          : (async () => {
-              const file = Bun.file(filePath)
-              const _exists = !(await file.exists()) ? (() => { throw new Error(`apply_patch verification failed: Failed to read file to update: ${filePath}`) })() : true
+        if (first.type === "delete") {
+          const old = await Bun.file(filePath).text()
+          const diff = trimDiff(createTwoFilesPatch(filePath, filePath, old, ""))
+          return {
+            filePath,
+            oldContent: old,
+            newContent: "",
+            type: "delete" as const,
+            diff,
+            additions: 0,
+            deletions: old.split("\n").length,
+          }
+        }
 
-              const old = await file.text()
-              const update = await fileHunks.reduce(async (contentPromise, hunk) => {
-                const currentContent = await contentPromise
-                return hunk.type === "update"
-                  ? Patch.deriveNewContentsFromChunks(filePath, hunk.chunks, currentContent).then((res) => res.content)
-                  : currentContent
-              }, Promise.resolve(old)).catch((e) => {
-                throw new Error(`apply_patch verification failed: ${(e as Error).message}`)
-              })
+        const file = Bun.file(filePath)
+        if (!(await file.exists())) throw new Error(`apply_patch verification failed: Failed to read file to update: ${filePath}`)
 
-              const content = update
-              const diff = trimDiff(createTwoFilesPatch(filePath, filePath, old, content))
-              const counts = diffLines(old, content).reduce(
-                (cAcc, change) =>
-                  change.added
-                    ? { ...cAcc, additions: cAcc.additions + (change.count || 0) }
-                    : change.removed
-                    ? { ...cAcc, deletions: cAcc.deletions + (change.count || 0) }
-                    : cAcc,
-                { additions: 0, deletions: 0 },
-              )
+        const old = await file.text()
+        const update = await fileHunks.reduce(async (contentPromise, hunk) => {
+          const currentContent = await contentPromise
+          return hunk.type === "update"
+            ? Patch.deriveNewContentsFromChunks(filePath, hunk.chunks, currentContent).then((res) => res.content)
+            : currentContent
+        }, Promise.resolve(old)).catch((e) => {
+          throw new Error(`apply_patch verification failed: ${(e as Error).message}`)
+        })
 
-              const lastUpdate = [...fileHunks].reverse().find(h => h.type === "update" && h.move_path) as Extract<Patch.Hunk, { type: "update" }> | undefined
-              const move = lastUpdate?.move_path ? path.resolve(Instance.directory, lastUpdate.move_path) : undefined
-              const _moveAsk = move ? await assertExternalDirectory(ctx, move) : null
+        const content = update
+        const diff = trimDiff(createTwoFilesPatch(filePath, filePath, old, content))
+        const counts = getDiffCounts(old, content)
 
-              return {
-                filePath,
-                oldContent: old,
-                newContent: content,
-                type: move ? "move" : "update",
-                movePath: move,
-                diff,
-                additions: counts.additions,
-                deletions: counts.deletions,
-              }
-            })()
+        const lastUpdate = [...fileHunks].reverse().find(h => h.type === "update" && h.move_path) as Extract<Patch.Hunk, { type: "update" }> | undefined
+        const move = lastUpdate?.move_path ? path.resolve(Instance.directory, lastUpdate.move_path) : undefined
+        if (move) await assertExternalDirectory(ctx, move)
+
+        return {
+          filePath,
+          oldContent: old,
+          newContent: content,
+          type: move ? "move" : "update",
+          movePath: move,
+          diff,
+          additions: counts.additions,
+          deletions: counts.deletions,
+        }
       })()
 
       return [...acc, change]

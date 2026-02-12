@@ -148,4 +148,91 @@ describe("ApplyPatchTool", () => {
       }
     })
   })
+
+  it("handles 'move' hunk", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const oldFile = path.join(tmp.path, "old.txt")
+        const newFile = path.join(tmp.path, "new.txt")
+        await fs.writeFile(oldFile, "content\n")
+
+        vi.spyOn(Patch, "safeParsePatch").mockReturnValue({
+          success: true,
+          data: {
+            hunks: [{ type: "update", path: "old.txt", chunks: [], move_path: "new.txt" }],
+          },
+        } as any)
+        vi.spyOn(Patch, "deriveNewContentsFromChunks").mockResolvedValue({ content: "new content\n", diff: "some diff" } as any)
+
+        const tool = await ApplyPatchTool.init()
+        const result = await tool.execute({ patchText: "some patch" }, ctx)
+
+        expect(result.output).toContain("M new.txt")
+        expect(await Bun.file(oldFile).exists()).toBe(false)
+        expect(await Bun.file(newFile).text()).toBe("new content\n")
+      }
+    })
+  })
+
+  it("handles error in deriveNewContentsFromChunks", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const file = path.join(tmp.path, "file.txt")
+        await fs.writeFile(file, "content\n")
+
+        vi.spyOn(Patch, "safeParsePatch").mockReturnValue({
+          success: true,
+          data: {
+            hunks: [{ type: "update", path: "file.txt", chunks: [] }],
+          },
+        } as any)
+        vi.spyOn(Patch, "deriveNewContentsFromChunks").mockRejectedValue(new Error("Patch failed"))
+
+        const tool = await ApplyPatchTool.init()
+        expect(tool.execute({ patchText: "some patch" }, ctx)).rejects.toThrow("apply_patch verification failed: Patch failed")
+      }
+    })
+  })
+
+  it("handles LSP diagnostics and truncation", async () => {
+    const { LSP } = await import("../../src/lsp")
+    const { Filesystem } = await import("../../src/util/filesystem")
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const file = path.join(tmp.path, "file.ts")
+        await fs.writeFile(file, "content\n")
+
+        vi.spyOn(Patch, "safeParsePatch").mockReturnValue({
+          success: true,
+          data: {
+            hunks: [{ type: "update", path: "file.ts", chunks: [] }],
+          },
+        } as any)
+        vi.spyOn(Patch, "deriveNewContentsFromChunks").mockResolvedValue({ content: "new content\n", diff: "diff" } as any)
+
+        // Mock LSP diagnostics with many errors
+        const errors = Array.from({ length: 25 }, (_, i) => ({
+          severity: 1,
+          message: `Error ${i}`,
+          range: { start: { line: i, character: 0 }, end: { line: i, character: 10 } }
+        }))
+        
+        vi.spyOn(LSP, "diagnostics").mockResolvedValue({
+          [Filesystem.normalizePath(file)]: errors as any
+        })
+
+        const tool = await ApplyPatchTool.init()
+        const result = await tool.execute({ patchText: "some patch" }, ctx)
+
+        expect(result.output).toContain("LSP errors detected in file.ts")
+        expect(result.output).toContain("... and 5 more")
+      }
+    })
+  })
 })
