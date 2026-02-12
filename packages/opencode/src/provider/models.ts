@@ -1,3 +1,4 @@
+import fsp from "fs/promises"
 import { Global } from "../global"
 import { Log } from "../util/log"
 import path from "path"
@@ -92,8 +93,11 @@ export namespace ModelsDev {
   }
 
   export const Data = lazy(async () => {
-    const file = Bun.file(Flag.OPENCODE_MODELS_PATH ?? filepath)
-    const result = await file.json().catch(() => {})
+    const path = Flag.OPENCODE_MODELS_PATH ?? filepath()
+    const result = await fsp
+      .readFile(path, "utf8")
+      .then((t) => JSON.parse(t))
+      .catch(() => {})
     if (result) return result
     // @ts-ignore
     const snapshot = await import("./models-snapshot")

@@ -105,7 +105,7 @@ export namespace Provider {
         !!(await Auth.get(input.id)) ||
         !!config.provider?.["opencode"]?.options?.apiKey
 
-      const models = hasKey ? input.models : pickBy(input.models, (m) => m.cost.input === 0)
+      const models = hasKey ? input.models : pickBy(input.models, (m) => m.cost?.input === 0)
 
       return {
         autoload: Object.keys(models).length > 0,
