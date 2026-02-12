@@ -45,6 +45,10 @@ describe("util.error NamedError.create", () => {
     expect(CustomError.isInstance(other)).toBe(false)
     expect(CustomError.isInstance({ name: "CustomError" })).toBe(true)
     expect(CustomError.isInstance({ name: "OtherError" })).toBe(false)
+    expect(CustomError.isInstance(null)).toBe(false)
+    expect(CustomError.isInstance(undefined)).toBe(false)
+    expect(CustomError.isInstance("not an object")).toBe(false)
+    expect(CustomError.isInstance({})).toBe(false)
   })
 })
 
