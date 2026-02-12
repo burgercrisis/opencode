@@ -50,15 +50,14 @@ describe("util.error NamedError.create", () => {
     expect(CustomError.isInstance("not an object")).toBe(false)
     expect(CustomError.isInstance({})).toBe(false)
   })
-})
 
-describe("util.error NamedError.Unknown", () => {
   test("Unknown error class is available and works with schema", () => {
     const Unknown = NamedError.Unknown
     const err = new Unknown({ message: "unexpected" })
 
     expect(err.name).toBe("UnknownError")
     expect(err.data).toEqual({ message: "unexpected" })
+    expect(Unknown.isInstance(err)).toBe(true)
 
     const obj = err.toObject()
     expect(obj).toEqual({
@@ -71,6 +70,16 @@ describe("util.error NamedError.Unknown", () => {
       data: { message: "unexpected" },
     })
     expect(parsed.name).toBe("UnknownError")
+  })
+
+  test("constructor handles options", () => {
+    const cause = new Error("the cause")
+    const err = new CustomError({ code: 500, message: "fail" }, { cause })
+    expect(err.cause).toBe(cause)
+  })
+
+  test("class name is set correctly", () => {
+    expect(CustomError.name).toBe("CustomError")
   })
 })
 
