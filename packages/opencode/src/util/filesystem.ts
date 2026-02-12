@@ -222,8 +222,11 @@ export namespace Filesystem {
     const abs = pathIsAbsolute(p) ? p : pathResolve(root, p)
     if (!contains(root, abs)) return { valid: false, reason: 'Path outside project directory' }
     
-    if (p.includes('..') && !contains(root, pathNormalize(abs))) {
-      return { valid: false, reason: 'Symbolic link or path traversal detected' }
+    if (p.includes('..')) {
+      const normalizedAbs = pathNormalize(abs)
+      if (!contains(root, normalizedAbs)) {
+        return { valid: false, reason: 'Symbolic link or path traversal detected' }
+      }
     }
     
     return { valid: true }
@@ -248,7 +251,9 @@ export namespace Filesystem {
       const existsResult = await exists(search)
       const nextAcc = existsResult ? [...acc, search] : acc
       const stopAt = stop || process.env.OPENCODE_TEST_HOME
-      if (stopAt && nativePath(stopAt) === nativePath(curr)) return nextAcc
+      if (stopAt) {
+        if (nativePath(stopAt) === nativePath(curr)) return nextAcc
+      }
       const next = dirname(curr)
       if (nativePath(next) === nativePath(curr)) return nextAcc
       return find(next, nextAcc)
@@ -269,7 +274,9 @@ export namespace Filesystem {
       yield* matches.filter((x): x is string => !!x)
 
       const stopAt = stop || process.env.OPENCODE_TEST_HOME
-      if (stopAt && nativePath(stopAt) === nativePath(curr)) return
+      if (stopAt) {
+        if (nativePath(stopAt) === nativePath(curr)) return
+      }
       const next = dirname(curr)
       if (nativePath(next) === nativePath(curr)) return
       yield* iterate(next)
@@ -290,7 +297,9 @@ export namespace Filesystem {
         }),
       )
       const nextAcc = [...acc, ...matches]
-      if (stop && normalize(stop) === normalize(curr)) return nextAcc
+      if (stop) {
+      if (normalize(stop) === normalize(curr)) return nextAcc
+    }
       const next = dirname(curr)
       if (normalize(next) === normalize(curr)) return nextAcc
       return scan(next, nextAcc)
