@@ -38,6 +38,11 @@ export namespace Log {
 
   const loggers = new Map<string, Logger>()
 
+  const defaultWrite = (msg: any) => {
+    process.stderr.write(msg)
+    return msg.length
+  }
+
   /**
    * Internal test helper to clear all loggers.
    * @internal
@@ -45,10 +50,7 @@ export namespace Log {
   export function resetForTest() {
     loggers.clear()
     level = "INFO"
-    write = (msg: any) => {
-      process.stderr.write(msg)
-      return msg.length
-    }
+    write = defaultWrite
   }
 
   export const Default = create({ service: "default" })
@@ -63,10 +65,7 @@ export namespace Log {
   export function file() {
     return logpath
   }
-  let write = (msg: any) => {
-    process.stderr.write(msg)
-    return msg.length
-  }
+  let write = defaultWrite
 
   export async function init(options: Options) {
     if (options.level) level = options.level
