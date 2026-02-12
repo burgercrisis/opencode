@@ -25,7 +25,7 @@ const DEFAULT_TIMEOUT = Flag.OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS || 2 
 
 export const log = Log.create({ service: "bash-tool" })
 
-const resolveWasm = (asset: string) => {
+export const _resolveWasm = (asset: string) => {
   if (asset.startsWith("file://")) return fileURLToPath(asset)
   if (asset.startsWith("/") || /^[a-z]:/i.test(asset)) return asset
   const url = new URL(asset, import.meta.url)
@@ -37,7 +37,7 @@ const parser = lazy(async () => {
   const { default: treeWasm } = await import("web-tree-sitter/tree-sitter.wasm" as string, {
     with: { type: "wasm" },
   })
-  const treePath = resolveWasm(treeWasm)
+  const treePath = _resolveWasm(treeWasm)
   await Parser.init({
     locateFile() {
       return treePath
@@ -46,7 +46,7 @@ const parser = lazy(async () => {
   const { default: bashWasm } = await import("tree-sitter-bash/tree-sitter-bash.wasm" as string, {
     with: { type: "wasm" },
   })
-  const bashPath = resolveWasm(bashWasm)
+  const bashPath = _resolveWasm(bashWasm)
   const bashLanguage = await Language.load(bashPath)
   const p = new Parser()
   p.setLanguage(bashLanguage)

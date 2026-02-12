@@ -1,11 +1,13 @@
 import { describe, expect, test, mock, beforeEach, afterEach, vi } from "bun:test"
-import { BashTool, processPowerShellOutput, processCmdOutput } from "../../src/tool/bash"
+import { BashTool, processPowerShellOutput, processCmdOutput, _resolveWasm } from "../../src/tool/bash"
 import { Instance } from "../../src/project/instance"
 import { tmpdir } from "../fixture/fixture"
 import { Shell } from "../../src/shell/shell"
 import { Config } from "../../src/config/config"
 import { Plugin } from "../../src/plugin"
+import { Filesystem } from "../../src/util/filesystem"
 import * as path from "path"
+import { fileURLToPath } from "url"
 
 describe("BashTool", () => {
   let mocks: {
@@ -43,6 +45,18 @@ describe("BashTool", () => {
   })
 
   describe("Helpers", () => {
+    test("_resolveWasm coverage", () => {
+      // Line 29: file://
+      expect(_resolveWasm("file:///foo/bar")).toBe(fileURLToPath("file:///foo/bar"))
+      // Line 30: absolute path
+      const abs = process.platform === "win32" ? "C:\\foo" : "/foo"
+      expect(_resolveWasm(abs)).toBe(abs)
+      // Line 31: relative path/URL
+      const rel = "some.wasm"
+      const result = _resolveWasm(rel)
+      expect(result).toContain("some.wasm")
+    })
+
     describe("processPowerShellOutput", () => {
       test("improves non-existent cmdlet error", () => {
         const output = "The term 'Get-Foo' is not recognized as the name of a cmdlet, function, script file, or operable program."
@@ -68,6 +82,23 @@ describe("BashTool", () => {
         const output = "Object reference not set to an instance of an object."
         const result = processPowerShellOutput(output, "Write-Debug 'foo'")
         expect(result.output).toContain("Error: Debug functionality is not supported")
+      })
+
+      test("processPowerShellOutput coverage gaps", () => {
+        // Line 86: Get-NonExistentCmdlet fallback
+        const out1 = "Get-NonExistentCmdlet: something something not found"
+        const res1 = processPowerShellOutput(out1, "foo")
+        expect(res1.output).toContain("Error: Command 'Get-NonExistentCmdlet' not found")
+
+        // Line 137: Get-Credential missing mandatory parameter
+        const out2 = "Cannot process command because of one or more missing mandatory parameters: Credential"
+        const res2 = processPowerShellOutput(out2, "Get-Credential")
+        expect(res2.output).toContain("Error: Get-Credential requires interactive input")
+
+        // Lines 148-151, 153-154: Get-Credential null reference
+        const out3 = "Get-Credential failed. Object reference not set to an instance of an object."
+        const res3 = processPowerShellOutput(out3, "Get-Credential")
+        expect(res3.output).toContain("Error: Get-Credential failed to execute")
       })
     })
 
@@ -265,6 +296,97 @@ describe("BashTool", () => {
           }, ctx)).rejects.toThrow("Invalid timeout value")
         },
       })
+    })
+
+    test("execute coverage gaps", async () => {
+      await using tmp = await tmpdir()
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const tool = await BashTool.init()
+
+          // Line 311: Path resolution fallback
+          const getCanonicalPath = vi.spyOn(Filesystem, "getCanonicalPath").mockImplementation(() => { throw new Error("mock") })
+          mocks.bunSpawn.mockImplementation(mockSpawn("done"))
+          await tool.execute({ command: "mkdir invalid/path", description: "test" }, ctx)
+          getCanonicalPath.mockRestore()
+
+          // Line 391: step2 else case (set without match)
+          if (process.platform === "win32") {
+            mocks.shellIsCmdCommand.mockReturnValue(true)
+            await tool.execute({ command: "set FOO && echo hello", description: "test" }, ctx)
+          }
+        }
+      })
+    })
+
+    test("abort handling", async () => {
+      await using tmp = await tmpdir()
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const abortController = new AbortController()
+          const localCtx = { ...ctx, abort: abortController.signal }
+          
+          // Use a deferred promise for exited that we can control
+          let resolveExited: any
+          const exitedPromise = new Promise((resolve) => {
+            resolveExited = resolve
+          })
+
+          mocks.bunSpawn.mockReturnValue({
+            stdout: new ReadableStream({ start(c) { c.close() } }),
+            stderr: new ReadableStream({ start(c) { c.close() } }),
+            exited: exitedPromise,
+            kill: () => {
+              resolveExited(130)
+              return Promise.resolve()
+            },
+          } as any)
+
+          const tool = await BashTool.init()
+          const executePromise = tool.execute({ command: "sleep 100", description: "test" }, localCtx)
+          
+          // Give it a tiny bit of time to set up the listener
+          await new Promise(r => setTimeout(r, 1))
+          
+          abortController.abort()
+          
+          const result = await executePromise
+          expect(result.metadata.exit).toBe(130)
+          expect(result.output).toContain("User aborted the command")
+        }
+      })
+    })
+
+    test("baseEnv expansion on Windows", async () => {
+      const originalPlatform = process.platform
+      const originalEnv = process.env
+      
+      try {
+        // @ts-ignore
+        Object.defineProperty(process, "platform", { value: "win32", configurable: true })
+        process.env = { ...originalEnv, TEST_VAR: "test-value", EXPAND_ME: "%TEST_VAR%" }
+        
+        await using tmp = await tmpdir()
+        await Instance.provide({
+          directory: tmp.path,
+          fn: async () => {
+            mocks.bunSpawn.mockImplementation(mockSpawn("done"))
+            const tool = await BashTool.init()
+            await tool.execute({ command: "echo %EXPAND_ME%", description: "test" }, ctx)
+            
+            // Verify that the environment passed to spawn has the expanded variable
+            const spawnCall = mocks.bunSpawn.mock.calls[0]
+            const env = spawnCall[1].env
+            expect(env.EXPAND_ME).toBe("test-value")
+          }
+        })
+      } finally {
+        // @ts-ignore
+        Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true })
+        process.env = originalEnv
+      }
     })
   })
 })
