@@ -14,6 +14,17 @@ describe("Wildcard", () => {
       expect(Wildcard.match("hello", "h?llo")).toBe(true)
     })
 
+    test("should handle regex special characters in pattern", () => {
+      expect(Wildcard.match("file.ts", "file.ts")).toBe(true)
+      expect(Wildcard.match("file+ts", "file+ts")).toBe(true)
+      expect(Wildcard.match("file^ts", "file^ts")).toBe(true)
+      expect(Wildcard.match("file$ts", "file$ts")).toBe(true)
+      expect(Wildcard.match("file{ts}", "file{ts}")).toBe(true)
+      expect(Wildcard.match("file(ts)", "file(ts)")).toBe(true)
+      expect(Wildcard.match("file|ts", "file|ts")).toBe(true)
+      expect(Wildcard.match("file[ts]", "file[ts]")).toBe(true)
+    })
+
     test("should handle path separators", () => {
       expect(Wildcard.match("a\\b", "a/*")).toBe(true)
       expect(Wildcard.match("a/b", "a/*")).toBe(true)
@@ -102,13 +113,33 @@ describe("Wildcard", () => {
       expect(Wildcard.allStructured({ head: "a", tail: ["x", "y"] }, patterns)).toBeUndefined()
     })
 
-    test("should handle items.some branch in matchSequence", () => {
+    test("should handle matchSequence failing with empty items", () => {
+      const patterns = { "a b": "val" }
+      expect(Wildcard.allStructured({ head: "a", tail: [] }, patterns)).toBeUndefined()
+    })
+
+    test("should handle matchSequence with literal parts that don't match", () => {
       const patterns = { "a b": "val" }
       expect(Wildcard.allStructured({ head: "a", tail: ["c"] }, patterns)).toBeUndefined()
-      
-      const patterns2 = { "git * commit": "val" }
-      expect(Wildcard.allStructured({ head: "git", tail: ["add", "commit"] }, patterns2)).toBe("val")
-      expect(Wildcard.allStructured({ head: "git", tail: ["add", "push"] }, patterns2)).toBeUndefined()
+    })
+
+    test("should handle sequence matching with *", () => {
+       const patterns = {
+        "git * commit": "git-commit",
+      }
+      expect(Wildcard.allStructured({ head: "git", tail: ["add", ".", "commit"] }, patterns)).toBe("git-commit")
+      expect(Wildcard.allStructured({ head: "git", tail: ["commit"] }, patterns)).toBe("git-commit")
+      expect(Wildcard.allStructured({ head: "git", tail: ["add", "push"] }, patterns)).toBeUndefined()
+    })
+
+    test("should handle complex sequence matching", () => {
+      const patterns = {
+        "a * b * c": "match"
+      }
+      expect(Wildcard.allStructured({ head: "a", tail: ["x", "b", "y", "c"] }, patterns)).toBe("match")
+      expect(Wildcard.allStructured({ head: "a", tail: ["b", "c"] }, patterns)).toBe("match")
+      expect(Wildcard.allStructured({ head: "a", tail: ["x", "y", "b", "z", "c"] }, patterns)).toBe("match")
+      expect(Wildcard.allStructured({ head: "a", tail: ["x", "y"] }, patterns)).toBeUndefined()
     })
   })
 })
