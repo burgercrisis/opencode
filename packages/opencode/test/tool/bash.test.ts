@@ -44,6 +44,38 @@ describe("BashTool", () => {
     vi.restoreAllMocks()
   })
 
+  const ctx: any = {
+    sessionID: "session",
+    messageID: "message",
+    agent: "agent",
+    abort: new AbortController().signal,
+    messages: [],
+    metadata: vi.fn(() => {}),
+    ask: vi.fn(async () => {}),
+  }
+
+  function mockSpawn(stdout: string, stderr = "", exitCode = 0) {
+    return (args: string[]) => {
+      return {
+        stdout: new ReadableStream({
+          start(controller) {
+            if (stdout) controller.enqueue(new TextEncoder().encode(stdout))
+            controller.close()
+          },
+        }),
+        stderr: new ReadableStream({
+          start(controller) {
+            if (stderr) controller.enqueue(new TextEncoder().encode(stderr))
+            controller.close()
+          },
+        }),
+        exited: Promise.resolve(exitCode),
+        exitCode,
+        kill: () => {},
+      }
+    }
+  }
+
   describe("Helpers", () => {
     test("_resolveWasm coverage", () => {
       // Line 29: file://
@@ -86,10 +118,25 @@ describe("BashTool", () => {
       })
 
       test("processPowerShellOutput coverage gaps", () => {
-        // Line 86: Get-NonExistentCmdlet fallback
-        const out1 = "Get-NonExistentCmdlet: something something not found"
+        // Line 74: Get-NonExistentCmdlet missing mandatory parameters
+        const out0 = "Get-NonExistentCmdlet: Cannot process command because of one or more missing mandatory parameters: something"
+        const res0 = processPowerShellOutput(out0, "foo")
+        expect(res0.output).toContain("Error: Command 'Get-NonExistentCmdlet' not found")
+
+        // Line 79: Get-NonExistentCmdlet with "not found"
+        const out2 = "Get-NonExistentCmdlet: was not found"
+        const res2 = processPowerShellOutput(out2, "foo")
+        expect(res2.output).toContain("Error: Command 'Get-NonExistentCmdlet' not found")
+
+        // Line 86: Get-NonExistentCmdlet fallback (no "not found")
+        const out1 = "Get-NonExistentCmdlet: something else happened"
         const res1 = processPowerShellOutput(out1, "foo")
         expect(res1.output).toContain("Error: Command 'Get-NonExistentCmdlet' not found")
+
+        // Line 117: Get-Credential requires interactive input (empty output)
+        const res3 = processPowerShellOutput("", "Get-Credential")
+        expect(res3.output).toContain("Error: Get-Credential requires interactive input")
+        expect(res3.hasErrors).toBe(true)
 
         // Line 137: Get-Credential missing mandatory parameter
         const out2 = "Get-Credential: Cannot process command because of one or more missing mandatory parameters: Credential"
@@ -98,8 +145,87 @@ describe("BashTool", () => {
 
         // Lines 148-151, 153-154: Get-Credential null reference
         const out3 = "Get-Credential failed. Object reference not set to an instance of an object."
-        const res3 = processPowerShellOutput(out3, "Get-Credential")
-        expect(res3.output).toContain("Error: Get-Credential failed to execute")
+        const res4 = processPowerShellOutput(out3, "Get-Credential")
+        expect(res4.output).toContain("Error: Get-Credential failed to execute")
+
+        // Line 155: null reference NOT related to Get-Credential
+        const out4 = "Something else. Object reference not set to an instance of an object."
+        const res5 = processPowerShellOutput(out4, "Something-Else")
+        expect(res5.output).toBe(out4) // No change if not Get-Credential and no -Debug
+      })
+
+      test("processCmdOutput coverage gaps", () => {
+        // Line 227: path not found
+        const out = "The system cannot find the path specified."
+        const res = processCmdOutput(out, "dir foo")
+        expect(res.hasErrors).toBe(true)
+        expect(res.exitCode).toBe(1)
+      })
+    })
+
+    test("execute coverage gaps - chained CMD commands", async () => {
+      if (process.platform !== "win32") return
+      
+      await using tmp = await tmpdir()
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          mocks.shellIsCmdCommand.mockReturnValue(true)
+          mocks.bunSpawn.mockImplementation(mockSpawn("done"))
+          const tool = await BashTool.init()
+
+          // Lines 375, 377, 380-381: cmd /c set && echo
+          await tool.execute({ 
+            command: "cmd /c set FOO=bar && echo %FOO%", 
+            description: "chained cmd" 
+          }, ctx)
+          
+          expect(mocks.bunSpawn).toHaveBeenCalled()
+        }
+      })
+    })
+
+    test("execute coverage gaps - cmd command branch", async () => {
+      await using tmp = await tmpdir()
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          mocks.shellIsPowerShellCommand.mockReturnValue(false)
+          mocks.shellIsCmdCommand.mockReturnValue(true)
+          mocks.bunSpawn.mockImplementation(mockSpawn("cmd output"))
+          
+          const tool = await BashTool.init()
+          const result = await tool.execute({ 
+            command: "dir", 
+            description: "cmd" 
+          }, ctx)
+          
+          expect(result.output).toBe("cmd output")
+          expect(mocks.shellIsPowerShellCommand).toHaveBeenCalled()
+          expect(mocks.shellIsCmdCommand).toHaveBeenCalled()
+        }
+      })
+    })
+
+    test("execute coverage gaps - non-powershell non-cmd", async () => {
+      await using tmp = await tmpdir()
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          mocks.shellIsPowerShellCommand.mockReturnValue(false)
+          mocks.shellIsCmdCommand.mockReturnValue(false)
+          mocks.bunSpawn.mockImplementation(mockSpawn("plain bash"))
+          
+          const tool = await BashTool.init()
+          const result = await tool.execute({ 
+            command: "echo hello", 
+            description: "plain bash" 
+          }, ctx)
+          
+          expect(result.output).toBe("plain bash")
+          expect(mocks.shellIsPowerShellCommand).toHaveBeenCalled()
+          expect(mocks.shellIsCmdCommand).toHaveBeenCalled()
+        }
       })
     })
 
@@ -121,42 +247,10 @@ describe("BashTool", () => {
   })
 
   describe("Tool Execution", () => {
-    const ctx: any = {
-      sessionID: "session",
-      messageID: "message",
-      agent: "agent",
-      abort: new AbortController().signal,
-      messages: [],
-      metadata: mock(() => {}),
-      ask: mock(async () => {}),
-    }
-
     beforeEach(() => {
       ctx.ask.mockClear()
       ctx.metadata.mockClear()
     })
-
-    function mockSpawn(stdout: string, stderr = "", exitCode = 0) {
-      return (args: string[]) => {
-        return {
-          stdout: new ReadableStream({
-            start(controller) {
-              if (stdout) controller.enqueue(new TextEncoder().encode(stdout))
-              controller.close()
-            },
-          }),
-          stderr: new ReadableStream({
-            start(controller) {
-              if (stderr) controller.enqueue(new TextEncoder().encode(stderr))
-              controller.close()
-            },
-          }),
-          exited: Promise.resolve(exitCode),
-          exitCode,
-          kill: () => {},
-        }
-      }
-    }
 
     test("executes a simple command", async () => {
       await using tmp = await tmpdir()
@@ -381,6 +475,22 @@ describe("BashTool", () => {
             const spawnCall = mocks.bunSpawn.mock.calls[0]
             const env = spawnCall[1].env
             expect(env.EXPAND_ME).toBe("test-value")
+          }
+        })
+
+        // Test val === undefined case (line 355-356)
+        process.env = { ...originalEnv, EXPAND_ME: "%NON_EXISTENT_VAR%" }
+        await using tmp2 = await tmpdir()
+        await Instance.provide({
+          directory: tmp2.path,
+          fn: async () => {
+            mocks.bunSpawn.mockImplementation(mockSpawn("done"))
+            const tool = await BashTool.init()
+            await tool.execute({ command: "echo %EXPAND_ME%", description: "test" }, ctx)
+            
+            const spawnCall = mocks.bunSpawn.mock.calls[1]
+            const env = spawnCall[1].env
+            expect(env.EXPAND_ME).toBe("%NON_EXISTENT_VAR%")
           }
         })
       } finally {

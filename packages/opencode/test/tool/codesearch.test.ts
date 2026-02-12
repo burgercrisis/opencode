@@ -188,4 +188,44 @@ describe("CodeSearchTool", () => {
       }
     })
   })
+
+  it("falls through to SSE if direct JSON parsing fails", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        // Starts with { but is invalid JSON
+        const mockResponseText = '{ invalid json \ndata: {"jsonrpc":"2.0","result":{"content":[{"type":"text","text":"sse result"}]}}'
+        fetchSpy.mockResolvedValue({
+          ok: true,
+          text: () => Promise.resolve(mockResponseText),
+        } as any)
+
+        const tool = await CodeSearchTool.init()
+        const result = await tool.execute({ query: "fallback", tokensNum: 5000 }, ctx)
+
+        expect(result.output).toBe("sse result")
+      }
+    })
+  })
+
+  it("falls through to SSE if direct JSON is valid but missing content", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        // Valid JSON but missing content
+        const mockResponseText = '{"jsonrpc":"2.0","result":{}}\ndata: {"jsonrpc":"2.0","result":{"content":[{"type":"text","text":"sse result"}]}}'
+        fetchSpy.mockResolvedValue({
+          ok: true,
+          text: () => Promise.resolve(mockResponseText),
+        } as any)
+
+        const tool = await CodeSearchTool.init()
+        const result = await tool.execute({ query: "fallback 2", tokensNum: 5000 }, ctx)
+
+        expect(result.output).toBe("sse result")
+      }
+    })
+  })
 })

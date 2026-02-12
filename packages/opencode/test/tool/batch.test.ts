@@ -124,4 +124,48 @@ describe("BatchTool", () => {
       }
     })
   })
+
+  it("formats validation errors", async () => {
+    const tool = await BatchTool.init()
+    const error = {
+      issues: [
+        { path: ["tool_calls", 0, "tool"], message: "Required" },
+        { path: [], message: "Invalid" }
+      ]
+    }
+    const formatted = tool.formatValidationError!(error as any)
+    expect(formatted).toContain("Invalid parameters for tool 'batch'")
+    expect(formatted).toContain("tool_calls.0.tool: Required")
+    expect(formatted).toContain("root: Invalid")
+  })
+
+  it("handles tool execution errors", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const mockTool = {
+          id: "fail-tool",
+          parameters: {
+            parse: (p: any) => p,
+          },
+          execute: vi.fn(async () => { throw new Error("execution failed") }),
+        }
+        vi.spyOn(ToolRegistry, "tools").mockResolvedValue([mockTool as any])
+
+        const tool = await BatchTool.init()
+        const result = await tool.execute({
+          tool_calls: [{ tool: "fail-tool", parameters: {} }]
+        }, ctx as any)
+
+        expect(result.output).toContain("Executed 0/1 tools successfully. 1 failed.")
+        expect(Session.updatePart).toHaveBeenCalledWith(expect.objectContaining({
+          state: expect.objectContaining({
+            status: "error",
+            error: "execution failed"
+          })
+        }))
+      }
+    })
+  })
 })
