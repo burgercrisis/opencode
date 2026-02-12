@@ -15,6 +15,8 @@
       "diffDelete": "#c53b53"
     },
     "overrides": {
+      "text-base": "#d3c6aa",
+      "text-weak": "#7a8478",
       "background-base": "#2d353b",
       "surface-base": "#333c43",
       "surface-raised": "#343f44",
@@ -23,7 +25,24 @@
       "syntax-function": "#a7c080",
       "syntax-string": "#a7c080",
       "syntax-number": "#e69875",
-      "syntax-property": "#83c092"
+      "syntax-type": "#dbbc7f",
+      "syntax-variable": "#e67e80",
+      "syntax-operator": "#83c092",
+      "syntax-punctuation": "#d3c6aa",
+      "markdown-text": "#d3c6aa",
+      "markdown-heading": "#d699b6",
+      "markdown-link": "#a7c080",
+      "markdown-link-text": "#83c092",
+      "markdown-code": "#a7c080",
+      "markdown-block-quote": "#dbbc7f",
+      "markdown-emph": "#dbbc7f",
+      "markdown-strong": "#e69875",
+      "markdown-horizontal-rule": "#7a8478",
+      "markdown-list-item": "#a7c080",
+      "markdown-list-enumeration": "#83c092",
+      "markdown-image": "#a7c080",
+      "markdown-image-text": "#83c092",
+      "markdown-code-block": "#d3c6aa"
     }
   },
   "light": {
@@ -39,15 +58,34 @@
       "diffDelete": "#c53b53"
     },
     "overrides": {
+      "text-base": "#5c6a72",
+      "text-weak": "#a6b0a0",
       "background-base": "#fdf6e3",
       "surface-base": "#efebd4",
       "surface-raised": "#f4f0d9",
       "syntax-comment": "#a6b0a0",
       "syntax-keyword": "#df69ba",
       "syntax-function": "#8da101",
+      "syntax-variable": "#f85552",
       "syntax-string": "#8da101",
       "syntax-number": "#f57d26",
-      "syntax-property": "#35a77c"
+      "syntax-type": "#dfa000",
+      "syntax-operator": "#35a77c",
+      "syntax-punctuation": "#5c6a72",
+      "markdown-text": "#5c6a72",
+      "markdown-heading": "#df69ba",
+      "markdown-link": "#8da101",
+      "markdown-link-text": "#35a77c",
+      "markdown-code": "#8da101",
+      "markdown-block-quote": "#dfa000",
+      "markdown-emph": "#dfa000",
+      "markdown-strong": "#f57d26",
+      "markdown-horizontal-rule": "#a6b0a0",
+      "markdown-list-item": "#8da101",
+      "markdown-list-enumeration": "#35a77c",
+      "markdown-image": "#8da101",
+      "markdown-image-text": "#35a77c",
+      "markdown-code-block": "#5c6a72"
     }
   }
 }

@@ -15,15 +15,34 @@
       "diffDelete": "#eb6f92"
     },
     "overrides": {
+      "text-base": "#e0def4",
+      "text-weak": "#6e6a86",
       "background-base": "#191724",
       "surface-base": "#1f1d2e",
       "surface-raised": "#26233a",
       "syntax-comment": "#6e6a86",
       "syntax-keyword": "#31748f",
       "syntax-function": "#ebbcba",
+      "syntax-variable": "#e0def4",
       "syntax-string": "#f6c177",
       "syntax-number": "#c4a7e7",
-      "syntax-property": "#9ccfd8"
+      "syntax-type": "#9ccfd8",
+      "syntax-operator": "#908caa",
+      "syntax-punctuation": "#908caa",
+      "markdown-text": "#e0def4",
+      "markdown-heading": "#c4a7e7",
+      "markdown-link": "#9ccfd8",
+      "markdown-link-text": "#ebbcba",
+      "markdown-code": "#31748f",
+      "markdown-block-quote": "#6e6a86",
+      "markdown-emph": "#f6c177",
+      "markdown-strong": "#eb6f92",
+      "markdown-horizontal-rule": "#403d52",
+      "markdown-list-item": "#9ccfd8",
+      "markdown-list-enumeration": "#ebbcba",
+      "markdown-image": "#9ccfd8",
+      "markdown-image-text": "#ebbcba",
+      "markdown-code-block": "#e0def4"
     }
   },
   "light": {
@@ -39,15 +58,34 @@
       "diffDelete": "#b4637a"
     },
     "overrides": {
+      "text-base": "#575279",
+      "text-weak": "#9893a5",
       "background-base": "#faf4ed",
       "surface-base": "#fffaf3",
       "surface-raised": "#f2e9e1",
       "syntax-comment": "#9893a5",
       "syntax-keyword": "#286983",
       "syntax-function": "#d7827e",
+      "syntax-variable": "#575279",
       "syntax-string": "#ea9d34",
       "syntax-number": "#907aa9",
-      "syntax-property": "#56949f"
+      "syntax-type": "#56949f",
+      "syntax-operator": "#797593",
+      "syntax-punctuation": "#797593",
+      "markdown-text": "#575279",
+      "markdown-heading": "#907aa9",
+      "markdown-link": "#31748f",
+      "markdown-link-text": "#d7827e",
+      "markdown-code": "#286983",
+      "markdown-block-quote": "#9893a5",
+      "markdown-emph": "#ea9d34",
+      "markdown-strong": "#b4637a",
+      "markdown-horizontal-rule": "#dfdad9",
+      "markdown-list-item": "#31748f",
+      "markdown-list-enumeration": "#d7827e",
+      "markdown-image": "#31748f",
+      "markdown-image-text": "#d7827e",
+      "markdown-code-block": "#575279"
     }
   }
 }
