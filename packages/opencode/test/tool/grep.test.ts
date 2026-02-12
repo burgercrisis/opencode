@@ -162,6 +162,53 @@ describe("GrepTool", () => {
     })
   })
 
+  test("handles malformed output lines", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const rgOutput = "malformed-line\nfile.txt|1|good-match\n"
+        mocks.bunSpawn.mockImplementation(mockSpawn(rgOutput))
+
+        const tool = await GrepTool.init()
+        const result = await tool.execute({ pattern: "foo" }, ctx)
+
+        expect(result.output).toContain("Found 1 matches")
+        expect(result.output).toContain("good-match")
+      },
+    })
+  })
+
+  test("truncates results at MATCH_LIMIT", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        // MATCH_LIMIT is 250. Create 251 matches.
+        const matches = Array.from({ length: 251 }, (_, i) => `file.txt|${i + 1}|match ${i + 1}`).join("\n")
+        const killSpy = vi.fn()
+        mocks.bunSpawn.mockImplementation(() => ({
+          stdout: new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode(matches))
+              controller.close()
+            },
+          }),
+          stderr: new ReadableStream({ start(c) { c.close() } }),
+          exited: Promise.resolve(0),
+          kill: killSpy,
+        } as any))
+
+        const tool = await GrepTool.init()
+        const result = await tool.execute({ pattern: "match" }, ctx)
+
+        expect(result.metadata.matches).toBe(250)
+        expect(result.metadata.truncated).toBe(true)
+        expect(killSpy).toHaveBeenCalled()
+      },
+    })
+  })
+
   test("truncates long lines", async () => {
     await using tmp = await tmpdir()
     await Instance.provide({
