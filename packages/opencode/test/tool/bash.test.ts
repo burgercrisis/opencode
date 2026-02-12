@@ -47,7 +47,8 @@ describe("BashTool", () => {
   describe("Helpers", () => {
     test("_resolveWasm coverage", () => {
       // Line 29: file://
-      expect(_resolveWasm("file:///foo/bar")).toBe(fileURLToPath("file:///foo/bar"))
+      const fileUrl = process.platform === "win32" ? "file:///C:/foo/bar" : "file:///foo/bar"
+      expect(_resolveWasm(fileUrl)).toBe(fileURLToPath(fileUrl))
       // Line 30: absolute path
       const abs = process.platform === "win32" ? "C:\\foo" : "/foo"
       expect(_resolveWasm(abs)).toBe(abs)
@@ -91,7 +92,7 @@ describe("BashTool", () => {
         expect(res1.output).toContain("Error: Command 'Get-NonExistentCmdlet' not found")
 
         // Line 137: Get-Credential missing mandatory parameter
-        const out2 = "Cannot process command because of one or more missing mandatory parameters: Credential"
+        const out2 = "Get-Credential: Cannot process command because of one or more missing mandatory parameters: Credential"
         const res2 = processPowerShellOutput(out2, "Get-Credential")
         expect(res2.output).toContain("Error: Get-Credential requires interactive input")
 
