@@ -19,9 +19,10 @@ export function normalize(path: string | undefined) {
 }
 
 function collapse(path: string) {
-  if (!path.startsWith("//")) return path.replace(/\/{2,}/g, "/")
-  const rest = path.slice(2).replace(/^\/+/, "")
-  return "//" + rest.replace(/\/{2,}/g, "/")
+  if (path.startsWith("//") && !path.startsWith("///")) {
+    return "//" + path.slice(2).replace(/\/{2,}/g, "/")
+  }
+  return path.replace(/\/{2,}/g, "/")
 }
 
 export function getFilename(path: string | undefined) {
