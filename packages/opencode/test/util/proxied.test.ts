@@ -18,6 +18,14 @@ describe("util.proxied", () => {
       delete process.env.HTTP_PROXY
       process.env.https_proxy = "http://localhost:8080"
       expect(proxied()).toBe(true)
+
+      delete process.env.https_proxy
+      process.env.HTTPS_PROXY = "http://localhost:8080"
+      expect(proxied()).toBe(true)
+
+      delete process.env.HTTPS_PROXY
+      process.env.http_proxy = "http://localhost:8080"
+      expect(proxied()).toBe(true)
     } finally {
       process.env = original
     }
