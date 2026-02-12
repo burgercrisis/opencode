@@ -58,6 +58,11 @@ describe("shared util extra", () => {
       }, { delay: 1, attempts: 2 })
       await expect(p).rejects.toBeNull()
     })
+
+    test("throws undefined if attempts is 0", async () => {
+      const p = retry(async () => "success", { attempts: 0 })
+      await expect(p).rejects.toBeUndefined()
+    })
   })
 
   describe("slug", () => {
