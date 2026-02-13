@@ -18,7 +18,10 @@ const PatchParams = z.object({
   patchText: z.string().describe("The full patch text that describes all changes to be made"),
 })
 
-export const ApplyPatchTool = Tool.define("apply_patch", {
+export const ApplyPatchTool = Tool.define<
+  typeof PatchParams,
+  { diff: string; files: any[]; diagnostics: any }
+>("apply_patch", {
   description: DESCRIPTION,
   parameters: PatchParams,
   async execute(params, ctx) {
