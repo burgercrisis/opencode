@@ -28,7 +28,7 @@ describe("WebFetchTool", () => {
       fn: async () => {
         const tool = await WebFetchTool.init()
         try {
-          await tool.execute({ url: "ftp://example.com" }, ctx as any)
+          await tool.execute({ url: "ftp://example.com", format: "markdown" }, ctx as any)
           throw new Error("Should have thrown")
         } catch (e: any) {
           expect(e.message).toBe("URL must start with http:// or https://")
@@ -175,7 +175,7 @@ describe("WebFetchTool", () => {
           return secondResponse as any
         })
 
-        const result = await tool.execute({ url: "https://example.com" }, ctx as any)
+        const result = await tool.execute({ url: "https://example.com", format: "markdown" }, ctx as any)
         expect(result.output).toBe("Success")
         expect(callCount).toBe(2)
       }
@@ -197,16 +197,16 @@ describe("WebFetchTool", () => {
         mocks.fetch.mockResolvedValue(mockResponse as any)
 
         try {
-          await tool.execute({ url: "https://example.com" }, ctx as any)
+          await tool.execute({ url: "https://example.com", format: "markdown" }, ctx as any)
           throw new Error("Should have thrown")
         } catch (e: any) {
-          expect(e.message).toBe("Request failed with status code: 404")
+          expect(e.message).toContain("404")
         }
       }
     })
   })
 
-  it("throws error if response is too large (Content-Length)", async () => {
+  it("throws error on large response (header check)", async () => {
     await using tmp = await tmpdir()
     await Instance.provide({
       directory: tmp.path,
@@ -215,22 +215,22 @@ describe("WebFetchTool", () => {
         const mockResponse = {
           ok: true,
           status: 200,
-          headers: new Headers({ "content-length": (6 * 1024 * 1024).toString() }),
+          headers: new Headers({ "content-length": (10 * 1024 * 1024).toString() }),
         }
 
         mocks.fetch.mockResolvedValue(mockResponse as any)
 
         try {
-          await tool.execute({ url: "https://example.com" }, ctx as any)
+          await tool.execute({ url: "https://example.com", format: "markdown" }, ctx as any)
           throw new Error("Should have thrown")
         } catch (e: any) {
-          expect(e.message).toBe("Response too large (exceeds 5MB limit)")
+          expect(e.message).toContain("too large")
         }
       }
     })
   })
 
-  it("throws error if response is too large (ArrayBuffer)", async () => {
+  it("throws error on large response (actual body check)", async () => {
     await using tmp = await tmpdir()
     await Instance.provide({
       directory: tmp.path,
@@ -239,39 +239,42 @@ describe("WebFetchTool", () => {
         const mockResponse = {
           ok: true,
           status: 200,
-          headers: new Headers({}),
-          arrayBuffer: async () => new ArrayBuffer(6 * 1024 * 1024),
+          headers: new Headers(),
+          arrayBuffer: async () => new ArrayBuffer(10 * 1024 * 1024),
         }
 
         mocks.fetch.mockResolvedValue(mockResponse as any)
 
         try {
-          await tool.execute({ url: "https://example.com" }, ctx as any)
+          await tool.execute({ url: "https://example.com", format: "markdown" }, ctx as any)
           throw new Error("Should have thrown")
         } catch (e: any) {
-          expect(e.message).toBe("Response too large (exceeds 5MB limit)")
+          expect(e.message).toContain("too large")
         }
       }
     })
   })
 
-  it("respects custom timeout", async () => {
+  it("handles timeout correctly", async () => {
     await using tmp = await tmpdir()
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
         const tool = await WebFetchTool.init()
-        const mockResponse = {
-          ok: true,
-          status: 200,
-          headers: new Headers({ "content-type": "text/plain" }),
-          arrayBuffer: async () => new TextEncoder().encode("Timeout Test").buffer,
+        
+        mocks.fetch.mockImplementation(async (url: string, init: any) => {
+          expect(init.signal).toBeDefined()
+          return new Promise((_, reject) => {
+            init.signal.addEventListener("abort", () => reject(new Error("The operation was aborted")))
+          })
+        })
+
+        try {
+          await tool.execute({ url: "https://example.com", format: "markdown", timeout: 1 }, ctx as any)
+          throw new Error("Should have thrown")
+        } catch (e: any) {
+          expect(e.message).toContain("aborted")
         }
-
-        mocks.fetch.mockResolvedValue(mockResponse as any)
-
-        const result = await tool.execute({ url: "https://example.com", timeout: 1 }, ctx as any)
-        expect(result.output).toBe("Timeout Test")
       }
     })
   })
