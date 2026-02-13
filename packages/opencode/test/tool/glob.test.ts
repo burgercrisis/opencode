@@ -157,12 +157,12 @@ describe("GlobTool", () => {
       directory: tmp.path,
       fn: async () => {
         const now = Date.now()
-        vi.spyOn(Bun, "file").mockImplementation((path: string) => {
+        vi.spyOn(Bun, "file").mockImplementation(((path: string) => {
           const mtime = path.includes("file1.ts") ? now : now + 1000
           return {
             stat: () => Promise.resolve({ mtime: new Date(mtime) })
           } as any
-        })
+        }) as any)
 
         const tool = await GlobTool.init()
         const result = await tool.execute({ pattern: "*.ts" }, ctx)
