@@ -18,7 +18,7 @@ describe("Keybind", () => {
   })
 
   test("fromParsedKey", () => {
-    const parsed: ParsedKey = {
+    const parsed: any = {
       name: "x",
       ctrl: true,
       meta: false,
