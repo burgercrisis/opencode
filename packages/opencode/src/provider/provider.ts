@@ -14,6 +14,9 @@ import { Env } from "../env"
 import { Instance } from "../project/instance"
 import { Flag } from "../flag/flag"
 import { iife } from "@/util/iife"
+import { Global } from "../global"
+import path from "path"
+
 // Direct imports for bundled providers
 import { createAmazonBedrock, type AmazonBedrockProviderSettings } from "@ai-sdk/amazon-bedrock"
 import { createAnthropic } from "@ai-sdk/anthropic"
@@ -1314,11 +1317,21 @@ export namespace Provider {
     const cfg = await Config.get()
     if (cfg.model) return parseModel(cfg.model)
 
-    const provider = await list()
-      .then((val) => Object.values(val) as Info[])
-      .then((x: Info[]) => x.find((p: Info) => !cfg.provider || Object.keys(cfg.provider as any).includes(p.id)))
+    const providers = await list()
+    const recent = (await Bun.file(path.join(Global.Path.state, "model.json"))
+      .json()
+      .then((x) => (Array.isArray(x.recent) ? x.recent : []))
+      .catch(() => [])) as { providerID: string; modelID: string }[]
+    for (const entry of recent) {
+      const provider = providers[entry.providerID]
+      if (!provider) continue
+      if (!provider.models[entry.modelID]) continue
+      return { providerID: entry.providerID, modelID: entry.modelID }
+    }
+
+    const provider = Object.values(providers).find((p) => !cfg.provider || Object.keys(cfg.provider).includes(p.id))
     if (!provider) throw new Error("no providers found")
-    const [model] = (Object.values(provider.models) as Model[]).sort(() => Math.random() - 0.5) // Using a simpler sort or keeping as is if sort was defined elsewhere
+    const [model] = (Object.values(provider.models) as Model[]).sort(() => Math.random() - 0.5)
     if (!model) throw new Error("no models found")
     return {
       providerID: provider.id,

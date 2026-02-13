@@ -1553,7 +1553,7 @@ export type ProviderConfig = {
         [key: string]: string
       }
       provider?: {
-        npm: string
+        npm?: string
         api?: string
       }
       /**
@@ -4093,7 +4093,7 @@ export type ProviderListResponses = {
             [key: string]: string
           }
           provider?: {
-            npm: string
+            npm?: string
             api?: string
           }
           variants?: {

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "bun:test"
 import { WebFetchTool } from "../../src/tool/webfetch"
 import { Instance } from "../../src/project/instance"
 import { tmpdir } from "../fixture/fixture"
+import path from "path"
 
 describe("WebFetchTool", () => {
   let mocks: any
@@ -275,6 +276,79 @@ describe("WebFetchTool", () => {
         } catch (e: any) {
           expect(e.message).toContain("aborted")
         }
+      }
+    })
+  })
+
+  // Additional tests from incoming branch
+  it("returns image responses as file attachments", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const bytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])
+        const mockResponse = {
+          ok: true,
+          status: 200,
+          headers: new Headers({ "content-type": "image/png" }),
+          arrayBuffer: async () => bytes.buffer,
+        }
+        mocks.fetch.mockResolvedValue(mockResponse as any)
+
+        const tool = await WebFetchTool.init()
+        const result = await tool.execute({ url: "https://example.com/image.png", format: "markdown" }, ctx as any)
+        
+        expect(result.output).toBe("Image fetched successfully")
+        expect(result.attachments).toBeDefined()
+        expect(result.attachments?.length).toBe(1)
+        expect(result.attachments?.[0].type).toBe("file")
+        expect(result.attachments?.[0].mime).toBe("image/png")
+        expect(result.attachments?.[0].url.startsWith("data:image/png;base64,")).toBe(true)
+      }
+    })
+  })
+
+  it("keeps svg as text output", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const svg = '<svg xmlns="http://www.w3.org/2000/svg"><text>hello</text></svg>'
+        const mockResponse = {
+          ok: true,
+          status: 200,
+          headers: new Headers({ "content-type": "image/svg+xml" }),
+          arrayBuffer: async () => new TextEncoder().encode(svg).buffer,
+        }
+        mocks.fetch.mockResolvedValue(mockResponse as any)
+
+        const tool = await WebFetchTool.init()
+        const result = await tool.execute({ url: "https://example.com/image.svg", format: "html" }, ctx as any)
+        
+        expect(result.output).toContain("<svg")
+        expect(result.attachments).toBeUndefined()
+      }
+    })
+  })
+
+  it("keeps text responses as text output", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const mockResponse = {
+          ok: true,
+          status: 200,
+          headers: new Headers({ "content-type": "text/plain" }),
+          arrayBuffer: async () => new TextEncoder().encode("hello from webfetch").buffer,
+        }
+        mocks.fetch.mockResolvedValue(mockResponse as any)
+
+        const tool = await WebFetchTool.init()
+        const result = await tool.execute({ url: "https://example.com/file.txt", format: "text" }, ctx as any)
+        
+        expect(result.output).toBe("hello from webfetch")
+        expect(result.attachments).toBeUndefined()
       }
     })
   })

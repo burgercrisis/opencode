@@ -19,16 +19,11 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
     const sdk = useSDK()
     const sync = useSync()
     const providers = useProviders()
+    const connected = createMemo(() => new Set(providers.connected().map((provider) => provider.id)))
 
     function isModelValid(model: ModelKey) {
       const provider = providers.all().find((x) => x.id === model.providerID)
-      return (
-        !!provider?.models[model.modelID] &&
-        providers
-          .connected()
-          .map((p) => p.id)
-          .includes(model.providerID)
-      )
+      return !!provider?.models[model.modelID] && connected().has(model.providerID)
     }
 
     function getFirstValidModel(...modelFns: (() => ModelKey | undefined)[]) {
@@ -38,6 +33,8 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         if (isModelValid(model)) return model
       }
     }
+
+    let setModel: (model: ModelKey | undefined, options?: { recent?: boolean }) => void = () => undefined
 
     const agent = (() => {
       const list = createMemo(() => sync.data.agent.filter((x) => x.mode !== "subagent" && !x.hidden))
@@ -78,7 +75,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           if (!value) return
           setStore("current", value.name)
           if (value.model)
-            model.set({
+            setModel({
               providerID: value.model.providerID,
               modelID: value.model.modelID,
             })
@@ -95,45 +92,44 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         model: {},
       })
 
-      const fallbackModel = createMemo<ModelKey | undefined>(() => {
-        if (sync.data.config.model) {
-          const [providerID, modelID] = sync.data.config.model.split("/")
-          if (isModelValid({ providerID, modelID })) {
-            return {
-              providerID,
-              modelID,
-            }
-          }
-        }
+      const resolveConfigured = () => {
+        if (!sync.data.config.model) return
+        const [providerID, modelID] = sync.data.config.model.split("/")
+        const key = { providerID, modelID }
+        if (isModelValid(key)) return key
+      }
 
+      const resolveRecent = () => {
         for (const item of models.recent.list()) {
-          if (isModelValid(item)) {
-            return item
-          }
+          if (isModelValid(item)) return item
         }
+      }
 
+      const resolveDefault = () => {
         const defaults = providers.default()
-        for (const p of providers.connected()) {
-          const configured = defaults[p.id]
+        for (const provider of providers.connected()) {
+          const configured = defaults[provider.id]
           if (configured) {
-            const key = { providerID: p.id, modelID: configured }
+            const key = { providerID: provider.id, modelID: configured }
             if (isModelValid(key)) return key
           }
 
-          const first = Object.values(p.models)[0]
+          const first = Object.values(provider.models)[0]
           if (!first) continue
-          const key = { providerID: p.id, modelID: first.id }
+          const key = { providerID: provider.id, modelID: first.id }
           if (isModelValid(key)) return key
         }
+      }
 
-        // Fallback: try to find OpenCode Zen models first, especially big-pickle
+      // Fallback: try to find OpenCode Zen models first, especially big-pickle
+      const resolveOpenCode = () => {
         const allProviders = providers.all()
         for (const p of allProviders) {
           // Check for OpenCode provider first
           if (p.id === "opencode") {
-            const models = Object.values(p.models)
+            const pModels = Object.values(p.models)
             // Look for big-pickle specifically
-            const bigPickle = models.find((m) => m.id === "big-pickle")
+            const bigPickle = pModels.find((m) => m.id === "big-pickle")
             if (bigPickle) {
               return {
                 providerID: p.id,
@@ -141,10 +137,10 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
               }
             }
             // If big-pickle not found, return first OpenCode model
-            if (models.length > 0) {
+            if (pModels.length > 0) {
               return {
                 providerID: p.id,
-                modelID: models[0].id,
+                modelID: pModels[0].id,
               }
             }
           }
@@ -152,16 +148,20 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
 
         // If no OpenCode models, try to find any available model from any provider
         for (const p of allProviders) {
-          const models = Object.values(p.models)
-          if (models.length > 0) {
+          const pModels = Object.values(p.models)
+          if (pModels.length > 0) {
             return {
               providerID: p.id,
-              modelID: models[0].id,
+              modelID: pModels[0].id,
             }
           }
         }
 
         return undefined
+      }
+
+      const fallbackModel = createMemo<ModelKey | undefined>(() => {
+        return resolveConfigured() ?? resolveRecent() ?? resolveDefault() ?? resolveOpenCode()
       })
 
       const current = createMemo(() => {
@@ -201,21 +201,25 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         })
       }
 
+      const set = (model: ModelKey | undefined, options?: { recent?: boolean }) => {
+        batch(() => {
+          const currentAgent = agent.current()
+          const next = model ?? fallbackModel()
+          if (currentAgent) setEphemeral("model", currentAgent.name, next)
+          if (model) models.setVisibility(model, true)
+          if (options?.recent && model) models.recent.push(model)
+        })
+      }
+
+      setModel = set
+
       return {
         ready: models.ready,
         current,
         recent,
         list: models.list,
         cycle,
-        set(model: ModelKey | undefined, options?: { recent?: boolean }) {
-          batch(() => {
-            const currentAgent = agent.current()
-            const next = model ?? fallbackModel()
-            if (currentAgent) setEphemeral("model", currentAgent.name, next)
-            if (model) models.setVisibility(model, true)
-            if (options?.recent && model) models.recent.push(model)
-          })
-        },
+        set,
         visible(model: ModelKey) {
           return models.visible(model)
         },
