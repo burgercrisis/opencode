@@ -73,7 +73,7 @@ describe("LspTool", () => {
         const expectedResult = [{ uri: `file://${filePath}`, range: {} }]
         mocks.lspDefinition.mockResolvedValue(expectedResult as any)
 
-        const result = await tool.execute(params, ctx)
+        const result = await tool.execute(params as any, ctx)
 
         expect(mocks.lspDefinition).toHaveBeenCalled()
         expect(result.output).toBe(JSON.stringify(expectedResult, null, 2))
@@ -98,7 +98,7 @@ describe("LspTool", () => {
         }
         mocks.lspDiagnostics.mockResolvedValue({})
 
-        const result = await tool.execute(params, ctx)
+        const result = await tool.execute(params as any, ctx)
         expect(result.output).toBe("No diagnostics found for this file.")
       },
     })
@@ -131,7 +131,7 @@ describe("LspTool", () => {
           [filePath]: [diag],
         })
 
-        const result = await tool.execute(params, ctx)
+        const result = await tool.execute(params as any, ctx)
         expect(result.output).toBe("ERROR [1:1] Something is wrong")
       },
     })
@@ -150,7 +150,7 @@ describe("LspTool", () => {
           character: 1,
         }
 
-        expect(tool.execute(params, ctx)).rejects.toThrow("File not found")
+        expect(tool.execute(params as any, ctx)).rejects.toThrow("File not found")
       },
     })
   })
@@ -170,9 +170,9 @@ describe("LspTool", () => {
           line: 1,
           character: 1,
         }
-        mocks.lspHasClients.mockResolvedValue(false)
 
-        expect(tool.execute(params, ctx)).rejects.toThrow("No LSP server available")
+        mocks.lspHasClients.mockResolvedValue(false)
+        expect(tool.execute(params as any, ctx)).rejects.toThrow("No LSP server available")
       },
     })
   })
