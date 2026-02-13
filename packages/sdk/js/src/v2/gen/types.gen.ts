@@ -1536,9 +1536,9 @@ export type ProviderConfig = {
         }
       }
       limit?: {
-        context?: number
+        context: number
         input?: number
-        output?: number
+        output: number
       }
       modalities?: {
         input: Array<"text" | "audio" | "image" | "video" | "pdf">
@@ -1554,7 +1554,7 @@ export type ProviderConfig = {
       }
       provider?: {
         npm: string
-        api: string
+        api?: string
       }
       /**
        * Variant-specific configuration
@@ -4094,7 +4094,7 @@ export type ProviderListResponses = {
           }
           provider?: {
             npm: string
-            api: string
+            api?: string
           }
           variants?: {
             [key: string]: {
