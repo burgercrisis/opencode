@@ -1,4 +1,4 @@
-import { bundledLanguages, type BundledLanguage, type ShikiTransformer } from "shiki"
+import { bundledLanguages, type BundledLanguage } from "shiki"
 import { splitProps, type ComponentProps, createEffect, onMount, onCleanup, createMemo, createResource } from "solid-js"
 import { useFile, type SelectedLineRange } from "@/context/file"
 import { useLayout } from "@/context/layout"
@@ -383,14 +383,14 @@ export function Code(props: Props) {
   )
 }
 
-function transformerUnifiedDiff(): ShikiTransformer {
+function transformerUnifiedDiff(): any {
   const kinds = new Map<number, string>()
   const meta = new Map<number, { old?: number; new?: number; sign?: string }>()
   let isDiff = false
 
   return {
     name: "unified-diff",
-    preprocess(input) {
+    preprocess(input: string) {
       kinds.clear()
       meta.clear()
       isDiff = false
@@ -465,21 +465,21 @@ function transformerUnifiedDiff(): ShikiTransformer {
 
       return out.join("\n").trimEnd()
     },
-    code(node) {
-      if (isDiff) this.addClassToHast(node, "code-diff")
+    code(node: any) {
+      if (isDiff) (this as any).addClassToHast(node, "code-diff")
     },
-    pre(node) {
-      if (isDiff) this.addClassToHast(node, "code-diff")
+    pre(node: any) {
+      if (isDiff) (this as any).addClassToHast(node, "code-diff")
     },
-    line(node, line) {
+    line(node: any, line: number) {
       if (!isDiff) return
       const kind = kinds.get(line)
       if (!kind) return
 
       const m = meta.get(line) || {}
 
-      this.addClassToHast(node, "diff-line")
-      this.addClassToHast(node, `diff-${kind}`)
+      ;(this as any).addClassToHast(node, "diff-line")
+      ;(this as any).addClassToHast(node, `diff-${kind}`)
       node.properties = node.properties || {}
       ;(node.properties as any)["data-diff"] = kind
       if (m.old != undefined) (node.properties as any)["data-old"] = String(m.old)
@@ -516,13 +516,12 @@ function transformerUnifiedDiff(): ShikiTransformer {
         children: [{ type: "text", value: (m as any).sign || " " }],
       }
 
-      // @ts-expect-error hast typing across versions
       node.children = [oldSpan, newSpan, signSpan, ...(node.children || [])]
     },
   }
 }
 
-function transformerDiffGroups(): ShikiTransformer {
+function transformerDiffGroups(): any {
   let group = -1
   let inGroup = false
   return {
@@ -531,7 +530,7 @@ function transformerDiffGroups(): ShikiTransformer {
       group = -1
       inGroup = false
     },
-    line(node) {
+    line(node: any) {
       const props = (node.properties || {}) as any
       const kind = props["data-diff"] as string | undefined
       if (kind === "add" || kind === "remove") {

@@ -334,7 +334,7 @@ describe("ReadTool", () => {
         const filePath = "C:\\Users\\user\\Desktop\\outside.txt"
         // Mock fs.writeFile and file.exists/text so we don't actually touch the filesystem
         vi.spyOn(fs, "writeFile").mockResolvedValue(undefined)
-        vi.spyOn(Bun, "file").mockImplementation((path: string) => ({
+        vi.spyOn(Bun, "file").mockImplementation((_path: any) => ({
           exists: () => Promise.resolve(true),
           stat: () => Promise.resolve({ isDirectory: () => false }),
           text: () => Promise.resolve("outside"),
