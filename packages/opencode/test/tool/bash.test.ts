@@ -30,11 +30,12 @@ describe("BashTool", () => {
         executable: "powershell",
         args: ["-Command"],
         env: {},
-      }),
+        useShellFlag: false,
+      } as any),
       shellIsPowerShellCommand: vi.spyOn(Shell, "isPowerShellCommand").mockReturnValue(true),
       shellIsCmdCommand: vi.spyOn(Shell, "isCmdCommand").mockImplementation((cmd) => cmd.includes("set") || cmd.includes("&&")),
       shellIsCmdBuiltin: vi.spyOn(Shell, "isCmdBuiltin").mockReturnValue(false),
-      shellNormalizeExitCode: vi.spyOn(Shell, "normalizeExitCode").mockImplementation((code) => code),
+      shellNormalizeExitCode: vi.spyOn(Shell, "normalizeExitCode").mockImplementation((code) => code ?? 0),
       shellKillTree: vi.spyOn(Shell, "killTree").mockResolvedValue(undefined),
       bunSpawn: vi.spyOn(Bun, "spawn"),
     }
@@ -50,8 +51,8 @@ describe("BashTool", () => {
     agent: "agent",
     abort: new AbortController().signal,
     messages: [],
-    metadata: vi.fn(() => {}),
-    ask: vi.fn(async () => {}),
+    metadata: vi.fn(),
+    ask: vi.fn(),
   }
 
   function mockSpawn(stdout: string, stderr = "", exitCode = 0) {

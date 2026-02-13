@@ -203,9 +203,8 @@ describe("Bash Tool Upgrades (Reflecting 5a87a6a Branch Point)", () => {
               {
                 command: "echo hello",
                 description: "Negative timeout test",
-                // @ts-expect-error deliberate invalid value for coverage
                 timeout: -1,
-              },
+              } as any,
               ctx as any,
             ),
           ).rejects.toThrow("Invalid timeout value")
