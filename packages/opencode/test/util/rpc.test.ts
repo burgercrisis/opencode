@@ -18,7 +18,7 @@ describe("Rpc", () => {
     Rpc.listen(rpc)
     
     const request = { type: "rpc.request", method: "hello", input: "world", id: 123 }
-    await globalThis.onmessage!({ data: JSON.stringify(request) } as MessageEvent)
+    await (globalThis as any).onmessage!({ data: JSON.stringify(request) } as any)
     
     expect(result).toBeDefined()
     const parsed = JSON.parse(result!)
