@@ -14,7 +14,7 @@ describe("BatchTool", () => {
   }
 
   beforeEach(() => {
-    vi.spyOn(Session, "updatePart").mockResolvedValue(undefined)
+    vi.spyOn(Session, "updatePart").mockResolvedValue(undefined as any)
     vi.spyOn(Identifier, "ascending").mockReturnValue("test-id")
   })
 
