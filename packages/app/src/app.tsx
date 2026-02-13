@@ -32,6 +32,7 @@ import Layout from "@/pages/layout"
 import DirectoryLayout from "@/pages/directory-layout"
 import { ErrorPage } from "./pages/error"
 import { iife } from "@opencode-ai/util/iife"
+import { JSX } from "solid-js"
 
 const Home = lazy(() => import("@/pages/home"))
 const Session = lazy(() => import("@/pages/session"))
@@ -44,7 +45,7 @@ function UiI18nBridge(props: ParentProps) {
 
 declare global {
   interface Window {
-    __OPENCODE__?: { updaterEnabled?: boolean; serverPassword?: string; deepLinks?: string[] }
+    __OPENCODE__?: { updaterEnabled?: boolean; serverPassword?: string; deepLinks?: string[]; wsl?: boolean }
   }
 }
 
@@ -95,7 +96,7 @@ function ServerKey(props: ParentProps) {
   )
 }
 
-export function AppInterface(props: { defaultUrl?: string }) {
+export function AppInterface(props: { defaultUrl?: string; children?: JSX.Element; isSidecar?: boolean }) {
   const platform = usePlatform()
 
   const stored = (() => {
@@ -117,25 +118,28 @@ export function AppInterface(props: { defaultUrl?: string }) {
   }
 
   return (
-    <ServerProvider defaultUrl={defaultServerUrl()}>
+    <ServerProvider defaultUrl={defaultServerUrl()} isSidecar={props.isSidecar}>
       <ServerKey>
         <GlobalSDKProvider>
           <GlobalSyncProvider>
             <Router
-              root={(props) => (
-                <ModelsProvider>
-                  <PermissionProvider>
-                    <LayoutProvider>
-                      <NotificationProvider>
+              root={(routerProps) => (
+                <PermissionProvider>
+                  <LayoutProvider>
+                    <NotificationProvider>
+                      <ModelsProvider>
                         <CommandProvider>
                           <HighlightsProvider>
-                            <Layout>{props.children}</Layout>
+                            <Layout>
+                              {props.children}
+                              {routerProps.children}
+                            </Layout>
                           </HighlightsProvider>
                         </CommandProvider>
-                      </NotificationProvider>
-                    </LayoutProvider>
-                  </PermissionProvider>
-                </ModelsProvider>
+                      </ModelsProvider>
+                    </NotificationProvider>
+                  </LayoutProvider>
+                </PermissionProvider>
               )}
             >
               <Route

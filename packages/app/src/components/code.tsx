@@ -207,7 +207,11 @@ export function Code(props: Props) {
       originalPre.style.display = ""
     }
 
-    const expanded = file.folded(local.file.name)
+    const folded = file.folded(local.file.name)
+    const expanded = Object.entries(folded || {})
+      .filter(([_, v]) => !v)
+      .map(([k]) => k)
+
     if (view === "split") {
       const left = container.querySelector<HTMLElement>(".diff-split pre:nth-child(1) code")
       const right = container.querySelector<HTMLElement>(".diff-split pre:nth-child(2) code")

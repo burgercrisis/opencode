@@ -1,4 +1,4 @@
-import { createOverflow } from "./common"
+import { createOverflow, useShareMessages } from "./common"
 import { CopyButton } from "./copy-button"
 import { createResource, createSignal } from "solid-js"
 import style from "./content-markdown.module.css"
@@ -57,6 +57,7 @@ export function ContentMarkdown(props: Props) {
   )
   const [expanded, setExpanded] = createSignal(false)
   const overflow = createOverflow()
+  const messages = useShareMessages()
 
   return (
     <div
@@ -73,7 +74,7 @@ export function ContentMarkdown(props: Props) {
           data-slot="expand-button"
           onClick={() => setExpanded((e) => !e)}
         >
-          {expanded() ? "Show less" : "Show more"}
+          {expanded() ? messages.show_less : messages.show_more}
         </button>
       )}
       <CopyButton text={props.text} />

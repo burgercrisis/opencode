@@ -2,7 +2,6 @@ import { Tool } from "./tool"
 import DESCRIPTION from "./task.txt"
 import z from "zod"
 import { Session } from "../session"
-import { Bus } from "../bus"
 import { MessageV2 } from "../session/message-v2"
 import { Identifier } from "../id/id"
 import { Agent } from "../agent/agent"
@@ -115,28 +114,6 @@ export const TaskTool = Tool.define("task", async (ctx) => {
       })
 
       const messageID = Identifier.ascending("message")
-      const parts: Record<string, { id: string; tool: string; state: { status: string; title?: string } }> = {}
-      const unsub = Bus.subscribe(MessageV2.Event.PartUpdated, async (evt) => {
-        if (evt.properties.part.sessionID !== session.id) return
-        if (evt.properties.part.messageID === messageID) return
-        if (evt.properties.part.type !== "tool") return
-        const part = evt.properties.part as MessageV2.ToolPart
-        parts[part.id] = {
-          id: part.id,
-          tool: part.tool,
-          state: {
-            status: part.state.status,
-            title: part.state.status === "completed" ? part.state.title : undefined,
-          },
-        }
-        ctx.metadata({
-          title: params.description,
-          metadata: {
-            sessionId: session.id,
-            model,
-          },
-        })
-      })
 
       function cancel() {
         SessionPrompt.cancel(session.id)
@@ -162,24 +139,9 @@ export const TaskTool = Tool.define("task", async (ctx) => {
           ),
         },
         parts: promptParts,
-      }).finally(() => {
-        unsub()
       })
 
-      const messages = await Session.messages({ sessionID: session.id })
-      const summary = messages
-        .filter((x): x is MessageV2.WithParts & { info: MessageV2.Assistant } => x.info.role === "assistant")
-        .flatMap((msg) => (msg.parts as MessageV2.Part[]).filter((x) => x.type === "tool") as MessageV2.ToolPart[])
-        .map((part) => ({
-          id: part.id,
-          tool: part.tool,
-          state: {
-            status: part.state.status,
-            title: part.state.status === "completed" ? part.state.title : undefined,
-          },
-        }))
-      const textPart = result.parts.findLast((x) => x.type === "text") as MessageV2.TextPart | undefined
-      const text = textPart?.text ?? ""
+      const text = result.parts.findLast((x) => x.type === "text")?.text ?? ""
 
       const output = [
         `task_id: ${session.id} (for resuming to continue this task if needed)`,
@@ -192,7 +154,6 @@ export const TaskTool = Tool.define("task", async (ctx) => {
       return {
         title: params.description,
         metadata: {
-          summary,
           sessionId: session.id,
           model,
         },

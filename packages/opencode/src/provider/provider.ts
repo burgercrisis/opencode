@@ -215,7 +215,12 @@ export namespace Provider {
 
       const awsWebIdentityTokenFile = Env.get("AWS_WEB_IDENTITY_TOKEN_FILE")
 
-      if (!profile && !awsAccessKeyId && !awsBearerToken && !awsWebIdentityTokenFile) return { autoload: false }
+      const containerCreds = Boolean(
+        process.env.AWS_CONTAINER_CREDENTIALS_RELATIVE_URI || process.env.AWS_CONTAINER_CREDENTIALS_FULL_URI,
+      )
+
+      if (!profile && !awsAccessKeyId && !awsBearerToken && !awsWebIdentityTokenFile && !containerCreds)
+        return { autoload: false }
 
       const providerOptions: AmazonBedrockProviderSettings = {
         region: defaultRegion,
@@ -1256,15 +1261,35 @@ export namespace Provider {
         "gpt-5-nano",
       ]
     })
+    for (const item of priority) {
+      if (providerID === "amazon-bedrock") {
+        const crossRegionPrefixes = ["global.", "us.", "eu."]
+        const candidates = Object.keys(provider.models).filter((m) => m.includes(item))
 
-    const found = priority
-      .map((item) => {
-        const modelID = Object.keys(provider.models).find((model) => model.includes(item))
-        return modelID ? { providerID, modelID } : undefined
-      })
-      .find(Boolean)
+        // Model selection priority:
+        // 1. global. prefix (works everywhere)
+        // 2. User's region prefix (us., eu.)
+        // 3. Unprefixed model
+        const globalMatch = candidates.find((m) => m.startsWith("global."))
+        if (globalMatch) return getModel(providerID, globalMatch)
 
-    if (found) return getModel(found.providerID, found.modelID)
+        const region = provider.options?.region
+        if (region) {
+          const regionPrefix = region.split("-")[0]
+          if (regionPrefix === "us" || regionPrefix === "eu") {
+            const regionalMatch = candidates.find((m) => m.startsWith(`${regionPrefix}.`))
+            if (regionalMatch) return getModel(providerID, regionalMatch)
+          }
+        }
+
+        const unprefixed = candidates.find((m) => !crossRegionPrefixes.some((p) => m.startsWith(p)))
+        if (unprefixed) return getModel(providerID, unprefixed)
+      } else {
+        for (const model of Object.keys(provider.models)) {
+          if (model.includes(item)) return getModel(providerID, model)
+        }
+      }
+    }
 
     // Check if opencode provider is available before using it
     const opencodeProvider = await state().then((state) => state.providers["opencode"])

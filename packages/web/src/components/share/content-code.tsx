@@ -22,7 +22,6 @@ export function ContentCode(props: Props) {
           light: "github-light",
           dark: "github-dark",
         },
-        transformers: [transformerNotationDiff()],
       })) as string
     },
   )

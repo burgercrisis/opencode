@@ -32,7 +32,7 @@ import { Flag } from "../flag/flag"
 import { ulid } from "ulid"
 import { spawn } from "child_process"
 import { Command } from "../command"
-import { $, fileURLToPath } from "bun"
+import { $, fileURLToPath, pathToFileURL } from "bun"
 import { ConfigMarkdown } from "../config/markdown"
 import { SessionSummary } from "./summary"
 import { NamedError } from "@opencode-ai/util/error"
@@ -51,9 +51,18 @@ import { Token } from "@/util/token"
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
 
+const STRUCTURED_OUTPUT_DESCRIPTION = `Use this tool to return your final response in the requested structured format.
+
+IMPORTANT:
+- You MUST call this tool exactly once at the end of your response
+- The input must be valid JSON matching the required schema
+- Complete all necessary research and tool calls BEFORE calling this tool
+- This tool provides your final answer - no further actions are taken after calling it`
+
+const STRUCTURED_OUTPUT_SYSTEM_PROMPT = `IMPORTANT: The user has requested structured output. You MUST use the StructuredOutput tool to provide your final response. Do NOT respond with plain text - you MUST call the StructuredOutput tool with your answer formatted according to the schema.`
+
 export namespace SessionPrompt {
   const log = Log.create({ service: "session.prompt" })
-  export const OUTPUT_TOKEN_MAX = Flag.OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX || 32_000
 
   const state = Instance.state(
     () => {
@@ -101,6 +110,7 @@ export namespace SessionPrompt {
       .describe(
         "@deprecated tools and permissions have been merged, you can set permissions on the session itself now",
       ),
+    format: MessageV2.Format.optional(),
     system: z.string().optional(),
     variant: z.string().optional(),
     parts: z.array(
@@ -178,7 +188,7 @@ export namespace SessionPrompt {
       return message
     }
 
-    return loop(input.sessionID)
+    return loop({ sessionID: input.sessionID })
   })
 
   export async function resolvePromptParts(template: string): Promise<PromptInput["parts"]> {
@@ -214,7 +224,7 @@ export namespace SessionPrompt {
         if (stats.isDirectory()) {
           parts.push({
             type: "file",
-            url: `file://${filepath}`,
+            url: pathToFileURL(filepath).href,
             filename: name,
             mime: "application/x-directory",
           })
@@ -223,7 +233,7 @@ export namespace SessionPrompt {
 
         parts.push({
           type: "file",
-          url: `file://${filepath}`,
+          url: pathToFileURL(filepath).href,
           filename: name,
           mime: "text/plain",
         })
@@ -243,6 +253,13 @@ export namespace SessionPrompt {
     return controller.signal
   }
 
+  function resume(sessionID: string) {
+    const s = state()
+    if (!s[sessionID]) return
+
+    return s[sessionID].abort.signal
+  }
+
   export function cancel(sessionID: string) {
     log.info("cancel", { sessionID })
     const s = state()
@@ -252,16 +269,19 @@ export namespace SessionPrompt {
       return
     }
     match.abort.abort()
-    for (const item of match.callbacks) {
-      item.reject(new DOMException("Aborted", "AbortError"))
-    }
     delete s[sessionID]
     SessionStatus.set(sessionID, { type: "idle" })
     return
   }
 
-  export const loop = fn(Identifier.schema("session"), async (sessionID) => {
-    const abort = start(sessionID)
+  export const LoopInput = z.object({
+    sessionID: Identifier.schema("session"),
+    resume_existing: z.boolean().optional(),
+  })
+  export const loop = fn(LoopInput, async (input) => {
+    const { sessionID, resume_existing } = input
+
+    const abort = resume_existing ? resume(sessionID) : start(sessionID)
     if (!abort) {
       return new Promise<MessageV2.WithParts>((resolve, reject) => {
         const callbacks = state()[sessionID].callbacks
@@ -270,6 +290,11 @@ export namespace SessionPrompt {
     }
 
     using _ = defer(() => cancel(sessionID))
+
+    // Structured output state
+    // Note: On session resumption, state is reset but outputFormat is preserved
+    // on the user message and will be retrieved from lastUser below
+    let structuredOutput: unknown | undefined
 
     let step = 0
     const session = await Session.get(sessionID)
@@ -325,115 +350,130 @@ export namespace SessionPrompt {
       if (!lastUser?.model) {
         throw new Error("No user model found for session processing")
       }
-      const model = await Provider.getModel(lastUser.model.providerID, lastUser.model.modelID)
+
+      const model = await Provider.getModel(lastUser.model.providerID, lastUser.model.modelID).catch((e) => {
+        if (Provider.ModelNotFoundError.isInstance(e)) {
+          const hint = e.data.suggestions?.length ? ` Did you mean: ${e.data.suggestions.join(", ")}?` : ""
+          Bus.publish(Session.Event.Error, {
+            sessionID,
+            error: new NamedError.Unknown({
+              message: `Model not found: ${e.data.providerID}/${e.data.modelID}.${hint}`,
+            }).toObject(),
+          })
+        }
+        throw e
+      })
+
       const task = tasks.pop()
 
-        // pending subtask
-        // TODO: centralize "invoke tool" logic
-        if (task?.type === "subtask") {
-          const taskToolInit = await TaskTool.init()
-          const taskModel = task.model
-            ? await Provider.getModel(task.model.providerID, task.model.modelID)
-            : model
+      // pending subtask
+      // TODO: centralize "invoke tool" logic
+      if (task?.type === "subtask") {
+        const taskTool = await TaskTool.init()
+        const taskModel = task.model ? await Provider.getModel(task.model.providerID, task.model.modelID) : model
+        const assistantMessage = (await Session.updateMessage({
+          id: Identifier.ascending("message"),
+          role: "assistant",
+          parentID: lastUser.id,
+          sessionID,
+          mode: task.agent,
+          agent: task.agent,
+          variant: lastUser.variant,
+          path: {
+            cwd: Instance.directory,
+            root: Instance.worktree,
+          },
+          cost: 0,
+          tokens: {
+            input: 0,
+            output: 0,
+            reasoning: 0,
+            cache: { read: 0, write: 0 },
+          },
+          modelID: taskModel.id,
+          providerID: taskModel.providerID,
+          time: {
+            created: Date.now(),
+          },
+        })) as MessageV2.Assistant
         
-          const assistantMessage = (await Session.updateMessage({
-            id: Identifier.ascending("message" as any),
-            role: "assistant",
-            parentID: lastUser.id,
-            sessionID,
-            mode: task.agent,
-            agent: task.agent,
-            path: {
-              cwd: Instance.directory,
-              root: Instance.worktree,
+        const part = (await Session.updatePart({
+          id: Identifier.ascending("part"),
+          messageID: assistantMessage.id,
+          sessionID: assistantMessage.sessionID,
+          type: "tool",
+          callID: ulid(),
+          tool: TaskTool.id,
+          state: {
+            status: "running",
+            input: {
+              prompt: task.prompt,
+              description: task.description,
+              subagent_type: task.agent,
+              command: task.command,
             },
-            cost: 0,
-            tokens: {
-              input: 0,
-              output: 0,
-              reasoning: 0,
-              cache: { read: 0, write: 0 },
-            },
-            modelID: taskModel.id,
-            providerID: taskModel.providerID,
             time: {
-              created: Date.now(),
+              start: Date.now(),
             },
-          })) as MessageV2.Assistant
-          const part = (await Session.updatePart({
-            id: Identifier.ascending("part" as any),
-            messageID: assistantMessage.id,
-            sessionID: assistantMessage.sessionID,
-            type: "tool",
-            callID: ulid(),
-            tool: TaskTool.id,
-            state: {
-              status: "running",
-              input: {
-                prompt: task.prompt,
-                description: task.description,
-                subagent_type: task.agent,
-                command: task.command,
-              },
-              time: {
-                start: Date.now(),
-              },
-            },
-          })) as MessageV2.ToolPart
-          const taskArgs = {
-            prompt: task.prompt,
-            description: task.description,
-            subagent_type: task.agent,
-            command: task.command,
-          }
-          await Plugin.trigger(
-            "tool.execute.before",
-            {
-              tool: "task",
-              sessionID,
-              callID: part.id,
-            },
-            { args: taskArgs },
-          )
-          const taskAgent = await Agent.get(task.agent)
-          const taskCtx: Tool.Context = {
-            agent: task.agent,
-            messageID: assistantMessage.id,
-            sessionID: sessionID,
-            abort,
+          },
+        })) as MessageV2.ToolPart
+
+        const taskArgs = {
+          prompt: task.prompt,
+          description: task.description,
+          subagent_type: task.agent,
+          command: task.command,
+        }
+
+        await Plugin.trigger(
+          "tool.execute.before",
+          {
+            tool: "task",
+            sessionID,
             callID: part.id,
-            messages: msgs,
-            extra: { bypassAgentCheck: true },
-            async metadata(input) {
-              const currentState = part.state || ({} as any)
-              await Session.updatePart({
-                ...part,
-                type: "tool",
-                state: {
-                  ...currentState,
-                  ...input,
-                },
-              } satisfies MessageV2.ToolPart)
-            },
-            async ask(req) {
-              await PermissionNext.ask({
-                ...req,
-                sessionID: sessionID,
-                ruleset: PermissionNext.merge(taskAgent?.permission ?? [], session.permission ?? []),
-              })
-            },
+          },
+          { args: taskArgs },
+        )
+
+        const taskAgent = await Agent.get(task.agent)
+        const taskCtx: Tool.Context = {
+          agent: task.agent,
+          messageID: assistantMessage.id,
+          sessionID: sessionID,
+          abort,
+          callID: part.id,
+          messages: msgs,
+          extra: { bypassAgentCheck: true },
+          async metadata(input) {
+            const currentState = part.state || ({} as any)
+            await Session.updatePart({
+              ...part,
+              type: "tool",
+              state: {
+                ...currentState,
+                ...input,
+              },
+            } satisfies MessageV2.ToolPart)
+          },
+          async ask(req) {
+            await PermissionNext.ask({
+              ...req,
+              sessionID: sessionID,
+              ruleset: PermissionNext.merge(taskAgent?.permission ?? [], session.permission ?? []),
+            })
+          },
+        }
+      
+        let executionError: Error | undefined
+        const result = await taskTool.execute(taskArgs, taskCtx).catch(async (error: unknown) => {
+          executionError = error instanceof Error ? error : new Error(String(error))
+          
+          if (taskTool && typeof taskTool === "object" && "cleanup" in taskTool && typeof taskTool.cleanup === "function") {
+            await taskTool.cleanup()
           }
-        
-          let executionError: Error | undefined
-          const result = await taskToolInit.execute(taskArgs, taskCtx).catch(async (error: unknown) => {
-            executionError = error instanceof Error ? error : new Error(String(error))
-            
-            if (taskToolInit && typeof taskToolInit === "object" && "cleanup" in taskToolInit && typeof taskToolInit.cleanup === "function") {
-              await taskToolInit.cleanup()
-            }
-            
-            return undefined
-          })
+          
+          return undefined
+        })
 
         await Plugin.trigger(
           "tool.execute.after",
@@ -506,8 +546,8 @@ export namespace SessionPrompt {
             }
             await Session.updateMessage(summaryUserMsg)
             await Session.updatePart({
-              id: Identifier.ascending("part" as any),
-            messageID: summaryUserMsg.id,
+              id: Identifier.ascending("part"),
+              messageID: summaryUserMsg.id,
               sessionID,
               type: "text",
               text: "Summarize the task tool output above and continue with your task.",
@@ -562,6 +602,7 @@ export namespace SessionPrompt {
         role: "assistant",
         mode: agent.name,
         agent: agent.name,
+        variant: lastUser.variant,
         path: {
           cwd: Instance.directory,
           root: Instance.worktree,
@@ -605,6 +646,16 @@ export namespace SessionPrompt {
         messages: msgs,
       })
 
+      // Inject StructuredOutput tool if JSON schema mode enabled
+      if (lastUser.format?.type === "json_schema") {
+        tools["StructuredOutput"] = createStructuredOutputTool({
+          schema: lastUser.format.schema,
+          onSuccess(output) {
+            structuredOutput = output
+          },
+        })
+      }
+
       if (step === 1) {
         SessionSummary.summarize({
           sessionID: sessionID,
@@ -638,14 +689,23 @@ export namespace SessionPrompt {
 
       await Plugin.trigger("experimental.chat.messages.transform", {}, { messages: sessionMessages })
 
-      const systemPrompts = [...(await SystemPrompt.environment(model)), ...(await SystemPrompt.custom())]
+      // Build system prompt, adding structured output instruction if needed
+      const system = [
+        ...(await SystemPrompt.environment(model)),
+        ...(await SystemPrompt.custom()),
+        ...(await InstructionPrompt.system()),
+      ]
+      const format = lastUser.format ?? { type: "text" }
+      if (format.type === "json_schema") {
+        system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)
+      }
 
       const result = await processor.process({
         user: lastUser,
         agent,
         abort,
         sessionID,
-        system: [...systemPrompts, ...(await InstructionPrompt.system())],
+        system,
         messages: [
           ...MessageV2.toModelMessages(sessionMessages, model),
           ...(isLastStep
@@ -659,8 +719,32 @@ export namespace SessionPrompt {
         ],
         tools,
         model,
+        toolChoice: format.type === "json_schema" ? "required" : undefined,
       })
 
+      // If structured output was captured, save it and exit immediately
+      // This takes priority because the StructuredOutput tool was called successfully
+      if (structuredOutput !== undefined) {
+        processor.message.structured = structuredOutput
+        processor.message.finish = processor.message.finish ?? "stop"
+        await Session.updateMessage(processor.message)
+        break
+      }
+
+      // Check if model finished (finish reason is not "tool-calls" or "unknown")
+      const modelFinished = processor.message.finish && !["tool-calls", "unknown"].includes(processor.message.finish)
+
+      if (modelFinished && !processor.message.error) {
+        if (format.type === "json_schema") {
+          // Model stopped without calling StructuredOutput tool
+          processor.message.error = new MessageV2.StructuredOutputError({
+            message: "Model did not produce structured output",
+            retries: 0,
+          }).toObject()
+          await Session.updateMessage(processor.message)
+          break
+        }
+      }
       if (result === "stop") break
       if (result === "compact") {
         await SessionCompaction.create({
@@ -834,7 +918,8 @@ export namespace SessionPrompt {
     return defaultAgentName
   }
 
-  async function resolveTools(input: {
+  /** @internal Exported for testing */
+  export async function resolveTools(input: {
     agent: Agent.Info
     model: Provider.Model
     session: Session.Info
@@ -1131,6 +1216,36 @@ export namespace SessionPrompt {
     return tools
   }
 
+  /** @internal Exported for testing */
+  export function createStructuredOutputTool(input: {
+    schema: Record<string, any>
+    onSuccess: (output: unknown) => void
+  }): AITool {
+    // Remove $schema property if present (not needed for tool input)
+    const { $schema, ...toolSchema } = input.schema
+
+    return tool({
+      id: "StructuredOutput" as any,
+      description: STRUCTURED_OUTPUT_DESCRIPTION,
+      inputSchema: jsonSchema(toolSchema as any),
+      async execute(args) {
+        // AI SDK validates args against inputSchema before calling execute()
+        input.onSuccess(args)
+        return {
+          output: "Structured output captured successfully.",
+          title: "Structured Output",
+          metadata: { valid: true },
+        }
+      },
+      toModelOutput(result) {
+        return {
+          type: "text",
+          value: result.output,
+        }
+      },
+    })
+  }
+
   async function createUserMessage(input: PromptInput) {
     let agent: Agent.Info
     let agentName: string
@@ -1182,14 +1297,11 @@ export namespace SessionPrompt {
       model = await lastModel(input.sessionID)
     }
 
-    const variant =
-      input.variant ??
-      (agent.variant &&
-      agent.model &&
-      model.providerID === agent.model.providerID &&
-      model.modelID === agent.model.modelID
-        ? agent.variant
-        : undefined)
+    const full =
+      !input.variant && agent.variant
+        ? await Provider.getModel(model.providerID, model.modelID).catch(() => undefined)
+        : undefined
+    const variant = input.variant ?? (agent.variant && full?.variants?.[agent.variant] ? agent.variant : undefined)
 
     const info: MessageV2.Info = {
       id: input.messageID ?? Identifier.ascending("message"),
@@ -1202,6 +1314,7 @@ export namespace SessionPrompt {
       agent: agent.name,
       model,
       system: input.system,
+      format: input.format,
       variant,
     }
     using _ = defer(() => InstructionPrompt.clear(info.id))
@@ -1426,6 +1539,10 @@ export namespace SessionPrompt {
                         })
                       }
                     }
+                  }
+                  offset = Math.max(start, 1)
+                  if (end) {
+                    limit = end - (offset - 1)
                   }
                 }
                 const args = { filePath: filepath, offset, limit }
@@ -1955,7 +2072,19 @@ NOTE: At any point in time through this workflow you should feel free to ask use
     if (!abort) {
       throw new Session.BusyError(input.sessionID)
     }
-    using _ = defer(() => cancel(input.sessionID))
+
+    using _ = defer(() => {
+      // If no queued callbacks, cancel (the default)
+      const callbacks = state()[input.sessionID]?.callbacks ?? []
+      if (callbacks.length === 0) {
+        cancel(input.sessionID)
+      } else {
+        // Otherwise, trigger the session loop to process queued items
+        loop({ sessionID: input.sessionID, resume_existing: true }).catch((error) => {
+          log.error("session loop failed to resume after shell command", { sessionID: input.sessionID, error })
+        })
+      }
+    })
 
     const session = await Session.get(input.sessionID)
     if (session.revert) {

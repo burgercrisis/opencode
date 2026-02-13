@@ -17,16 +17,23 @@ const MAX_BYTES = 50 * 1024
 export const ReadTool = Tool.define("read", {
   description: DESCRIPTION,
   parameters: z.object({
-    filePath: z.string().describe("The path to the file to read"),
-    offset: z.coerce.number().describe("The line number to start reading from (0-based)").optional(),
-    limit: z.coerce.number().describe("The number of lines to read (defaults to 2000)").optional(),
+    filePath: z.string().describe("The absolute path to the file or directory to read"),
+    offset: z.coerce.number().describe("The line number to start reading from (1-indexed)").optional(),
+    limit: z.coerce.number().describe("The maximum number of lines to read (defaults to 2000)").optional(),
   }),
   async execute(params, ctx) {
+    if (params.offset !== undefined && params.offset < 1) {
+      throw new Error("offset must be greater than or equal to 1")
+    }
     const filepath = Filesystem.resolvePath(params.filePath)
     const title = Filesystem.relativePath(Instance.worktree, filepath)
 
+    const file = Bun.file(filepath)
+    const stat = await file.stat().catch(() => undefined)
+
     await assertExternalDirectory(ctx, filepath, {
       bypass: Boolean(ctx.extra?.["bypassCwdCheck"]),
+      kind: stat?.isDirectory() ? "directory" : "file",
     })
 
     await ctx.ask({
@@ -36,10 +43,7 @@ export const ReadTool = Tool.define("read", {
       metadata: {},
     })
 
-    const file = Bun.file(filepath)
-    const exists = await file.exists()
-
-    !exists && await (async () => {
+    if (!stat) {
       const dir = path.dirname(filepath)
       const base = path.basename(filepath)
 
@@ -53,7 +57,49 @@ export const ReadTool = Tool.define("read", {
         ? `File not found: ${filepath}\n\nDid you mean one of these?\n${suggestions.join("\n")}`
         : `File not found: ${filepath}`
       throw new Error(error)
-    })()
+    }
+
+    if (stat.isDirectory()) {
+      const dirents = await fs.readdir(filepath, { withFileTypes: true })
+      const entries = await Promise.all(
+        dirents.map(async (dirent) => {
+          if (dirent.isDirectory()) return dirent.name + "/"
+          if (dirent.isSymbolicLink()) {
+            const target = await fs.stat(path.join(filepath, dirent.name)).catch(() => undefined)
+            if (target?.isDirectory()) return dirent.name + "/"
+          }
+          return dirent.name
+        }),
+      )
+      entries.sort((a, b) => a.localeCompare(b))
+
+      const limit = params.limit ?? DEFAULT_READ_LIMIT
+      const offset = params.offset ?? 1
+      const start = offset - 1
+      const sliced = entries.slice(start, start + limit)
+      const truncated = start + sliced.length < entries.length
+
+      const output = [
+        `<path>${filepath}</path>`,
+        `<type>directory</type>`,
+        `<entries>`,
+        sliced.join("\n"),
+        truncated
+          ? `\n(Showing ${sliced.length} of ${entries.length} entries. Use 'offset' parameter to read beyond entry ${offset + sliced.length})`
+          : `\n(${entries.length} entries)`,
+        `</entries>`,
+      ].join("\n")
+
+      return {
+        title,
+        output,
+        metadata: {
+          preview: sliced.slice(0, 20).join("\n"),
+          truncated,
+          loaded: [] as string[],
+        },
+      }
+    }
 
     const instructions = await InstructionPrompt.resolve(ctx.messages, filepath, ctx.messageID)
 
@@ -71,7 +117,7 @@ export const ReadTool = Tool.define("read", {
         metadata: {
           preview: msg,
           truncated: false,
-          ...(instructions.length > 0 && { loaded: instructions.map((i) => i.filepath) }),
+          loaded: instructions.map((i) => i.filepath),
         },
         attachments: [
           {
@@ -92,41 +138,45 @@ export const ReadTool = Tool.define("read", {
     const text = await file.text()
     const lines = text.split(/\r?\n/)
     const limit = params.limit ?? DEFAULT_READ_LIMIT
-    const offset = params.offset || 0
-    const subset = lines.slice(offset, offset + limit)
+    const offset = params.offset ?? 1
+    const start = offset - 1
+    if (start >= lines.length) throw new Error(`Offset ${offset} is out of range for this file (${lines.length} lines)`)
 
-    const processLines = (
-      items: string[],
-      acc: string[],
-      bytes: number,
-    ): { raw: string[]; bytes: number; truncated: boolean } => {
-      const item = items[0]
-      if (item === undefined) return { raw: acc, bytes, truncated: false }
-
-      const line = item.length > 2000 ? item.substring(0, 2000) + "..." : item
-      const size = Buffer.byteLength(line, "utf-8") + (acc.length > 0 ? 1 : 0)
-
-      return bytes + size > MAX_BYTES
-        ? { raw: acc, bytes, truncated: true }
-        : processLines(items.slice(1), [...acc, line], bytes + size)
+    const raw: string[] = []
+    let bytes = 0
+    let truncatedByBytes = false
+    for (let i = start; i < Math.min(lines.length, start + limit); i++) {
+      const line = lines[i].length > 2000 ? lines[i].substring(0, 2000) + "..." : lines[i]
+      const size = Buffer.byteLength(line, "utf-8") + (raw.length > 0 ? 1 : 0)
+      if (bytes + size > MAX_BYTES) {
+        truncatedByBytes = true
+        break
+      }
+      raw.push(line)
+      bytes += size
     }
 
-    const result = processLines(subset, [], 0)
-    const lastReadLine = offset + result.raw.length
-    const hasMoreLines = lines.length > lastReadLine
-    const truncated = hasMoreLines || result.truncated
-    const preview = result.raw.slice(0, 20).join("\n")
+    const content = raw.map((line, index) => {
+      return `${index + offset}: ${line}`
+    })
+    const preview = raw.slice(0, 20).join("\n")
 
-    let output = `<file>\n${result.raw.map((line, i) => `${(offset + i + 1).toString().padStart(5, "0")}| ${line}`).join("\n")}`
+    let output = [`<path>${filepath}</path>`, `<type>file</type>`, "<content>"].join("\n")
+    output += content.join("\n")
 
-    if (result.truncated) {
+    const totalLines = lines.length
+    const lastReadLine = offset + raw.length - 1
+    const hasMoreLines = totalLines > lastReadLine
+    const truncated = hasMoreLines || truncatedByBytes
+
+    if (truncatedByBytes) {
       output += `\n\n(Output truncated at ${MAX_BYTES} bytes. Use 'offset' parameter to read beyond line ${lastReadLine})`
     } else if (hasMoreLines) {
       output += `\n\n(File has more lines. Use 'offset' parameter to read beyond line ${lastReadLine})`
     } else {
       output += `\n\n(End of file - total ${lines.length} lines)`
     }
-    output += "\n</file>"
+    output += "\n</content>"
 
     // just warms the lsp client
     await LSP.touchFile(filepath, false)
@@ -142,7 +192,7 @@ export const ReadTool = Tool.define("read", {
       metadata: {
         preview,
         truncated,
-        ...(instructions.length > 0 && { loaded: instructions.map((i) => i.filepath) }),
+        loaded: instructions.map((i) => i.filepath),
       },
     }
   },

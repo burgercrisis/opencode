@@ -133,15 +133,15 @@ describe("BashTool", () => {
         const res1 = processPowerShellOutput(out1, "foo")
         expect(res1.output).toContain("Error: Command 'Get-NonExistentCmdlet' not found")
 
-        // Line 117: Get-Credential requires interactive input (empty output)
+        // Line 137: Get-Credential requires interactive input (empty output)
         const res3 = processPowerShellOutput("", "Get-Credential")
         expect(res3.output).toContain("Error: Get-Credential requires interactive input")
         expect(res3.hasErrors).toBe(true)
 
         // Line 137: Get-Credential missing mandatory parameter
-        const out2 = "Get-Credential: Cannot process command because of one or more missing mandatory parameters: Credential"
-        const res2 = processPowerShellOutput(out2, "Get-Credential")
-        expect(res2.output).toContain("Error: Get-Credential requires interactive input")
+        const out5 = "Get-Credential: Cannot process command because of one or more missing mandatory parameters: Credential"
+        const res6 = processPowerShellOutput(out5, "Get-Credential")
+        expect(res6.output).toContain("Error: Get-Credential requires interactive input")
 
         // Lines 148-151, 153-154: Get-Credential null reference
         const out3 = "Get-Credential failed. Object reference not set to an instance of an object."

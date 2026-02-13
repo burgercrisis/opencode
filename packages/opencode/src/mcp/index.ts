@@ -551,13 +551,13 @@ export namespace MCP {
     const clientsSnapshot = await clients()
     const defaultTimeout = cfg.experimental?.mcp_timeout
 
-    const toolEntries = await Promise.all(
-      Object.entries(clientsSnapshot).map(async ([clientName, client]) => {
-        // Only include tools from connected MCPs (skip disabled ones)
-        if (s.status[clientName]?.status !== "connected") {
-          return []
-        }
+    const result: Record<string, Tool> = {}
+    const connectedClients = Object.entries(clientsSnapshot).filter(
+      ([clientName]) => s.status[clientName]?.status === "connected",
+    )
 
+    const toolsResults = await Promise.all(
+      connectedClients.map(async ([clientName, client]) => {
         const toolsResult = await client.listTools().catch((e) => {
           log.error("failed to get tools", { clientName, error: e.message })
           const failedStatus: Status = {
@@ -568,24 +568,22 @@ export namespace MCP {
           delete s.clients[clientName]
           return undefined
         })
-
-        if (!toolsResult) return []
-
-        const mcpConfig = config[clientName]
-        const entry = isMcpConfigured(mcpConfig) ? mcpConfig : undefined
-        const timeout = entry?.timeout ?? defaultTimeout
-
-        return Promise.all(
-          toolsResult.tools.map(async (mcpTool) => {
-            const sanitizedClientName = clientName.replace(/[^a-zA-Z0-9_-]/g, "_")
-            const sanitizedToolName = mcpTool.name.replace(/[^a-zA-Z0-9_-]/g, "_")
-            return [sanitizedClientName + "_" + sanitizedToolName, await convertMcpTool(mcpTool, client, timeout)]
-          }),
-        )
+        return { clientName, client, toolsResult }
       }),
     )
 
-    return Object.fromEntries(toolEntries.flat())
+    for (const { clientName, client, toolsResult } of toolsResults) {
+      if (!toolsResult) continue
+      const mcpConfig = config[clientName]
+      const entry = isMcpConfigured(mcpConfig) ? mcpConfig : undefined
+      const timeout = entry?.timeout ?? defaultTimeout
+      for (const mcpTool of toolsResult.tools) {
+        const sanitizedClientName = clientName.replace(/[^a-zA-Z0-9_-]/g, "_")
+        const sanitizedToolName = mcpTool.name.replace(/[^a-zA-Z0-9_-]/g, "_")
+        result[sanitizedClientName + "_" + sanitizedToolName] = await convertMcpTool(mcpTool, client, timeout)
+      }
+    }
+    return result
   }
 
   export async function prompts() {

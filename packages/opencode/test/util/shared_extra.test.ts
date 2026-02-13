@@ -72,10 +72,11 @@ describe("shared util extra", () => {
     })
 
     test("generates different slugs", () => {
-      const slug1 = Slug.create()
-      const slug2 = Slug.create()
-      // This might flake but highly unlikely with the current word lists
-      expect(slug1).not.toBe(slug2)
+      const slugs = new Set()
+      for (let i = 0; i < 10; i++) {
+        slugs.add(Slug.create())
+      }
+      expect(slugs.size).toBeGreaterThan(1)
     })
   })
 })

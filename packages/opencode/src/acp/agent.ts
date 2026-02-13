@@ -25,9 +25,11 @@ import {
   type SetSessionModeResponse,
   type ToolCallContent,
   type ToolKind,
+  type Usage,
 } from "@agentclientprotocol/sdk"
 
 import { Log } from "../util/log"
+import { pathToFileURL } from "bun"
 import { ACPSessionManager } from "./session"
 import type { ACPConfig } from "./types"
 import { Provider } from "../provider/provider"
@@ -39,7 +41,7 @@ import { Todo } from "@/session/todo"
 import { iife } from "@/util/iife"
 import { z } from "zod"
 import { LoadAPIKeyError } from "ai"
-import type { Event, OpencodeClient, SessionMessageResponse } from "@opencode-ai/sdk/v2"
+import type { AssistantMessage, Event, OpencodeClient, SessionMessageResponse } from "@opencode-ai/sdk/v2"
 import { applyPatch } from "diff"
 
 type ModeOption = { id: string; name: string; description?: string }
@@ -49,6 +51,74 @@ const DEFAULT_VARIANT_VALUE = "default"
 
 export namespace ACP {
   const log = Log.create({ service: "acp-agent" })
+
+  async function getContextLimit(
+    sdk: OpencodeClient,
+    providerID: string,
+    modelID: string,
+    directory: string,
+  ): Promise<number | null> {
+    const providers = await sdk.config
+      .providers({ directory })
+      .then((x) => x.data?.providers ?? [])
+      .catch((error) => {
+        log.error("failed to get providers for context limit", { error })
+        return []
+      })
+
+    const provider = providers.find((p) => p.id === providerID)
+    const model = provider?.models[modelID]
+    return model?.limit.context ?? null
+  }
+
+  async function sendUsageUpdate(
+    connection: AgentSideConnection,
+    sdk: OpencodeClient,
+    sessionID: string,
+    directory: string,
+  ): Promise<void> {
+    const messages = await sdk.session
+      .messages({ sessionID, directory }, { throwOnError: true })
+      .then((x) => x.data)
+      .catch((error) => {
+        log.error("failed to fetch messages for usage update", { error })
+        return undefined
+      })
+
+    if (!messages) return
+
+    const assistantMessages = messages.filter(
+      (m): m is { info: AssistantMessage; parts: SessionMessageResponse["parts"] } => m.info.role === "assistant",
+    )
+
+    const lastAssistant = assistantMessages[assistantMessages.length - 1]
+    if (!lastAssistant) return
+
+    const msg = lastAssistant.info
+    const size = await getContextLimit(sdk, msg.providerID, msg.modelID, directory)
+
+    if (!size) {
+      // Cannot calculate usage without known context size
+      return
+    }
+
+    const used = msg.tokens.input + (msg.tokens.cache?.read ?? 0)
+    const totalCost = assistantMessages.reduce((sum, m) => sum + m.info.cost, 0)
+
+    await connection
+      .sessionUpdate({
+        sessionId: sessionID,
+        update: {
+          sessionUpdate: "usage_update",
+          used,
+          size,
+          cost: { amount: totalCost, currency: "USD" },
+        },
+      })
+      .catch((error) => {
+        log.error("failed to send usage update", { error })
+      })
+  }
 
   export async function init({ sdk: _sdk }: { sdk: OpencodeClient }) {
     return {
@@ -149,9 +219,12 @@ export namespace ACP {
               const meta = p.metadata || {}
               const file = typeof meta["filepath"] === "string" ? meta["filepath"] : ""
               const diff = typeof meta["diff"] === "string" ? meta["diff"] : ""
-              const text = await Bun.file(file).text()
-              const next = getNewContent(text, diff)
-              if (next) this.connection.writeTextFile({ sessionId: s.id, path: file, content: next })
+              const f = Bun.file(file)
+              if (await f.exists()) {
+                const text = await f.text()
+                const next = getNewContent(text, diff)
+                if (next) this.connection.writeTextFile({ sessionId: s.id, path: file, content: next })
+              }
             }
 
             await this.sdk.permission.reply({
@@ -458,6 +531,7 @@ export namespace ACP {
         }
 
         await processMessages(msgs ?? [])
+        await sendUsageUpdate(this.connection, this.sdk, id, dir)
 
         return updatedRes
       } catch (e) {
@@ -616,21 +690,108 @@ export namespace ACP {
                     rawOutput: { error: part.state.error },
                   },
                 })
-                .catch((error) => log.error("failed to send tool error replay to ACP", { error }))
+                .catch((err) => {
+                  log.error("failed to send tool error to ACP", { error: err })
+                })
             }
-          }
-          if (part.type === "text" && part.ignored !== true) {
-            return this.connection
+          } else if (part.type === "text") {
+            if (part.text) {
+            const audience: Role[] | undefined = part.synthetic ? ["assistant"] : part.ignored ? ["user"] : undefined
+            await this.connection
               .sessionUpdate({
                 sessionId,
                 update: {
-                  sessionUpdate: message.info.role === "assistant" ? "agent_message_chunk" : "user_message_chunk",
-                  content: { type: "text", text: part.text },
+                  sessionUpdate: message.info.role === "user" ? "user_message_chunk" : "agent_message_chunk",
+                  content: {
+                    type: "text",
+                    text: part.text,
+                    ...(audience && { annotations: { audience } }),
+                  },
                 },
               })
-              .catch((error) => log.error("failed to send text replay to ACP", { error }))
+              .catch((err) => {
+                  log.error("failed to send text to ACP", { error: err })
+                })
+            }
+          } else if (part.type === "file") {
+            // Replay file attachments as appropriate ACP content blocks.
+          // OpenCode stores files internally as { type: "file", url, filename, mime }.
+          // We convert these back to ACP blocks based on the URL scheme and MIME type:
+          // - file:// URLs → resource_link
+          // - data: URLs with image/* → image block
+          // - data: URLs with text/* or application/json → resource with text
+          // - data: URLs with other types → resource with blob
+          const url = part.url
+          const filename = part.filename ?? "file"
+          const mime = part.mime || "application/octet-stream"
+          const messageChunk = message.info.role === "user" ? "user_message_chunk" : "agent_message_chunk"
+
+          if (url.startsWith("file://")) {
+            // Local file reference - send as resource_link
+            await this.connection
+              .sessionUpdate({
+                sessionId,
+                update: {
+                  sessionUpdate: messageChunk,
+                  content: { type: "resource_link", uri: url, name: filename, mimeType: mime },
+                },
+              })
+              .catch((err) => {
+                log.error("failed to send resource_link to ACP", { error: err })
+              })
+          } else if (url.startsWith("data:")) {
+            // Embedded content - parse data URL and send as appropriate block type
+            const base64Match = url.match(/^data:([^;]+);base64,(.*)$/)
+            const dataMime = base64Match?.[1]
+            const base64Data = base64Match?.[2] ?? ""
+
+            const effectiveMime = dataMime || mime
+
+            if (effectiveMime.startsWith("image/")) {
+              // Image - send as image block
+              await this.connection
+                .sessionUpdate({
+                  sessionId,
+                  update: {
+                    sessionUpdate: messageChunk,
+                    content: {
+                      type: "image",
+                      mimeType: effectiveMime,
+                      data: base64Data,
+                      uri: pathToFileURL(filename).href,
+                    },
+                  },
+                })
+                .catch((err) => {
+                  log.error("failed to send image to ACP", { error: err })
+                })
+            } else {
+              // Non-image: text types get decoded, binary types stay as blob
+              const isText = effectiveMime.startsWith("text/") || effectiveMime === "application/json"
+              const fileUri = pathToFileURL(filename).href
+              const resource = isText
+                ? {
+                    uri: fileUri,
+                    mimeType: effectiveMime,
+                    text: Buffer.from(base64Data, "base64").toString("utf-8"),
+                  }
+                : { uri: fileUri, mimeType: effectiveMime, blob: base64Data }
+
+              await this.connection
+                .sessionUpdate({
+                  sessionId,
+                  update: {
+                    sessionUpdate: messageChunk,
+                    content: { type: "resource", resource },
+                  },
+                })
+                .catch((err) => {
+                  log.error("failed to send resource to ACP", { error: err })
+                })
+            }
           }
-        })
+        }
+      })
 
         return processParts(remaining.slice(1))
       }
@@ -914,10 +1075,8 @@ export namespace ACP {
           })()
         : undefined
 
-      const done = { stopReason: "end_turn" as const, _meta: {} }
-
       if (!cmd) {
-        await this.sdk.session.prompt({
+        const response = await this.sdk.session.prompt({
           sessionID: id,
           model: {
             providerID: model.providerID,
@@ -928,13 +1087,21 @@ export namespace ACP {
           agent,
           directory: dir,
         })
-        return done
+        const msg = response.data?.info
+
+        await sendUsageUpdate(this.connection, this.sdk, id, dir)
+
+        return {
+          stopReason: "end_turn" as const,
+          usage: msg ? buildUsage(msg) : undefined,
+          _meta: {},
+        }
       }
 
       const list = await this.config.sdk.command.list({ directory: dir }, { throwOnError: true })
       const command = list.data?.find((c) => c.name === cmd.name)
       if (command) {
-        await this.sdk.session.command({
+        const response = await this.sdk.session.command({
           sessionID: id,
           command: command.name,
           arguments: cmd.args,
@@ -942,7 +1109,15 @@ export namespace ACP {
           agent,
           directory: dir,
         })
-        return done
+        const msg = response.data?.info
+
+        await sendUsageUpdate(this.connection, this.sdk, id, dir)
+
+        return {
+          stopReason: "end_turn" as const,
+          usage: msg ? buildUsage(msg) : undefined,
+          _meta: {},
+        }
       }
 
       if (cmd.name === "compact") {
@@ -957,7 +1132,12 @@ export namespace ACP {
         )
       }
 
-      return done
+      await sendUsageUpdate(this.connection, this.sdk, id, dir)
+
+      return {
+        stopReason: "end_turn" as const,
+        _meta: {},
+      }
     }
 
     async cancel(params: CancelNotification) {
@@ -1076,11 +1256,20 @@ export namespace ACP {
       return { type: "file", url: uri, filename: name, mime: "text/plain" }
     }
     if (uri.startsWith("zed://")) {
-      const url = new URL(uri)
-      const path = url.searchParams.get("path")
-      if (path) {
-        const name = path.split("/").pop() || path
-        return { type: "file", url: `file://${path}`, filename: name, mime: "text/plain" }
+      try {
+        const url = new URL(uri)
+        const path = url.searchParams.get("path")
+        if (path) {
+          const name = path.split("/").pop() || path
+          return {
+            type: "file",
+            url: pathToFileURL(path).href,
+            filename: name,
+            mime: "text/plain",
+          }
+        }
+      } catch {
+        return { type: "text", text: uri }
       }
     }
     return { type: "text", text: uri }

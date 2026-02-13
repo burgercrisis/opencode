@@ -65,6 +65,7 @@ export default defineConfig({
     },
     solidStart({
       ssr: true,
+      middleware: "./src/middleware.ts",
     }) as PluginOption,
     nitro({
       compatibilityDate: "2024-09-19",
