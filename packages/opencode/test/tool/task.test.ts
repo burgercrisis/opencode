@@ -39,7 +39,7 @@ describe("TaskTool", () => {
     vi.spyOn(SessionPrompt, "prompt").mockResolvedValue({ parts: [{ type: "text", text: "Task result" }] } as any)
     vi.spyOn(SessionPrompt, "resolvePromptParts").mockResolvedValue([])
     vi.spyOn(SessionPrompt, "cancel").mockImplementation(() => {})
-    vi.spyOn(Bus, "subscribe").mockReturnValue(() => {})
+    vi.spyOn(Bus, "subscribe").mockReturnValue(() => undefined as any)
     vi.spyOn(Identifier, "ascending").mockReturnValue("msg-1")
   })
 
@@ -97,7 +97,7 @@ describe("TaskTool", () => {
       directory: tmp.path,
       fn: async () => {
         const tool = await TaskTool.init()
-        vi.spyOn(Agent, "get").mockResolvedValue(null)
+        vi.spyOn(Agent, "get").mockResolvedValue(null as any)
         const params = {
           description: "Invalid agent",
           prompt: "Fail",
@@ -124,10 +124,10 @@ describe("TaskTool", () => {
         const abortController = new AbortController()
         const ctxWithAbort = { ...ctx, abort: abortController.signal }
 
-        vi.spyOn(SessionPrompt, "prompt").mockImplementation(async () => {
+        vi.spyOn(SessionPrompt, "prompt").mockImplementation((async () => {
           await new Promise(resolve => setTimeout(resolve, 100))
           return { parts: [{ type: "text", text: "Done" }] }
-        })
+        }) as any)
 
         const promise = tool.execute(params, ctxWithAbort as any)
         
@@ -165,12 +165,12 @@ describe("TaskTool", () => {
       fn: async () => {
         const tool = await TaskTool.init()
         let busCallback: any
-        vi.spyOn(Bus, "subscribe").mockImplementation((event: any, cb: any) => {
-          if (event === MessageV2.Event.PartUpdated) {
-            busCallback = cb
-          }
-          return () => {}
-        })
+        vi.spyOn(Bus, "subscribe").mockImplementation(((event: any, cb: any) => {
+      if (event === MessageV2.Event.PartUpdated) {
+        busCallback = cb
+      }
+      return () => undefined as any
+    }) as any)
 
         const params = {
           description: "Bus test",
@@ -178,7 +178,7 @@ describe("TaskTool", () => {
           subagent_type: "sub-agent",
         }
 
-        vi.spyOn(SessionPrompt, "prompt").mockImplementation(async () => {
+        vi.spyOn(SessionPrompt, "prompt").mockImplementation((async () => {
           if (busCallback) {
             busCallback({
               properties: {
@@ -194,7 +194,7 @@ describe("TaskTool", () => {
             })
           }
           return { parts: [{ type: "text", text: "Done" }] }
-        })
+        }) as any)
 
         await tool.execute(params, ctx as any)
         expect(ctx.metadata).toHaveBeenCalledWith(expect.objectContaining({
