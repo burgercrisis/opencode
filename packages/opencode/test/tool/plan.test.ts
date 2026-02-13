@@ -19,12 +19,12 @@ describe("Plan Tools", () => {
   beforeEach(() => {
     vi.spyOn(Session, "get").mockResolvedValue({ id: "session-123" } as any)
     vi.spyOn(Session, "plan").mockReturnValue("/project/PLAN.md")
-    vi.spyOn(Session, "updateMessage").mockResolvedValue(undefined)
-    vi.spyOn(Session, "updatePart").mockResolvedValue(undefined)
+    vi.spyOn(Session, "updateMessage").mockResolvedValue(undefined as any)
+    vi.spyOn(Session, "updatePart").mockResolvedValue(undefined as any)
     
     vi.spyOn(Question, "ask").mockResolvedValue([["Yes"]])
     
-    vi.spyOn(Provider, "defaultModel").mockReturnValue("default-model")
+    vi.spyOn(Provider, "defaultModel").mockResolvedValue("default-model" as any)
     vi.spyOn(Identifier, "ascending").mockImplementation((type: string) => `${type}-id`)
 
     // Mock MessageV2.stream for getLastModel
