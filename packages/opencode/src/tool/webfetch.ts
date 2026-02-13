@@ -8,16 +8,18 @@ const MAX_RESPONSE_SIZE = 5 * 1024 * 1024 // 5MB
 const DEFAULT_TIMEOUT = 30 * 1000 // 30 seconds
 const MAX_TIMEOUT = 120 * 1000 // 2 minutes
 
-export const WebFetchTool = Tool.define("webfetch", {
+const parameters = z.object({
+  url: z.string().describe("The URL to fetch content from"),
+  format: z
+    .enum(["text", "markdown", "html"])
+    .default("markdown")
+    .describe("The format to return the content in (text, markdown, or html). Defaults to markdown."),
+  timeout: z.number().describe("Optional timeout in seconds (max 120)").optional(),
+})
+
+export const WebFetchTool = Tool.define<typeof parameters, {} >("webfetch", {
   description: DESCRIPTION,
-  parameters: z.object({
-    url: z.string().describe("The URL to fetch content from"),
-    format: z
-      .enum(["text", "markdown", "html"])
-      .default("markdown")
-      .describe("The format to return the content in (text, markdown, or html). Defaults to markdown."),
-    timeout: z.number().describe("Optional timeout in seconds (max 120)").optional(),
-  }),
+  parameters,
   async execute(params, ctx) {
     // Validate URL
     !params.url.startsWith("http://") && !params.url.startsWith("https://") && (() => { throw new Error("URL must start with http:// or https://") })()

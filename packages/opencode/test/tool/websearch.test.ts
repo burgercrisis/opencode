@@ -154,7 +154,7 @@ describe("WebSearchTool", () => {
       contextMaxCharacters: 5000
     }, ctx)
 
-    const body = JSON.parse(fetchSpy.mock.calls[0][1].body)
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body))
     expect(body.params.arguments.numResults).toBe(5)
     expect(body.params.arguments.livecrawl).toBe("preferred")
     expect(body.params.arguments.type).toBe("deep")
