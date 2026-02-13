@@ -23,7 +23,7 @@ describe("EditTool", () => {
   beforeEach(() => {
     vi.spyOn(LSP, "touchFile").mockResolvedValue(undefined)
     vi.spyOn(LSP, "diagnostics").mockResolvedValue({})
-    vi.spyOn(Bus, "publish").mockResolvedValue(undefined)
+    vi.spyOn(Bus, "publish").mockResolvedValue(undefined as any)
     vi.spyOn(FileTime, "withLock").mockImplementation((path: string, fn: () => Promise<any>) => fn())
     vi.spyOn(FileTime, "assert").mockResolvedValue(undefined)
     vi.spyOn(FileTime, "read").mockReturnValue(undefined)
