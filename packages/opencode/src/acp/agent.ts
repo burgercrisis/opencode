@@ -120,6 +120,14 @@ export namespace ACP {
       })
   }
 
+  function buildUsage(msg: AssistantMessage): Usage {
+    return {
+      inputTokens: msg.tokens.input + (msg.tokens.cache?.read ?? 0),
+      outputTokens: msg.tokens.output,
+      totalTokens: msg.tokens.input + (msg.tokens.cache?.read ?? 0) + msg.tokens.output,
+    }
+  }
+
   export async function init({ sdk: _sdk }: { sdk: OpencodeClient }) {
     return {
       create: (connection: AgentSideConnection, fullConfig: ACPConfig) => {
