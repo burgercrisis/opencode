@@ -8,11 +8,23 @@ import z from "zod"
 import { Config } from "../config/config"
 import { Instance } from "../project/instance"
 import { Scheduler } from "../scheduler"
+import { Filesystem } from "../util/filesystem"
 
 export namespace Snapshot {
   const log = Log.create({ service: "snapshot" })
   const hour = 60 * 60 * 1000
   const prune = "7.days"
+
+  async function gitWithRetry(args: string[], options: { cwd?: string; maxRetries?: number } = {}) {
+    const { cwd = Instance.directory, maxRetries = 3 } = options
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      const result = await $`git ${args.join(" ")}`.quiet().cwd(cwd).nothrow()
+      if (result.exitCode === 0) return result
+      if (attempt === maxRetries - 1) return result
+      await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)))
+    }
+    return { exitCode: 1, stdout: "", stderr: "" }
+  }
 
   export function init() {
     Scheduler.register({
@@ -152,7 +164,7 @@ export namespace Snapshot {
             })
           } else {
             log.info("file did not exist in snapshot, deleting", { file })
-            await fs.unlink(file).catch(() => {})
+            await fs.unlink(file).catch(() => { })
           }
         }
         files.add(file)
@@ -226,15 +238,15 @@ export namespace Snapshot {
       const before = isBinaryFile
         ? ""
         : await $`git -c core.autocrlf=false --git-dir ${git} --work-tree ${Instance.worktree} show ${from}:${file}`
-            .quiet()
-            .nothrow()
-            .text()
+          .quiet()
+          .nothrow()
+          .text()
       const after = isBinaryFile
         ? ""
         : await $`git -c core.autocrlf=false --git-dir ${git} --work-tree ${Instance.worktree} show ${to}:${file}`
-            .quiet()
-            .nothrow()
-            .text()
+          .quiet()
+          .nothrow()
+          .text()
       const added = isBinaryFile ? 0 : parseInt(additions)
       const deleted = isBinaryFile ? 0 : parseInt(deletions)
       result.push({
@@ -247,6 +259,46 @@ export namespace Snapshot {
       })
     }
     return result
+  }
+
+  export function unquote(path: string): string {
+    if (!path.startsWith('"') || !path.endsWith('"')) return path
+    const quoted = path.slice(1, -1)
+
+    const process = (index: number, buffer: number[]): number[] => {
+      if (index >= quoted.length) return buffer
+
+      if (quoted[index] === "\\") {
+        const next = index + 1
+        if (next + 2 < quoted.length && /^[0-7]{3}$/.test(quoted.slice(next, next + 3))) {
+          const octal = quoted.slice(next, next + 3)
+          return process(index + 4, [...buffer, parseInt(octal, 8)])
+        }
+
+        const escapeMap: Record<string, number> = {
+          b: 8,
+          t: 9,
+          n: 10,
+          v: 11,
+          f: 12,
+          r: 13,
+          '"': 34,
+          "\\": 92,
+        }
+        const char = quoted[next]
+        return process(index + 2, [...buffer, escapeMap[char] ?? quoted.charCodeAt(next)])
+      }
+
+      const charCode = quoted.charCodeAt(index)
+      if (charCode < 128) {
+        return process(index + 1, [...buffer, charCode])
+      }
+
+      const charBuffer = Buffer.from(quoted[index])
+      return process(index + 1, [...buffer, ...Array.from(charBuffer)])
+    }
+
+    return Buffer.from(process(0, [])).toString("utf8")
   }
 
   function gitdir() {
