@@ -12,7 +12,7 @@ describe("Shell additional coverage", () => {
     const originalPlatform = process.platform
     const originalKill = process.kill
 
-    // @ts-expect-error override for testing
+    // override for testing
     process.kill = (() => {
       return undefined
     }) as any
@@ -38,8 +38,8 @@ describe("Shell additional coverage", () => {
     Object.defineProperty(process, "platform", { value: "win32" })
     process.env.COMSPEC = "C:\\Windows\\System32\\cmd.exe"
 
-    // @ts-expect-error override for testing
-    Bun.which = () => null
+    // override for testing
+    Bun.which = (() => null) as any
 
     const shell = Shell.acceptable()
     expect(shell).toBe(process.env.COMSPEC)
