@@ -35,7 +35,11 @@ describe("Provider Routing", () => {
     } as any)
 
     mocks.bunInstall.mockImplementation(async (pkg: string) => pkg)
-    mocks.bunRun.mockResolvedValue(undefined)
+    mocks.bunRun.mockResolvedValue({
+      exited: Promise.resolve(0),
+      stdout: "",
+      stderr: "",
+    } as any)
     mocks.bunWhich.mockReturnValue("bun")
   })
 
