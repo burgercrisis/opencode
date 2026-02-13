@@ -29,7 +29,7 @@ export namespace BunProc {
     })
     let code = await result.exited
 
-    let stderr: string | undefined
+    let stderr: string | number | undefined
     if (code !== 0 && process.platform === "win32") {
       stderr = result.stderr
         ? typeof result.stderr === "number"
