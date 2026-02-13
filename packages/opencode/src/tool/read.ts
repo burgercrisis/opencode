@@ -14,13 +14,15 @@ import DESCRIPTION from "./read.txt"
 const DEFAULT_READ_LIMIT = 2000
 const MAX_BYTES = 50 * 1024
 
-export const ReadTool = Tool.define("read", {
+const parameters = z.object({
+  filePath: z.string().describe("The absolute path to the file or directory to read"),
+  offset: z.coerce.number().describe("The line number to start reading from (1-indexed)").optional(),
+  limit: z.coerce.number().describe("The maximum number of lines to read (defaults to 2000)").optional(),
+})
+
+export const ReadTool = Tool.define<typeof parameters, { preview: string; truncated: boolean; loaded: string[] }>("read", {
   description: DESCRIPTION,
-  parameters: z.object({
-    filePath: z.string().describe("The absolute path to the file or directory to read"),
-    offset: z.coerce.number().describe("The line number to start reading from (1-indexed)").optional(),
-    limit: z.coerce.number().describe("The maximum number of lines to read (defaults to 2000)").optional(),
-  }),
+  parameters,
   async execute(params, ctx) {
     if (params.offset !== undefined && params.offset < 1) {
       throw new Error("offset must be greater than or equal to 1")
