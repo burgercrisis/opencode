@@ -1924,8 +1924,8 @@ function Edit(props: ToolProps<typeof EditTool>) {
 
   const diagnostics = createMemo(() => {
     const filePath = Filesystem.normalizePath(props.input.filePath ?? "")
-    const arr = props.metadata.diagnostics?.[filePath] ?? []
-    return arr.filter((x) => x.severity === 1).slice(0, 3)
+    const arr: any[] = props.metadata.diagnostics?.[filePath] ?? []
+    return arr.filter((x: any) => x.severity === 1).slice(0, 3)
   })
 
   return (
