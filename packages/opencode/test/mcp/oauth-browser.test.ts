@@ -133,7 +133,7 @@ describe("MCP OAuth Browser", () => {
 
   test("BrowserOpenFailed event is published when open() throws", async () => {
   await using tmp = await tmpdir({
-    init: async (dir) => {
+    init: async (dir: string) => {
       await Bun.write(
         `${dir}/opencode.json`,
         JSON.stringify({
@@ -155,7 +155,7 @@ describe("MCP OAuth Browser", () => {
       openShouldFail = true
 
       const events: Array<{ mcpName: string; url: string }> = []
-      const unsubscribe = Bus.subscribe(MCP.BrowserOpenFailed, (evt) => {
+      const unsubscribe = Bus.subscribe(MCP.BrowserOpenFailed, (evt: any) => {
         events.push(evt.properties)
       })
 
@@ -184,7 +184,7 @@ describe("MCP OAuth Browser", () => {
 
 test("BrowserOpenFailed event is NOT published when open() succeeds", async () => {
   await using tmp = await tmpdir({
-    init: async (dir) => {
+    init: async (dir: string) => {
       await Bun.write(
         `${dir}/opencode.json`,
         JSON.stringify({
@@ -206,7 +206,7 @@ test("BrowserOpenFailed event is NOT published when open() succeeds", async () =
       openShouldFail = false
 
       const events: Array<{ mcpName: string; url: string }> = []
-      const unsubscribe = Bus.subscribe(MCP.BrowserOpenFailed, (evt) => {
+      const unsubscribe = Bus.subscribe(MCP.BrowserOpenFailed, (evt: any) => {
         events.push(evt.properties)
       })
 
@@ -233,7 +233,7 @@ test("BrowserOpenFailed event is NOT published when open() succeeds", async () =
 
 test("open() is called with the authorization URL", async () => {
   await using tmp = await tmpdir({
-    init: async (dir) => {
+    init: async (dir: string) => {
       await Bun.write(
         `${dir}/opencode.json`,
         JSON.stringify({

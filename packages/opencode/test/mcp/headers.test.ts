@@ -71,7 +71,7 @@ describe("MCP Headers", () => {
 
   test("headers are passed to transports when oauth is enabled (default)", async () => {
   await using tmp = await tmpdir({
-    init: async (dir) => {
+    init: async (dir: string) => {
       await Bun.write(
         `${dir}/opencode.json`,
         JSON.stringify({
