@@ -29,8 +29,8 @@ describe("GrepTool", () => {
     agent: "agent",
     abort: new AbortController().signal,
     messages: [],
-    metadata: () => {},
-    ask: async () => {},
+    metadata: vi.fn(),
+    ask: vi.fn(),
   }
 
   function mockSpawn(stdout: string, exitCode = 0) {
