@@ -11,7 +11,7 @@ function sanitize(p: string | undefined): string | undefined {
   
   // Convert to buffer and back to ensure no hidden null bytes
   const buf = Buffer.from(p)
-  const cleanBuf = buf.filter((b) => b !== 0)
+  const cleanBuf = Buffer.from(buf.filter((b) => b !== 0))
   let result = cleanBuf.toString("utf8")
 
   // Remove literal \u0000 string and any control characters
@@ -49,7 +49,7 @@ export namespace Global {
       const testHome = sanitize(process.env.OPENCODE_TEST_HOME)
       const p = testHome ? path.join(testHome, ".local", "share", app) : data()
       const result = sanitize(p)!
-      if (result.includes("\0") || result.includes("\u0000")) {
+      if (result.indexOf("\0") !== -1 || result.indexOf("\u0000") !== -1) {
         console.error(`[Global.Path.data] DETECTED CORRUPTION! Path: ${JSON.stringify(result)}`)
         return result.replace(/\0/g, "").replace(/\\u0000/g, "").trim()
       }
@@ -90,7 +90,7 @@ export namespace Global {
       
       // On Windows, some environment variables or path operations might re-introduce null bytes
       // especially when interacting with native APIs or certain Node versions.
-      if (result.includes("\0") || result.includes("\u0000") || (result.length > 0 && result.charCodeAt(result.length - 1) === 0)) {
+      if (result.indexOf("\0") !== -1 || result.indexOf("\u0000") !== -1 || (result.length > 0 && result.charCodeAt(result.length - 1) === 0)) {
         const clean = result.replace(/\0/g, "").replace(/\\u0000/g, "").trim()
         console.error(`[Global.Path.config] DETECTED CORRUPTION! Path: ${JSON.stringify(result)}`)
         return clean
