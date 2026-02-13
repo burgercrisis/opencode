@@ -35,12 +35,14 @@ export const IGNORE_PATTERNS = [
 
 const LIMIT = 100
 
-export const ListTool = Tool.define("list", {
+const parameters = z.object({
+  path: z.string().describe("The absolute path to the directory to list (must be absolute, not relative)").optional(),
+  ignore: z.array(z.string()).describe("List of glob patterns to ignore").optional(),
+})
+
+export const ListTool = Tool.define<typeof parameters, { count: number; truncated: boolean }>("list", {
   description: DESCRIPTION,
-  parameters: z.object({
-    path: z.string().describe("The absolute path to the directory to list (must be absolute, not relative)").optional(),
-    ignore: z.array(z.string()).describe("List of glob patterns to ignore").optional(),
-  }),
+  parameters,
   async execute(params, ctx) {
     const searchPath = path.resolve(Instance.directory, params.path || ".")
     await assertExternalDirectory(ctx, searchPath, { kind: "directory" })
@@ -66,7 +68,7 @@ export const ListTool = Tool.define("list", {
       return {
         title: searchPath,
         output: "",
-        metadata: { matches: 0, truncated: false },
+        metadata: { count: 0, truncated: false },
       }
     }
 

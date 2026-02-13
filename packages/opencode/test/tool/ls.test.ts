@@ -16,8 +16,9 @@ describe("ListTool", () => {
     agent: "agent",
     abort: new AbortController().signal,
     messages: [],
-    metadata: () => {},
-    ask: async () => {},
+    metadata: vi.fn(),
+    ask: vi.fn(),
+    log: () => {},
   }
 
   beforeEach(() => {
