@@ -17,7 +17,7 @@ describe("Tool", () => {
         truncated: true,
         outputPath: "path/to/output"
       })
-      const tool = Tool.define("test-tool", {
+      const tool = Tool.define<z.ZodObject<{ foo: z.ZodString }>, { some: string; truncated?: boolean; outputPath?: string }>("test-tool", {
         description: "A test tool",
         parameters: z.object({ foo: z.string() }),
         execute: async (args) => ({
@@ -76,7 +76,7 @@ describe("Tool", () => {
         description: "A test tool",
         parameters: z.object({ foo: z.string() }),
         execute: async () => ({ title: "", metadata: {}, output: "" }),
-        formatValidationError: (err) => `Custom error: ${err.issues[0].path[0]}`
+        formatValidationError: (err) => `Custom error: ${String(err.issues[0].path[0])}`
       })
 
       const instance = await tool.init()

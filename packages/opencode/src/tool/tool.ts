@@ -30,8 +30,8 @@ export namespace Tool {
       description: string
       parameters: Parameters
       execute(
-        args: z.infer<Parameters>,
-        ctx: Context,
+        args: z.input<Parameters>,
+        ctx: Context<M>,
       ): Promise<{
         title: string
         metadata: M
@@ -45,9 +45,24 @@ export namespace Tool {
   export type InferParameters<T extends Info> = T extends Info<infer P> ? z.infer<P> : never
   export type InferMetadata<T extends Info> = T extends Info<any, infer M> ? M : never
 
+  export interface Implementation<Parameters extends z.ZodType, M extends Metadata> {
+    description: string
+    parameters: Parameters
+    execute(
+      args: z.infer<Parameters>,
+      ctx: Context<M>,
+    ): Promise<{
+      title: string
+      metadata: M
+      output: string
+      attachments?: MessageV2.FilePart[]
+    }>
+    formatValidationError?(error: z.ZodError): string
+  }
+
   export function define<Parameters extends z.ZodType, Result extends Metadata>(
     id: string,
-    init: Info<Parameters, Result>["init"] | Awaited<ReturnType<Info<Parameters, Result>["init"]>>,
+    init: ((ctx?: InitContext) => Promise<Implementation<Parameters, Result>>) | Implementation<Parameters, Result>,
   ): Info<Parameters, Result> {
     return {
       id,
