@@ -12,8 +12,8 @@ const ctx = {
   agent: "build",
   abort: AbortSignal.any([]),
   messages: [],
-  metadata: () => {},
-  ask: async () => {},
+  metadata: (_: any) => {},
+  ask: async (_: any) => {},
 }
 
 const projectRoot = path.join(__dirname, "../..")
@@ -37,7 +37,7 @@ describe("tool.bash preliminary test suite", () => {
             expect(result.metadata.output).toContain("Test123")
           },
         })
-      }, 30000)
+      })
 
       test("command 2: powershell -Command \"Get-Date -Format 'MM/dd/yyyy'\"", async () => {
         await Instance.provide({
@@ -55,7 +55,7 @@ describe("tool.bash preliminary test suite", () => {
             expect(result.metadata.output).toMatch(/\d{1,2}\/\d{1,2}\/\d{4}/) // Basic date pattern
           },
         })
-      }, 30000)
+      })
 
       test("command 3: powershell -Command \"1 + 1\"", async () => {
         await Instance.provide({
@@ -73,7 +73,7 @@ describe("tool.bash preliminary test suite", () => {
             expect(result.metadata.output.trim()).toBe("2")
           },
         })
-      }, 30000)
+      })
 
       test("command 4: powershell -Command \"Write-Host 'Hello World'\"", async () => {
         await Instance.provide({
@@ -91,7 +91,7 @@ describe("tool.bash preliminary test suite", () => {
             expect(result.metadata.output).toContain("Hello World")
           },
         })
-      }, 30000)
+      })
 
       test("command 5: powershell -Command \"Get-Random\"", async () => {
         await Instance.provide({
@@ -111,8 +111,8 @@ describe("tool.bash preliminary test suite", () => {
             expect(output).toBeLessThanOrEqual(2147483647) // Max int32
           },
         })
-      }, 30000)
-    }, 30000)
+      })
+    })
 
     describe("1.2 Simple CMD Commands", () => {
       test("command 6: cmd /c echo HelloWorld", async () => {
@@ -131,7 +131,7 @@ describe("tool.bash preliminary test suite", () => {
             expect(result.metadata.output).toContain("HelloWorld")
           },
         })
-      }, 30000)
+      })
 
       test("command 7: cmd /c dir", async () => {
         await Instance.provide({
@@ -149,7 +149,7 @@ describe("tool.bash preliminary test suite", () => {
             expect(result.metadata.output).toMatch(/\d{2}\/\d{2}\/\d{4}/) // Directory listing format
           },
         })
-      }, 30000)
+      })
 
       test("command 8: cmd /c echo %username%", async () => {
         await Instance.provide({
@@ -167,7 +167,7 @@ describe("tool.bash preliminary test suite", () => {
             expect(result.metadata.output.trim().length).toBeGreaterThan(0)
           },
         })
-      }, 30000)
+      })
 
       test("command 9: cmd /c echo %userprofile%", async () => {
         await Instance.provide({
@@ -185,7 +185,7 @@ describe("tool.bash preliminary test suite", () => {
             expect(result.metadata.output.trim()).toMatch(/[A-Za-z]:\\Users\\/)
           },
         })
-      }, 30000)
+      })
 
       test("command 10: cmd /c ver", async () => {
         await Instance.provide({
@@ -203,8 +203,8 @@ describe("tool.bash preliminary test suite", () => {
             expect(result.metadata.output).toContain("Microsoft Windows")
           },
         })
-      }, 30000)
-    }, 30000)
+      })
+    })
 
     describe("1.3 Command Chaining and Piping", () => {
       test("command 11: powershell -Command \"Write-Host a; Write-Host b\"", async () => {
@@ -224,7 +224,7 @@ describe("tool.bash preliminary test suite", () => {
             expect(result.metadata.output).toContain("b")
           },
         })
-      }, 30000)
+      })
 
       test("command 12: powershell -Command \"Get-Process | Select-Object -First 2\"", async () => {
         await Instance.provide({
@@ -243,7 +243,7 @@ describe("tool.bash preliminary test suite", () => {
             expect(lines.length).toBeGreaterThanOrEqual(2)
           },
         })
-      }, 30000)
+      })
 
       test("command 13: cmd /c echo one & echo two", async () => {
         await Instance.provide({
@@ -262,7 +262,7 @@ describe("tool.bash preliminary test suite", () => {
             expect(result.metadata.output).toContain("two")
           },
         })
-      }, 30000)
+      })
 
       test("command 14: cmd /c echo first && echo second", async () => {
         await Instance.provide({
@@ -281,7 +281,7 @@ describe("tool.bash preliminary test suite", () => {
             expect(result.metadata.output).toContain("second")
           },
         })
-      }, 30000)
+      })
 
       test("command 15: powershell -Command \"1,2,3,4,5 | Where-Object { $_ -gt 2 }\"", async () => {
         await Instance.provide({
@@ -304,9 +304,9 @@ describe("tool.bash preliminary test suite", () => {
             expect(output).not.toContain("2")
           },
         })
-      }, 30000)
+      })
     })
-  }, 30000)
+  })
 
   describe("Part 2: PowerShell Script Block Execution", () => {
     test("command 16: powershell -Command \"& { Write-Host 'Inside block' }\"", async () => {
@@ -324,8 +324,8 @@ describe("tool.bash preliminary test suite", () => {
           expect(result.metadata.exit).toBe(0)
           expect(result.metadata.output).toContain("Inside block")
         },
-      }, 30000)
-    }, 30000)
+      })
+    })
 
     test("command 17: powershell -Command \"if (1 -eq 1) { Write-Host 'True' }\"", async () => {
       await Instance.provide({
@@ -342,7 +342,7 @@ describe("tool.bash preliminary test suite", () => {
           expect(result.metadata.exit).toBe(0)
           expect(result.metadata.output).toContain("True")
         },
-      }, 30000)
+      })
     }, 30000)
 
     test("command 18: powershell -Command \"$x = 5; $x * 2\"", async () => {
@@ -360,7 +360,7 @@ describe("tool.bash preliminary test suite", () => {
           expect(result.metadata.exit).toBe(0)
           expect(result.metadata.output.trim()).toBe("10")
         },
-      }, 30000)
+      })
     }, 30000)
 
     test("command 19: powershell -Command \"& { $sum = 0; 1..10 | ForEach-Object { $sum += $_ }; Write-Host $sum }\"", async () => {
@@ -378,7 +378,7 @@ describe("tool.bash preliminary test suite", () => {
           expect(result.metadata.exit).toBe(0)
           expect(result.metadata.output.trim()).toBe("55")
         },
-      }, 30000)
+      })
     }, 30000)
 
     test("command 20: powershell -Command \"foreach ($i in 1,2,3) { Write-Host $i }\"", async () => {
@@ -398,7 +398,7 @@ describe("tool.bash preliminary test suite", () => {
           expect(result.metadata.output).toContain("2")
           expect(result.metadata.output).toContain("3")
         },
-      }, 30000)
+      })
     }, 30000)
 
     test("command 21: powershell -Command \"& { $arr = @('a','b','c'); $arr -join ',' }\"", async () => {
@@ -416,7 +416,7 @@ describe("tool.bash preliminary test suite", () => {
           expect(result.metadata.exit).toBe(0)
           expect(result.metadata.output.trim()).toBe("a,b,c")
         },
-      }, 30000)
+      })
     }, 30000)
 
     test("command 22: powershell -Command \"function test { Write-Host 'function works' }; test\"", async () => {
@@ -434,7 +434,7 @@ describe("tool.bash preliminary test suite", () => {
           expect(result.metadata.exit).toBe(0)
           expect(result.metadata.output).toContain("function works")
         },
-      }, 30000)
+      })
     }, 30000)
 
     test("command 23: powershell -Command \"$hash = @{key='value'}; Write-Host $hash.key\"", async () => {
@@ -452,7 +452,7 @@ describe("tool.bash preliminary test suite", () => {
           expect(result.metadata.exit).toBe(0)
           expect(result.metadata.output).toContain("value")
         },
-      }, 30000)
+      })
     }, 30000)
 
     describe("Part 3: Variable and Expression Handling", () => {
@@ -472,7 +472,7 @@ describe("tool.bash preliminary test suite", () => {
             expect(result.metadata.output.trim().length).toBeGreaterThan(0)
           },
         })
-      }, 30000)
+      })
 
       test("command 25: powershell -Command \"$env:USERPROFILE\"", async () => {
         await Instance.provide({
@@ -490,7 +490,7 @@ describe("tool.bash preliminary test suite", () => {
             expect(result.metadata.output.trim()).toMatch(/[A-Za-z]:\\Users\\/)
           },
         })
-      }, 30000)
+      })
 
       test("command 26: powershell -Command \"$PSVersionTable.PSVersion.ToString()\"", async () => {
         await Instance.provide({
@@ -508,7 +508,7 @@ describe("tool.bash preliminary test suite", () => {
             expect(result.metadata.output).toMatch(/\d+\.\d+/)
           },
         })
-      }, 30000)
+      })
 
       test("command 27: powershell -Command \"[Environment]::OSVersion\"", async () => {
             await Instance.provide({
@@ -526,7 +526,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output).toContain("Win32NT")
               },
             })
-          }, 30000)
+          })
 
       test("command 28: powershell -Command \"$((Get-Date).ToString('yyyy-MM-dd'))\"", async () => {
         await Instance.provide({
@@ -544,7 +544,7 @@ describe("tool.bash preliminary test suite", () => {
             expect(result.metadata.output.trim()).toMatch(/\d{4}-\d{2}-\d{2}/)
           },
         })
-      }, 30000)
+      })
 
       test("command 29: cmd /c echo %computername%", async () => {
         await Instance.provide({
@@ -562,7 +562,7 @@ describe("tool.bash preliminary test suite", () => {
             expect(result.metadata.output.trim().length).toBeGreaterThan(0)
           },
         })
-      }, 30000)
+      })
 
       test("command 30: cmd /c echo %temp%", async () => {
         await Instance.provide({
@@ -580,7 +580,7 @@ describe("tool.bash preliminary test suite", () => {
             expect(result.metadata.output.trim()).toMatch(/[A-Za-z]:\\.*Temp/)
           },
         })
-      }, 30000)
+      })
 
       test("command 31: powershell -Command \"$x = 'test'; $x.ToUpper()\"", async () => {
         await Instance.provide({
@@ -598,7 +598,7 @@ describe("tool.bash preliminary test suite", () => {
             expect(result.metadata.output.trim()).toBe("TEST")
           },
         })
-      }, 30000)
+      })
 
       describe("Part 4: Path Handling and File Operations", () => {
         test("command 32: powershell -Command \"Write-Host 'C:\\\\Temp\\\\test.txt'\"", async () => {
@@ -617,7 +617,7 @@ describe("tool.bash preliminary test suite", () => {
               expect(result.metadata.output).toContain("C:\\\\Temp\\\\test.txt")
             },
           })
-        }, 30000)
+        })
 
         test("command 33: powershell -Command \"Test-Path 'C:\\\\Windows'\"", async () => {
           await Instance.provide({
@@ -634,7 +634,7 @@ describe("tool.bash preliminary test suite", () => {
               expect(result.metadata.exit).toBe(0)
               expect(result.metadata.output.trim()).toBe("True")
             },
-          }, 30000)
+          })
         }, 15000)
 
         test("command 34: powershell -Command \"Get-ChildItem 'C:\\\\Program Files' | Select-Object -First 3\"", async () => {
@@ -654,7 +654,7 @@ describe("tool.bash preliminary test suite", () => {
               expect(lines.length).toBeGreaterThanOrEqual(3)
             },
           })
-        }, 30000)
+        })
 
         test("command 35: cmd /c dir %userprofile%", async () => {
           await Instance.provide({
@@ -672,7 +672,7 @@ describe("tool.bash preliminary test suite", () => {
               expect(result.metadata.output).toMatch(/\d{2}\/\d{2}\/\d{4}/) // Directory listing format
             },
           })
-        }, 30000)
+        })
 
         test("command 36: powershell -Command \"Resolve-Path ~\"", async () => {
           await Instance.provide({
@@ -690,7 +690,7 @@ describe("tool.bash preliminary test suite", () => {
               expect(result.metadata.output.trim()).toMatch(/[A-Za-z]:\\Users\\/)
             },
           })
-        }, 30000)
+        })
 
         test("command 37: powershell -Command \"(Get-Location).Path\"", async () => {
           await Instance.provide({
@@ -708,7 +708,7 @@ describe("tool.bash preliminary test suite", () => {
               expect(result.metadata.output.trim()).toMatch(/[A-Za-z]:\\.*opencode/)
             },
           })
-        }, 30000)
+        })
 
         test("command 38: powershell -Command \"Split-Path -Path 'C:\\\\Windows\\\\System32' -Leaf\"", async () => {
           await Instance.provide({
@@ -726,7 +726,7 @@ describe("tool.bash preliminary test suite", () => {
               expect(result.metadata.output.trim()).toBe("System32")
             },
           })
-        }, 30000)
+        })
 
         test("command 39: powershell -Command \"Join-Path -Path 'C:\\Data' -ChildPath 'test.txt'\"", async () => {
           await Instance.provide({
@@ -744,7 +744,7 @@ describe("tool.bash preliminary test suite", () => {
               expect(result.metadata.output.trim()).toContain("C:\\Data\\test.txt")
             },
           })
-        }, 30000)
+        })
 
         test("command 40: cmd /c cd /d %temp% && echo %cd%", async () => {
           await Instance.provide({
@@ -761,7 +761,7 @@ describe("tool.bash preliminary test suite", () => {
               expect(result.metadata.exit).toBe(0)
               expect(result.metadata.output.trim()).toMatch(/[A-Za-z]:\\.*Temp/i)
             },
-          }, 30000)
+          })
         }, 15000)
 
         describe("Part 5: Batch File Creation and Execution", () => {
@@ -834,7 +834,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(cleanupResult.metadata.exit).toBe(0)
               },
             })
-          }, 30000)
+          })
 
           test("commands 47-48: Create and execute PowerShell script", async () => {
             await Instance.provide({
@@ -876,7 +876,7 @@ describe("tool.bash preliminary test suite", () => {
                 )
               },
             })
-          }, 30000)
+          })
         })
 
         describe("Part 6: Process and Service Management", () => {
@@ -897,7 +897,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(lines.length).toBeGreaterThanOrEqual(3)
               },
             })
-          }, 30000)
+          })
 
           test("command 50: powershell -Command \"Get-Process | Where-Object {$_.Name -eq 'explorer'} | Select-Object -First 1\"", async () => {
             await Instance.provide({
@@ -915,7 +915,7 @@ describe("tool.bash preliminary test suite", () => {
                 // Explorer may or may not be running, so we just check that the command executed
               },
             })
-          }, 30000)
+          })
 
           test("command 51: powershell -Command \"Get-Service | Where-Object {$_.Status -eq 'Running'} | Select-Object -First 3\"", async () => {
             await Instance.provide({
@@ -934,7 +934,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(lines.length).toBeGreaterThanOrEqual(3)
               },
             })
-          }, 30000)
+          })
 
           test("command 52: powershell -Command \"Get-Service | Select-Object -First 3\"", async () => {
             await Instance.provide({
@@ -953,7 +953,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(lines.length).toBeGreaterThanOrEqual(3)
               },
             })
-          }, 30000)
+          })
 
           test("command 53: powershell -Command \"(Get-Process -Id $PID).ProcessName\"", async () => {
             await Instance.provide({
@@ -971,7 +971,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output.trim().length).toBeGreaterThan(0)
               },
             })
-          }, 30000)
+          })
 
           test("command 54: powershell -Command \"Get-ComputerInfo | Select-Object -First 1\"", async () => {
             await Instance.provide({
@@ -989,7 +989,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output.trim().length).toBeGreaterThan(0)
               },
             })
-          }, 30000)
+          })
 
           test("command 55: cmd /c tasklist /fo csv /nh", async () => {
             await Instance.provide({
@@ -1007,7 +1007,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output).toContain(",")
               },
             })
-          }, 30000)
+          })
 
           test("command 56: cmd /c sc query type= service state= all | find /c \"SERVICE_NAME\"", async () => {
             await Instance.provide({
@@ -1026,7 +1026,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(count).toBeGreaterThanOrEqual(0)
               },
             })
-          }, 30000)
+          })
         })
 
         describe("Part 7: Network Commands", () => {
@@ -1046,7 +1046,7 @@ describe("tool.bash preliminary test suite", () => {
                 // Connection test should succeed
               },
             })
-          }, 30000)
+          })
 
           test("command 58: cmd /c ping -n 1 127.0.0.1", async () => {
             await Instance.provide({
@@ -1064,7 +1064,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output).toContain("Reply from 127.0.0.1")
               },
             })
-          }, 30000)
+          })
 
           test("command 59: powershell -Command \"(Invoke-WebRequest -Uri 'https://www.microsoft.com' -UseBasicParsing).StatusCode\"", async () => {
             await Instance.provide({
@@ -1083,7 +1083,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(statusCode).toBe(200)
               },
             })
-          }, 30000)
+          })
 
           test("command 60: powershell -Command \"[Net.Dns]::GetHostName()\"", async () => {
             await Instance.provide({
@@ -1101,7 +1101,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output.trim().length).toBeGreaterThan(0)
               },
             })
-          }, 30000)
+          })
 
           test("command 61: cmd /c ipconfig /all | findstr /c:\"IPv4\"", async () => {
             await Instance.provide({
@@ -1119,7 +1119,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output).toContain("IPv4")
               },
             })
-          }, 30000)
+          })
 
           test("command 62: powershell -Command \"Test-NetConnection -ComputerName www.google.com -InformationLevel Quiet\"", async () => {
             await Instance.provide({
@@ -1139,7 +1139,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(["true", "false"]).toContain(output)
               },
             })
-          }, 30000)
+          })
 
           test("command 63: cmd /c netstat -an | find /c \"LISTEN\"", async () => {
             await Instance.provide({
@@ -1158,7 +1158,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(count).toBeGreaterThanOrEqual(0)
               },
             })
-          }, 30000)
+          })
         })
 
         describe("Part 8: System Information", () => {
@@ -1178,7 +1178,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output).toContain("Microsoft Windows")
               },
             })
-          }, 30000)
+          })
 
           test("command 65: powershell -Command \"Get-CimInstance Win32_ComputerSystem | Select-Object -Property Model\"", async () => {
             await Instance.provide({
@@ -1196,7 +1196,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output.trim().length).toBeGreaterThan(0)
               },
             })
-          }, 30000)
+          })
 
           test("command 66: powershell -Command \"(Get-CimInstance Win32_Processor).Name\"", async () => {
             await Instance.provide({
@@ -1214,7 +1214,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output.trim().length).toBeGreaterThan(0)
               },
             })
-          }, 30000)
+          })
 
           test("command 67: powershell -Command \"(Get-CimInstance Win32_PhysicalMemory | Measure-Object -Property Capacity -Sum).Sum / 1GB\"", async () => {
             await Instance.provide({
@@ -1233,7 +1233,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(ramGB).toBeGreaterThan(0)
               },
             })
-          }, 30000)
+          })
 
           test("command 68: powershell -Command \"Get-Disk | Select-Object -First 1\"", async () => {
             await Instance.provide({
@@ -1251,7 +1251,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output.trim().length).toBeGreaterThan(0)
               },
             })
-          }, 30000)
+          })
 
           test("command 69: cmd /c systeminfo | find /c \"OS\"", async () => {
             await Instance.provide({
@@ -1270,7 +1270,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(count).toBeGreaterThanOrEqual(0)
               },
             })
-          }, 30000)
+          })
 
           test("command 70: powershell -Command \"(Get-UICulture).Name\"", async () => {
             await Instance.provide({
@@ -1288,7 +1288,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output.trim().length).toBeGreaterThan(0)
               },
             })
-          }, 30000)
+          })
 
           test("command 71: powershell -Command \"[Environment]::Is64BitOperatingSystem\"", async () => {
             await Instance.provide({
@@ -1307,7 +1307,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(["true", "false"]).toContain(is64Bit)
               },
             })
-          }, 30000)
+          })
         })
 
         describe("Part 9: Error Handling and Exit Codes", () => {
@@ -1327,7 +1327,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output).toContain("Test error")
               },
             })
-          }, 30000)
+          })
 
           test("command 73: cmd /c dir nonexistent 2>&1", async () => {
             await Instance.provide({
@@ -1345,7 +1345,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output).toContain("File Not Found")
               },
             })
-          }, 30000)
+          })
 
           test("command 74: powershell -Command \"throw 'Intentional error'\"", async () => {
             await Instance.provide({
@@ -1363,7 +1363,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output).toContain("Intentional error")
               },
             })
-          }, 30000)
+          })
 
           test("command 75: cmd /c exit 42", async () => {
             await Instance.provide({
@@ -1380,7 +1380,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.exit).toBe(42)
               },
             })
-          }, 30000)
+          })
 
           test("command 76: powershell -Command \"$ErrorActionPreference = 'Stop'; Get-Content nonexisistent.txt\"", async () => {
             await Instance.provide({
@@ -1398,7 +1398,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output).toContain("Cannot find path")
               },
             })
-          }, 30000)
+          })
 
           test("command 77: cmd /c (exit 1) && echo success", async () => {
             await Instance.provide({
@@ -1416,7 +1416,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output).not.toContain("success")
               },
             })
-          }, 30000)
+          })
 
           test("command 78: powershell -Command \"try { 1/0 } catch { Write-Host 'Caught' }\"", async () => {
             await Instance.provide({
@@ -1434,7 +1434,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output).toContain("Caught")
               },
             })
-          }, 30000)
+          })
 
           test("command 79: cmd /c (if exist \"%temp%\\test_dir_$\" rmdir /s /q \"%temp%\\test_dir_$\") && mkdir \"%temp%\\test_dir_$\" && echo success", async () => {
             await Instance.provide({
@@ -1452,7 +1452,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output).toContain("success")
               },
             })
-          }, 30000)
+          })
         })
 
         describe("Part 10: Complex PowerShell Expressions", () => {
@@ -1472,7 +1472,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output).toContain("55")
               },
             })
-          }, 30000)
+          })
 
           test("command 81: powershell -Command \"@('a','b','c') | ForEach-Object { $_ + $_ }\"", async () => {
             await Instance.provide({
@@ -1492,7 +1492,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output).toContain("cc")
               },
             })
-          }, 30000)
+          })
 
           test("command 82: powershell -Command \"Get-ChildItem -Path 'C:\\\\Windows' -Filter *.exe -Recurse | Select-Object -First 3\"", async () => {
             await Instance.provide({
@@ -1511,7 +1511,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(lines.length).toBeGreaterThanOrEqual(3)
               },
             })
-          }, 30000)
+          })
 
           test("command 83: powershell -Command \"$hash = @{'a'=1;'b'=2;'c'=3}; $hash.GetEnumerator() | Sort-Object Value\"", async () => {
             await Instance.provide({
@@ -1531,7 +1531,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output).toContain("3")
               },
             })
-          }, 30000)
+          })
 
           test("command 84: powershell -Command \"[regex]::Matches('abcabcabc', 'a+') | ForEach-Object {$_.Value}\"", async () => {
             await Instance.provide({
@@ -1549,7 +1549,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output).toContain("a")
               },
             })
-          }, 30000)
+          })
 
           test("command 85: powershell -Command \"$arr = 1..100; ($arr | Where-Object { $_ % 7 -eq 0 } | Measure-Object).Count\"", async () => {
             await Instance.provide({
@@ -1568,7 +1568,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(count).toBeGreaterThan(0)
               },
             })
-          }, 30000)
+          })
 
           test("command 86: powershell -Command \"Get-Content $env:windir\\\\system32\\\\drivers\\\\etc\\\\hosts | Select-Object -First 5\"", async () => {
             await Instance.provide({
@@ -1587,7 +1587,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(lines.length).toBeGreaterThanOrEqual(5)
               },
             })
-          }, 30000)
+          })
 
           test("command 87: powershell -Command \"$obj = New-Object PSObject -Property @{Name='Test';Value=42}; $obj\"", async () => {
             await Instance.provide({
@@ -1606,7 +1606,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output).toContain("42")
               },
             })
-          }, 30000)
+          })
 
           test.skip("command 88: powershell -Command \"Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.MessageBox]::Show('Test')\"", async () => {
             await Instance.provide({
@@ -1642,7 +1642,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output.trim()).toBe("SGVsbG8=")
               },
             })
-          }, 30000)
+          })
 
           test("command 90: powershell -Command \"[DateTime]::Now.AddDays(-7).ToString('yyyy-MM-dd')\"", async () => {
             await Instance.provide({
@@ -1660,7 +1660,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output.trim()).toMatch(/\d{4}-\d{2}-\d{2}/)
               },
             })
-          }, 30000)
+          })
         })
 
         describe("Part 11: Long-Running Command Handling", () => {
@@ -1680,7 +1680,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output).toContain("Done")
               },
             })
-          }, 30000)
+          })
 
           test("command 92: cmd /c ping -n 3 127.0.0.1", async () => {
             await Instance.provide({
@@ -1698,7 +1698,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output).toContain("Reply from 127.0.0.1")
               },
             })
-          }, 30000)
+          })
 
           test("command 93: powershell -Command \"for ($i = 0; $i -lt 10; $i++) { Write-Host $i; Start-Sleep -Milliseconds 100 }\"", async () => {
             await Instance.provide({
@@ -1717,7 +1717,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output).toContain("9")
               },
             })
-          }, 30000)
+          })
 
           test("command 94: powershell -Command \"$null = 1..1000 | ForEach-Object { }; Write-Host 'Done'\"", async () => {
             await Instance.provide({
@@ -1734,7 +1734,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.exit).toBe(0)
                 expect(result.metadata.output).toContain("Done")
               },
-            }, 30000)
+            })
           }, 15000)
 
           test("command 95: cmd /c for /l %i in (1,1,100) do @echo %i", async () => {
@@ -1754,7 +1754,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output).toContain("100")
               },
             })
-          }, 30000)
+          })
         })
 
         describe("Part 12: Output Format Verification", () => {
@@ -1774,7 +1774,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output.trim()).toMatch(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/)
               },
             })
-          }, 30000)
+          })
 
           test("command 97: powershell -Command \"Get-Process | ConvertTo-Csv -NoTypeInformation | Select-Object -First 3\"", async () => {
             await Instance.provide({
@@ -1792,7 +1792,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output).toContain(",")
               },
             })
-          }, 30000)
+          })
 
           test("command 98: powershell -Command \"Get-Process | Select-Object Name,Id | ConvertTo-Json -Depth 1\"", async () => {
             await Instance.provide({
@@ -1811,7 +1811,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output).toContain("}")
               },
             })
-          }, 30000)
+          })
 
           test("command 99: powershell -Command \"Get-Process | Format-Table -AutoSize | Out-String -Width 100\"", async () => {
             await Instance.provide({
@@ -1829,7 +1829,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output).toContain("Name")
                 expect(result.metadata.output).toContain("Id")
               },
-            }, 30000)
+            })
           }, 15000)
 
           test("command 100: powershell -Command \"Get-Date | Format-List\"", async () => {
@@ -1848,7 +1848,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output).toContain(":")
               },
             })
-          }, 30000)
+          })
         })
 
         describe("Part 13: Environment and Configuration", () => {
@@ -1869,7 +1869,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output).toContain("Value")
               },
             })
-          }, 30000)
+          })
 
           test("command 102: powershell -Command \"$env:PATH.Length\"", async () => {
             await Instance.provide({
@@ -1887,7 +1887,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output.trim().length).toBeGreaterThan(0)
               },
             })
-          }, 30000)
+          })
 
           test("command 103: powershell -Command \"[Environment]::GetEnvironmentVariables('Machine')\"", async () => {
             await Instance.provide({
@@ -1905,7 +1905,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output.trim().length).toBeGreaterThan(0)
               },
             })
-          }, 30000)
+          })
 
           test("command 104: powershell -Command \"Get-PSReadLineOption\"", async () => {
             await Instance.provide({
@@ -1923,7 +1923,7 @@ describe("tool.bash preliminary test suite", () => {
                 // PSReadLine may not be available, but command should execute
               },
             })
-          }, 30000)
+          })
 
           test("command 105: powershell -Command \"$PSDefaultParameterValues\"", async () => {
             await Instance.provide({
@@ -1941,7 +1941,7 @@ describe("tool.bash preliminary test suite", () => {
                 // May be empty, but command should execute
               },
             })
-          }, 30000)
+          })
 
           test("command 106: powershell -Command \"Get-ExecutionPolicy\"", async () => {
             await Instance.provide({
@@ -1964,7 +1964,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output.trim().length).toBeGreaterThan(0)
               },
             })
-          }, 30000)
+          })
         })
 
         describe("Part 14: Unicode and Special Characters", () => {
@@ -1984,7 +1984,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output).toContain("Hello 世界")
               },
             })
-          }, 30000)
+          })
 
           test("command 108: powershell -Command \"Write-Host 'Emoji: 😀 🔥 🚀'\"", async () => {
             await Instance.provide({
@@ -2002,7 +2002,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output).toContain("Emoji:")
               },
             })
-          }, 30000)
+          })
 
           test("command 109: powershell -Command \"Write-Host 'Smart quotes: \"test\"'\"", async () => {
             await Instance.provide({
@@ -2020,7 +2020,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output).toContain("Smart quotes:")
               },
             })
-          }, 30000)
+          })
 
           test("command 110: powershell -Command \"Write-Host 'Special: — – …'\"", async () => {
             await Instance.provide({
@@ -2038,7 +2038,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output).toContain("Special:")
               },
             })
-          }, 30000)
+          })
 
           test("command 111: powershell -Command \"'test'\"", async () => {
             await Instance.provide({
@@ -2056,7 +2056,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output.trim().length).toBeGreaterThan(0)
               },
             })
-          }, 30000)
+          })
 
           test("command 112: powershell -Command \"Write-Host 'Cyrillic: Привет'\"", async () => {
             await Instance.provide({
@@ -2074,7 +2074,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output).toContain("Cyrillic:")
               },
             })
-          }, 30000)
+          })
 
           test("command 113: powershell -Command \"Write-Host 'Arabic: مرحبا'\"", async () => {
             await Instance.provide({
@@ -2092,7 +2092,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output).toContain("Arabic:")
               },
             })
-          }, 30000)
+          })
 
           test("command 114: powershell -Command \"Write-Host 'Tabs: a\tb\tc'\"", async () => {
             await Instance.provide({
@@ -2110,7 +2110,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output).toContain("Tabs:")
               },
             })
-          }, 30000)
+          })
         })
 
         describe("Part 15: Command Discovery and Help", () => {
@@ -2130,7 +2130,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output).toContain("Write-Host")
               },
             })
-          }, 30000)
+          })
 
           test("command 116: powershell -Command \"Get-History\"", async () => {
             await Instance.provide({
@@ -2148,7 +2148,7 @@ describe("tool.bash preliminary test suite", () => {
                 // History may be empty, but command should execute
               },
             })
-          }, 30000)
+          })
 
           test("command 117: powershell -Command \"Get-Alias\"", async () => {
             await Instance.provide({
@@ -2166,7 +2166,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output.trim().length).toBeGreaterThan(0)
               },
             })
-          }, 30000)
+          })
 
           test.skip("command 118: powershell -Command \"Update-Help -ErrorAction SilentlyContinue; Get-Help Get-Process\"", async () => {
             await Instance.provide({
@@ -2202,7 +2202,7 @@ describe("tool.bash preliminary test suite", () => {
                 // May be empty, but command should execute
               },
             })
-          }, 30000)
+          })
 
           test("command 120: powershell -Command \"Get-PSSnapin\"", async () => {
             await Instance.provide({
@@ -2220,7 +2220,7 @@ describe("tool.bash preliminary test suite", () => {
                 // May be empty, but command should execute
               },
             })
-          }, 30000)
+          })
         })
 
         describe("Part 16: Job and Background Execution", () => {
@@ -2239,7 +2239,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.exit).toBe(0)
                 expect(result.metadata.output).toContain("Job done")
               },
-            }, 30000)
+            })
           }, 15000)
 
           test("command 122: powershell -Command \"Get-Job\"", async () => {
@@ -2258,7 +2258,7 @@ describe("tool.bash preliminary test suite", () => {
                 // May be empty, but command should execute
               },
             })
-          }, 30000)
+          })
 
           test("command 123: powershell -Command \"Start-Job -ScriptBlock { 'hello' } | Wait-Job | Receive-Job\"", async () => {
             await Instance.provide({
@@ -2275,7 +2275,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.exit).toBe(0)
                 expect(result.metadata.output.trim()).toBe("hello")
               },
-            }, 30000)
+            })
           }, 120000)
 
           test("command 124: powershell -Command \"$job = Start-Job -ScriptBlock { 1..10 }; $job | Wait-Job | Receive-Job\"", async () => {
@@ -2295,7 +2295,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output).toContain("10")
               },
             })
-          }, 30000)
+          })
         })
 
         describe("Part 17: Module and Package Management", () => {
@@ -2318,7 +2318,7 @@ describe("tool.bash preliminary test suite", () => {
                    console.warn("Command 125 returned fewer modules than expected:", lines.length)
                 }
               },
-            }, 30000)
+            })
           }, 20000) // Increased timeout for module listing
 
           test("command 126: powershell -Command \"Find-Module -Name _Package_ -ErrorAction SilentlyContinue | Select-Object -First 3\"", async () => {
@@ -2342,7 +2342,7 @@ describe("tool.bash preliminary test suite", () => {
                 // May be empty if no modules found, but command should execute
               },
             })
-          }, 30000)
+          })
 
           test("command 127: powershell -Command \"Import-Module Microsoft.PowerShell.Management; Get-Command -Module Microsoft.PowerShell.Management | Select-Object -First 3\"", async () => {
             await Instance.provide({
@@ -2361,7 +2361,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(lines.length).toBeGreaterThanOrEqual(3)
               },
             })
-          }, 30000)
+          })
         })
 
         describe("Part 18: Cross-Platform Considerations", () => {
@@ -2381,7 +2381,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output.trim()).toBe("C:\\Windows")
               },
             })
-          }, 30000)
+          })
 
           test("command 129: powershell -Command \"$PSHome\"", async () => {
             await Instance.provide({
@@ -2399,7 +2399,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output.trim().length).toBeGreaterThan(0)
               },
             })
-          }, 30000)
+          })
 
           test("command 130: powershell -Command \"(Get-PSProvider FileSystem).Home\"", async () => {
             await Instance.provide({
@@ -2417,7 +2417,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output.trim().length).toBeGreaterThan(0)
               },
             })
-          }, 30000)
+          })
 
           test("command 131: powershell -Command \"[System.IO.Path]::AltDirectorySeparatorChar\"", async () => {
             await Instance.provide({
@@ -2435,7 +2435,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output.trim()).toBe("/")
               },
             })
-          }, 30000)
+          })
 
           test("command 132: powershell -Command \"[System.IO.Path]::DirectorySeparatorChar\"", async () => {
             await Instance.provide({
@@ -2453,7 +2453,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output.trim()).toBe("\\")
               },
             })
-          }, 30000)
+          })
 
           test("command 133: powershell -Command \"[System.Environment]::NewLine\"", async () => {
             await Instance.provide({
@@ -2472,7 +2472,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output).toMatch(/[\r\n]+/)
               },
             })
-          }, 30000)
+          })
         })
 
         describe("Part 19: Performance and Timing", () => {
@@ -2492,7 +2492,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output).toContain("TotalMilliseconds")
               },
             })
-          }, 30000)
+          })
 
           test("command 135: powershell -Command \"$sw = [Diagnostics.Stopwatch]::StartNew(); 1..100; $sw.Stop(); $sw.ElapsedMilliseconds\"", async () => {
             await Instance.provide({
@@ -2511,7 +2511,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(time).toBeGreaterThanOrEqual(0)
               },
             })
-          }, 30000)
+          })
 
           test("command 136: cmd /c echo %time% && ping -n 2 127.0.0.1 >nul && echo %time%", async () => {
             await Instance.provide({
@@ -2530,7 +2530,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(result.metadata.output).toMatch(/\d{1,2}:\d{2}:\d{2}\.\d{2}/)
               },
             })
-          }, 30000)
+          })
         })
 
         describe("Part 20: Combinations and Complex Scenarios", () => {
@@ -2550,7 +2550,7 @@ describe("tool.bash preliminary test suite", () => {
                 const lines = result.metadata.output.trim().split('\n').filter(line => line.trim())
                 expect(lines.length).toBeGreaterThanOrEqual(3)
               },
-            }, 30000)
+            })
           }, 20000)
 
           test("command 138: powershell -Command \"$files = Get-ChildItem -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Length -gt 1MB } | Select-Object -First 3\"", async () => {
@@ -2569,7 +2569,7 @@ describe("tool.bash preliminary test suite", () => {
                 // May not find any large files, but command should execute
               },
             })
-          }, 30000)
+          })
 
           test("command 139: powershell -Command \"$env:PATH.Split(';') | Where-Object { Test-Path $_ } | Select-Object -First 5\"", async () => {
             await Instance.provide({
@@ -2588,7 +2588,7 @@ describe("tool.bash preliminary test suite", () => {
                 expect(lines.length).toBeGreaterThanOrEqual(1)
               },
             })
-          }, 30000)
+          })
 
           test("command 140: powershell -Command \"Get-ChildItem -Path 'C:\\\\Windows\\\\System32' -Filter *.dll | Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-30) } | Select-Object -First 3\"", async () => {
             await Instance.provide({
@@ -2606,9 +2606,9 @@ describe("tool.bash preliminary test suite", () => {
                 // May not find recently modified DLLs, but command should execute
               },
             })
-          }, 30000)
+          })
         })
       })
     })
-  }, 30000)
+  })
 })
