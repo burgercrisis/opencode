@@ -538,20 +538,20 @@ describe("util.filesystem", () => {
   test("nativePath() handles MSYS flag", () => {
     const original = Flag.OPENCODE_EXPERIMENTAL_MSYS_PATHS
     try {
-      Flag.OPENCODE_EXPERIMENTAL_MSYS_PATHS = true
+      Object.defineProperty(Flag, "OPENCODE_EXPERIMENTAL_MSYS_PATHS", { value: true, configurable: true })
       expect(Filesystem.nativePath("a/b")).toBe(Filesystem.normalize("a/b"))
     } finally {
-      Flag.OPENCODE_EXPERIMENTAL_MSYS_PATHS = original
+      Object.defineProperty(Flag, "OPENCODE_EXPERIMENTAL_MSYS_PATHS", { value: original, configurable: true })
     }
   })
 
   test("nativePath() experimental flag branch", () => {
     const original = Flag.OPENCODE_EXPERIMENTAL_MSYS_PATHS
-    Flag.OPENCODE_EXPERIMENTAL_MSYS_PATHS = true
+    Object.defineProperty(Flag, "OPENCODE_EXPERIMENTAL_MSYS_PATHS", { value: true, configurable: true })
     try {
       expect(Filesystem.nativePath("a/b")).toBe(Filesystem.normalize("a/b"))
     } finally {
-      Flag.OPENCODE_EXPERIMENTAL_MSYS_PATHS = original
+      Object.defineProperty(Flag, "OPENCODE_EXPERIMENTAL_MSYS_PATHS", { value: original, configurable: true })
     }
   })
 
