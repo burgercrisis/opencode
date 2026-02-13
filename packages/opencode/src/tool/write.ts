@@ -16,12 +16,14 @@ import { assertExternalDirectory } from "./external-directory"
 const MAX_DIAGNOSTICS_PER_FILE = 20
 const MAX_PROJECT_DIAGNOSTICS_FILES = 5
 
-export const WriteTool = Tool.define("write", {
+const parameters = z.object({
+  content: z.string().describe("The content to write to the file"),
+  filePath: z.string().describe("The absolute path to the file to write (must be absolute, not relative)"),
+})
+
+export const WriteTool = Tool.define<typeof parameters, { diagnostics: any; filepath: string; exists: boolean }>("write", {
   description: DESCRIPTION,
-  parameters: z.object({
-    content: z.string().describe("The content to write to the file"),
-    filePath: z.string().describe("The absolute path to the file to write (must be absolute, not relative)"),
-  }),
+  parameters,
   async execute(params, ctx) {
     const filepath = Filesystem.normalizeNativePath(path.isAbsolute(params.filePath) ? params.filePath : path.join(Instance.directory, params.filePath))
     await assertExternalDirectory(ctx, filepath)

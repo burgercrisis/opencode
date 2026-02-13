@@ -21,7 +21,7 @@ describe("WriteTool", () => {
     mocks = {
       lspTouch: vi.spyOn(LSP, "touchFile").mockResolvedValue(undefined),
       lspDiagnostics: vi.spyOn(LSP, "diagnostics").mockResolvedValue({}),
-      busPublish: vi.spyOn(Bus, "publish").mockResolvedValue(undefined),
+      busPublish: vi.spyOn(Bus, "publish").mockResolvedValue([]),
       fileTimeAssert: vi.spyOn(FileTime, "assert").mockResolvedValue(undefined),
       fileTimeRead: vi.spyOn(FileTime, "read").mockReturnValue(undefined),
     }
@@ -37,8 +37,8 @@ describe("WriteTool", () => {
     agent: "agent",
     abort: new AbortController().signal,
     messages: [],
-    metadata: () => {},
-    ask: async () => {},
+    metadata: vi.fn(),
+    ask: vi.fn(),
   }
 
   test("writes a new file", async () => {
