@@ -60,7 +60,7 @@ describe("ToolRegistry", () => {
       }
     }] as any)
     
-    mocks.truncateOutput.mockImplementation((res) => Promise.resolve({ content: res, truncated: false }))
+    mocks.truncateOutput.mockImplementation((res: string) => Promise.resolve({ content: res, truncated: false }))
   })
 
   afterEach(() => {
