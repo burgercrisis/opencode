@@ -18,12 +18,14 @@ const parameters = z.object({
   timeout: z.number().describe("Optional timeout in seconds (max 120)").optional(),
 })
 
-export const WebFetchTool = Tool.define<typeof parameters, {} >("webfetch", {
+export const WebFetchTool = Tool.define<typeof parameters, {}>("webfetch", {
   description: DESCRIPTION,
   parameters,
   async execute(params, ctx) {
     // Validate URL
-    !params.url.startsWith("http://") && !params.url.startsWith("https://") && (() => { throw new Error("URL must start with http:// or https://") })()
+    if (!params.url.startsWith("http://") && !params.url.startsWith("https://")) {
+      throw new Error("URL must start with http:// or https://")
+    }
 
     await ctx.ask({
       permission: "webfetch",
@@ -63,14 +65,20 @@ export const WebFetchTool = Tool.define<typeof parameters, {} >("webfetch", {
 
     clearTimeout()
 
-    !response.ok && (() => { throw new Error(`Request failed with status code: ${response.status}`) })()
+    if (!response.ok) {
+      throw new Error(`Request failed with status code: ${response.status}`)
+    }
 
     // Check content length
     const contentLength = response.headers.get("content-length")
-    contentLength && parseInt(contentLength) > MAX_RESPONSE_SIZE && (() => { throw new Error("Response too large (exceeds 5MB limit)") })()
+    if (contentLength && parseInt(contentLength) > MAX_RESPONSE_SIZE) {
+      throw new Error("Response too large (exceeds 5MB limit)")
+    }
 
     const arrayBuffer = await response.arrayBuffer()
-    arrayBuffer.byteLength > MAX_RESPONSE_SIZE && (() => { throw new Error("Response too large (exceeds 5MB limit)") })()
+    if (arrayBuffer.byteLength > MAX_RESPONSE_SIZE) {
+      throw new Error("Response too large (exceeds 5MB limit)")
+    }
 
     const contentType = response.headers.get("content-type") || ""
     const mime = contentType.split(";")[0]?.trim().toLowerCase() || ""
@@ -103,17 +111,17 @@ export const WebFetchTool = Tool.define<typeof parameters, {} >("webfetch", {
     // Handle content based on requested format and actual content type
     return params.format === "markdown"
       ? {
-          output: contentType.includes("text/html") ? convertHTMLToMarkdown(content) : content,
-          title,
-          metadata: {},
-        }
+        output: contentType.includes("text/html") ? convertHTMLToMarkdown(content) : content,
+        title,
+        metadata: {},
+      }
       : params.format === "text"
-      ? {
+        ? {
           output: contentType.includes("text/html") ? await extractTextFromHTML(content) : content,
           title,
           metadata: {},
         }
-      : {
+        : {
           output: content,
           title,
           metadata: {},

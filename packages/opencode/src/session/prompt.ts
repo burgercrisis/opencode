@@ -263,9 +263,16 @@ export namespace SessionPrompt {
       SessionStatus.set(sessionID, { type: "idle" })
       return
     }
-    match.abort.abort()
+    // Atomically remove from state before aborting to prevent race conditions
+    // where loop() tries to access callbacks after abort but before deletion
+    const callbacks = match.callbacks
     delete s[sessionID]
+    match.abort.abort()
     SessionStatus.set(sessionID, { type: "idle" })
+    // Resolve any pending callbacks with cancellation error
+    for (const cb of callbacks) {
+      cb.reject(new Error("Session cancelled"))
+    }
     return
   }
 
@@ -662,11 +669,11 @@ export namespace SessionPrompt {
           ...MessageV2.toModelMessages(sessionMessages, model),
           ...(isLastStep
             ? [
-                {
-                  role: "assistant" as const,
-                  content: MAX_STEPS,
-                },
-              ]
+              {
+                role: "assistant" as const,
+                content: MAX_STEPS,
+              },
+            ]
             : []),
         ],
         tools,
@@ -1028,15 +1035,18 @@ export namespace SessionPrompt {
                 sessionID: input.sessionID,
               })
             } catch (error: unknown) {
-              log.error("failed to read MCP resource", { error, clientName, uri })
-              const message = error instanceof Error ? error.message : String(error)
+              log.error("failed to read MCP resource", { error, clientName, uri: uri.slice(0, 100) })
+              // Sanitize error message to avoid leaking internal paths or sensitive info
+              const sanitizedMessage = error instanceof Error
+                ? error.message.replace(/\/[^\s]*\/[^\s]*/g, "[path]").slice(0, 200)
+                : "Unknown error"
               pieces.push({
                 id: Identifier.ascending("part"),
                 messageID: info.id,
                 sessionID: input.sessionID,
                 type: "text",
                 synthetic: true,
-                text: `Failed to read MCP resource ${part.filename}: ${message}`,
+                text: `Failed to read MCP resource ${part.filename}: ${sanitizedMessage}`,
               })
             }
 
@@ -1143,8 +1153,8 @@ export namespace SessionPrompt {
                       messageID: info.id,
                       extra: { bypassCwdCheck: true, model },
                       messages: [],
-                      metadata: async () => {},
-                      ask: async () => {},
+                      metadata: async () => { },
+                      ask: async () => { },
                     }
                     const result = await t.execute(args, readCtx)
                     pieces.push({
@@ -1205,8 +1215,8 @@ export namespace SessionPrompt {
                   messageID: info.id,
                   extra: { bypassCwdCheck: true },
                   messages: [],
-                  metadata: async () => {},
-                  ask: async () => {},
+                  metadata: async () => { },
+                  ask: async () => { },
                 }
                 const result = await ReadTool.init().then((t) => t.execute(args, listCtx))
                 return [
@@ -1836,19 +1846,19 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     const isSubtask = (agent.mode === "subagent" && command.subtask !== false) || command.subtask === true
     const parts = isSubtask
       ? [
-          {
-            type: "subtask" as const,
-            agent: agent.name,
-            description: command.description ?? "",
-            command: input.command,
-            model: {
-              providerID: taskModel.providerID,
-              modelID: taskModel.modelID,
-            },
-            // TODO: how can we make task tool accept a more complex input?
-            prompt: templateParts.find((y) => y.type === "text")?.text ?? "",
+        {
+          type: "subtask" as const,
+          agent: agent.name,
+          description: command.description ?? "",
+          command: input.command,
+          model: {
+            providerID: taskModel.providerID,
+            modelID: taskModel.modelID,
           },
-        ]
+          // TODO: how can we make task tool accept a more complex input?
+          prompt: templateParts.find((y) => y.type === "text")?.text ?? "",
+        },
+      ]
       : [...templateParts, ...(input.parts ?? [])]
 
     const userAgent = isSubtask ? (input.agent ?? (await Agent.defaultAgent())) : agentName

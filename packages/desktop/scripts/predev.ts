@@ -12,9 +12,19 @@ if (process.platform === "win32") {
 }
 
 const sidecarConfig = getCurrentSidecar(RUST_TARGET)
-const binaryPath = windowsify(`../opencode/dist/${sidecarConfig.ocBinary}/bin/opencode`)
 
-await (sidecarConfig.ocBinary.includes("-baseline") ? $`cd ../opencode && bun run build --single --baseline` : $`cd ../opencode && bun run build --single`)
+// Skip baseline build on Windows due to Bun download issues - use regular build instead
+const isWindows = process.platform === "win32"
+const useBaseline = sidecarConfig.ocBinary.includes("-baseline") && !isWindows
+
+// Use correct binary name based on whether we're doing baseline build
+const binaryName = isWindows && sidecarConfig.ocBinary.includes("-baseline")
+  ? sidecarConfig.ocBinary.replace("-baseline", "")
+  : sidecarConfig.ocBinary
+
+const binaryPath = windowsify(`../opencode/dist/${binaryName}/bin/opencode`)
+
+await (useBaseline ? $`cd ../opencode && bun run build --single --baseline` : $`cd ../opencode && bun run build --single`)
 await copyBinaryToSidecarFolder(binaryPath, RUST_TARGET)
 
 // Give Windows/Antivirus a moment to release the file handle

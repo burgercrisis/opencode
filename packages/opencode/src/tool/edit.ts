@@ -75,7 +75,7 @@ export const EditTool = Tool.define("edit", {
       }
 
       const file = Bun.file(filePath)
-      const stats = await file.stat().catch(() => {})
+      const stats = await file.stat().catch(() => { })
       if (!stats) throw new Error(`File ${filePath} not found`)
       if (stats.isDirectory()) throw new Error(`Path is a directory, not a file: ${filePath}`)
       await FileTime.assert(ctx.sessionID, filePath)
@@ -163,23 +163,42 @@ const MULTIPLE_CANDIDATES_SIMILARITY_THRESHOLD = 0.3
 
 /**
  * Levenshtein distance algorithm implementation
+ * Optimized with maximum input length validation to prevent O(n²) memory issues
  */
 function levenshtein(a: string, b: string): number {
+  const MAX_LENGTH = 1000 // Prevent excessive memory allocation
+
   // Handle empty strings
   if (a === "" || b === "") {
     return Math.max(a.length, b.length)
   }
-  const matrix = Array.from({ length: a.length + 1 }, (_, i) =>
-    Array.from({ length: b.length + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0)),
-  )
 
-  for (let i = 1; i <= a.length; i++) {
-    for (let j = 1; j <= b.length; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1
-      matrix[i][j] = Math.min(matrix[i - 1][j] + 1, matrix[i][j - 1] + 1, matrix[i - 1][j - 1] + cost)
+  // Truncate inputs if too long (preserves approximate matching behavior)
+  const strA = a.length > MAX_LENGTH ? a.slice(0, MAX_LENGTH) : a
+  const strB = b.length > MAX_LENGTH ? b.slice(0, MAX_LENGTH) : b
+
+  const lenA = strA.length
+  const lenB = strB.length
+
+  // Use two-row optimization to reduce memory from O(n²) to O(n)
+  let prevRow = Array.from({ length: lenB + 1 }, (_, j) => j)
+  let currRow = new Array(lenB + 1).fill(0)
+
+  for (let i = 1; i <= lenA; i++) {
+    currRow[0] = i
+    for (let j = 1; j <= lenB; j++) {
+      const cost = strA[i - 1] === strB[j - 1] ? 0 : 1
+      currRow[j] = Math.min(
+        prevRow[j] + 1,      // deletion
+        currRow[j - 1] + 1,  // insertion
+        prevRow[j - 1] + cost // substitution
+      )
     }
+    // Swap rows
+    [prevRow, currRow] = [currRow, prevRow]
   }
-  return matrix[a.length][b.length]
+
+  return prevRow[lenB]
 }
 
 export const SimpleReplacer: Replacer = function* (_content, find) {
@@ -362,8 +381,17 @@ export const BlockAnchorReplacer: Replacer = function* (content, find) {
 }
 
 export const WhitespaceNormalizedReplacer: Replacer = function* (content, find) {
+  // Limit pattern complexity to prevent ReDoS attacks
+  const MAX_PATTERN_LENGTH = 1000
+  const MAX_WORD_COUNT = 100
+
   const normalizeWhitespace = (text: string) => text.replace(/\s+/g, " ").trim()
   const normalizedFind = normalizeWhitespace(find)
+
+  // Reject overly complex patterns
+  if (find.length > MAX_PATTERN_LENGTH) {
+    throw new Error(`Search pattern too long: ${find.length} characters (max: ${MAX_PATTERN_LENGTH})`)
+  }
 
   // Handle single line matches
   const lines = content.split("\n")
@@ -377,7 +405,7 @@ export const WhitespaceNormalizedReplacer: Replacer = function* (content, find) 
       if (normalizedLine.includes(normalizedFind)) {
         // Find the actual substring in the original line that matches
         const words = find.trim().split(/\s+/)
-        if (words.length > 0) {
+        if (words.length > 0 && words.length <= MAX_WORD_COUNT) {
           const pattern = words.map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+")
           try {
             const regex = new RegExp(pattern)
@@ -395,7 +423,7 @@ export const WhitespaceNormalizedReplacer: Replacer = function* (content, find) 
 
   // Handle multi-line matches
   const findLines = find.split("\n")
-  if (findLines.length > 1) {
+  if (findLines.length > 1 && findLines.length <= MAX_WORD_COUNT) {
     for (let i = 0; i <= lines.length - findLines.length; i++) {
       const block = lines.slice(i, i + findLines.length)
       if (normalizeWhitespace(block.join("\n")) === normalizedFind) {

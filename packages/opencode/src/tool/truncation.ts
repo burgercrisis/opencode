@@ -38,7 +38,7 @@ export namespace Truncate {
     await entries.reduce(async (acc, entry) => {
       await acc
       return Identifier.timestamp(entry) < cutoff
-        ? fs.unlink(path.join(DIR, entry)).catch(() => {})
+        ? fs.unlink(path.join(DIR, entry)).catch(() => { })
         : Promise.resolve()
     }, Promise.resolve())
   }
@@ -53,49 +53,77 @@ export namespace Truncate {
     const lines = text.split("\n")
     const totalBytes = Buffer.byteLength(text, "utf-8")
 
-    return (lines.length <= maxLines && totalBytes <= maxBytes)
-      ? { content: text, truncated: false }
-      : (async () => {
-          const process = (
-            items: string[],
-            acc: string[],
-            bytes: number,
-          ): { out: string[]; bytes: number; hitBytes: boolean } => {
-            const item = items[0]
-            return item === undefined || acc.length >= maxLines
-              ? { out: acc, bytes, hitBytes: false }
-              : (() => {
-                  const size = Buffer.byteLength(item, "utf-8") + (acc.length > 0 ? 1 : 0)
-                  return bytes + size > maxBytes
-                    ? { out: acc, bytes, hitBytes: true }
-                    : process(
-                        items.slice(1),
-                        direction === "head" ? [...acc, item] : [item, ...acc],
-                        bytes + size,
-                      )
-                })()
-          }
+    if (lines.length <= maxLines && totalBytes <= maxBytes) {
+      return { content: text, truncated: false }
+    }
 
-          const { out, bytes, hitBytes } = process(direction === "head" ? lines : [...lines].reverse(), [], 0)
-          const id = Identifier.ascending("tool")
-          const filepath = path.join(DIR, id)
-          const normalizedText = text.replace(/\r\n/g, '\n')
-          await Bun.write(Bun.file(filepath), normalizedText)
+    // Iterative processing to avoid recursion limits and stack overflow
+    const processIterative = (
+      items: string[],
+      direction: "head" | "tail",
+    ): { out: string[]; bytes: number; hitBytes: boolean } => {
+      const out: string[] = []
+      let bytes = 0
+      let hitBytes = false
 
-          const removed = hitBytes ? totalBytes - bytes : lines.length - out.length
-          const unit = hitBytes ? "bytes" : "lines"
-          const preview = out.join("\n")
-          const hint = hasTaskTool(agent)
-            ? `The tool call succeeded but the output was truncated. Full output saved to: ${filepath}\nUse the Task tool to have explore agent process this file with Grep and Read (with offset/limit). Do NOT read the full file yourself - delegate to save context.`
-            : `The tool call succeeded but the output was truncated. Full output saved to: ${filepath}\nUse Grep to search the full content or Read with offset/limit to view specific sections.`
+      const processItems = direction === "head" ? items : [...items].reverse()
 
-          return {
-            content: direction === "head"
-              ? `${preview}\n\n...${removed} ${unit} truncated...\n\n${hint}`
-              : `...${removed} ${unit} truncated...\n\n${hint}\n\n${preview}`,
-            truncated: true,
-            outputPath: filepath,
-          }
-        })()
+      for (const item of processItems) {
+        if (out.length >= maxLines) break
+
+        const size = Buffer.byteLength(item, "utf-8") + (out.length > 0 ? 1 : 0)
+        if (bytes + size > maxBytes) {
+          hitBytes = true
+          break
+        }
+
+        if (direction === "head") {
+          out.push(item)
+        } else {
+          out.unshift(item)
+        }
+        bytes += size
+      }
+
+      return { out, bytes, hitBytes }
+    }
+
+    const { out, bytes, hitBytes } = processIterative(lines, direction)
+    const id = Identifier.ascending("tool")
+    const filepath = path.join(DIR, id)
+    const normalizedText = text.replace(/\r\n/g, '\n')
+
+    // Handle potential write errors (disk full, permissions, etc.)
+    try {
+      await Bun.write(Bun.file(filepath), normalizedText)
+    } catch (writeError) {
+      log.error("Failed to write truncated output to file", { filepath, error: writeError })
+      // Return truncated content without file reference if write fails
+      const removed = hitBytes ? totalBytes - bytes : lines.length - out.length
+      const unit = hitBytes ? "bytes" : "lines"
+      const preview = out.join("\n")
+      return {
+        content: direction === "head"
+          ? `${preview}\n\n...${removed} ${unit} truncated...`
+          : `...${removed} ${unit} truncated...\n\n${preview}`,
+        truncated: true,
+        outputPath: undefined,
+      }
+    }
+
+    const removed = hitBytes ? totalBytes - bytes : lines.length - out.length
+    const unit = hitBytes ? "bytes" : "lines"
+    const preview = out.join("\n")
+    const hint = hasTaskTool(agent)
+      ? `The tool call succeeded but the output was truncated. Full output saved to: ${filepath}\nUse the Task tool to have explore agent process this file with Grep and Read (with offset/limit). Do NOT read the full file yourself - delegate to save context.`
+      : `The tool call succeeded but the output was truncated. Full output saved to: ${filepath}\nUse Grep to search the full content or Read with offset/limit to view specific sections.`
+
+    return {
+      content: direction === "head"
+        ? `${preview}\n\n...${removed} ${unit} truncated...\n\n${hint}`
+        : `...${removed} ${unit} truncated...\n\n${hint}\n\n${preview}`,
+      truncated: true,
+      outputPath: filepath,
+    }
   }
 }
