@@ -1,5 +1,5 @@
 import z from "zod"
-import { spawn } from "child_process"
+import { spawn } from "bun"
 import { Tool } from "./tool"
 import path from "path"
 import DESCRIPTION from "./bash.txt"
