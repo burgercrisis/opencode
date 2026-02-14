@@ -1,18 +1,16 @@
 import { realpathSync } from "fs"
-import path, { 
-  dirname as pathDirname, 
-  join as pathJoin, 
-  relative as pathRelative, 
-  isAbsolute as pathIsAbsolute, 
-  resolve as pathResolve, 
-  normalize as pathNormalize 
-} from "path"
+import path, {
+  dirname as pathDirname,
+  join as pathJoin,
+  relative as pathRelative,
+  isAbsolute as pathIsAbsolute,
+  resolve as pathResolve,
+} from "node:path"
+import { normalize as pathNormalize } from "node:path"
 import { Flag } from "@/flag/flag"
 
-import { normalize as _normalize } from "@opencode-ai/util/path"
-
 export namespace Filesystem {
-  export const normalize = _normalize
+  export const normalize = pathNormalize
   export const exists = (p: string) =>
     Bun.file(p)
       .stat()
@@ -47,7 +45,7 @@ export namespace Filesystem {
   export function nativePath(p: string): string {
     const normalized = normalize(p)
     if (process.platform !== "win32") return normalized
-    if (Flag.OPENCODE_EXPERIMENTAL_MSYS_PATHS) {
+    if (Flag.OPENCODE_EXPERIMENTAL_LSP_TYPES) {
       return normalized
     }
     return normalized.replace(/\//g, "\\")
@@ -86,50 +84,50 @@ export namespace Filesystem {
    */
   export function normalizeGitPath(p: string, forGit: boolean = true): string {
     if (!p) return p
-    
+
     // Resolve to absolute path to eliminate relative components
     const absolute = pathIsAbsolute(p) ? p : pathResolve(p)
-    
+
     // Normalize path separators for consistency
     const normalized = pathNormalize(absolute)
-    
+
     // For git commands, always use forward slashes regardless of platform
     // Git internally always uses forward slashes
     if (forGit) {
       return normalized.replace(/\\/g, "/")
     }
-    
+
     return normalized
   }
-  
+
   /**
    * Normalize path for platform-native file operations.
    * Uses backslashes on Windows, forward slashes elsewhere.
    */
   export function normalizeNativePath(path: string): string {
     if (!path) return path
-    
+
     const normalized = pathNormalize(path)
-    
+
     // Convert to platform-native separators
     if (process.platform === "win32") {
       return normalized.replace(/\//g, "\\")
     }
-    
+
     return normalized
   }
-  
+
   /**
    * Get canonical project directory path for consistent project ID generation.
    * Handles different path representations (relative, absolute, network paths).
    */
   export function getCanonicalPath(path: string): string {
     if (!path) return path
-    
+
     try {
       // Resolve to absolute path and get real path (resolves symlinks, case, etc.)
       const absolute = pathResolve(path)
-      
+
       if (process.platform === "win32") {
         // On Windows, use realpath to get canonical casing and resolve symlinks.
         // realpathSync.native returns \\?\ prefix for long paths, which we strip
@@ -144,36 +142,36 @@ export namespace Filesystem {
       return pathResolve(path)
     }
   }
-  
+
   /**
    * Validate filename for Unicode and special character safety.
    * Returns true if filename is safe across all platforms.
    */
   export function isValidFilename(filename: string): boolean {
     if (!filename || typeof filename !== 'string') return false
-    
+
     // Check for null bytes and control characters
     if (filename.includes('\0')) return false
     if (/[\x00-\x1f\x7f]/.test(filename)) return false // Control characters
-    
+
     // Check for path separators (filename should not be a path)
     if (/[\\/]/.test(filename)) return false
 
     // Check length limits (255 is common limit)
     if (filename.length > 255) return false
-    
+
     // Check for reserved names on Windows
     const reservedNames = ['CON', 'PRN', 'AUX', 'NUL', 'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9', 'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9']
     const baseName = filename.split(/[\\/]/).pop() || ''
     const baseNameWithoutExt = baseName.split('.')[0]
     const baseNameUpper = baseNameWithoutExt.toUpperCase()
     if (reservedNames.includes(baseNameUpper)) return false
-    
+
     // Check for trailing spaces or periods on Windows (not allowed)
     if (process.platform === "win32") {
       if (baseName.endsWith(' ') || baseName.endsWith('.')) return false
     }
-    
+
     // Test UTF-8 encoding/decoding roundtrip
     try {
       const encoded = Buffer.from(filename, 'utf-8').toString('utf-8')
@@ -181,10 +179,10 @@ export namespace Filesystem {
     } catch {
       return false
     }
-    
+
     return true
   }
-  
+
   /**
    * Check if a file is likely binary based on its content.
    * Returns true if file appears to be binary data.
@@ -192,12 +190,12 @@ export namespace Filesystem {
   export async function isBinaryFile(p: string): Promise<boolean> {
     const file = Bun.file(p)
     if (!(await file.exists())) return true // Fail safe
-    
+
     const bytes = new Uint8Array(await file.arrayBuffer())
-    
+
     // Check first 8000 bytes for binary indicators
     const sample = Math.min(bytes.length, 8000)
-    
+
     const check = (i: number, nulls: number): boolean => {
       if (i >= sample) return false
       if (bytes[i] === 0) {
@@ -207,10 +205,10 @@ export namespace Filesystem {
       if (bytes[i] < 32 && bytes[i] !== 9 && bytes[i] !== 10 && bytes[i] !== 13) return true
       return check(i + 1, nulls)
     }
-    
+
     return check(0, 0)
   }
-  
+
   /**
    * Validate that a filepath is safe and within project boundaries.
    * Prevents directory traversal attacks and validates path format.
@@ -218,10 +216,10 @@ export namespace Filesystem {
   export function validateFilepath(p: string, root: string): { valid: boolean; reason?: string } {
     if (!p) return { valid: false, reason: 'Empty filepath' }
     if (p.includes('\0')) return { valid: false, reason: 'Null bytes in filepath' }
-    
+
     const abs = pathIsAbsolute(p) ? p : pathResolve(root, p)
     if (!contains(root, abs)) return { valid: false, reason: 'Path outside project directory' }
-    
+
     return { valid: true }
   }
 
@@ -291,8 +289,8 @@ export namespace Filesystem {
       )
       const nextAcc = [...acc, ...matches]
       if (stop) {
-      if (normalize(stop) === normalize(curr)) return nextAcc
-    }
+        if (normalize(stop) === normalize(curr)) return nextAcc
+      }
       const next = dirname(curr)
       if (normalize(next) === normalize(curr)) return nextAcc
       return scan(next, nextAcc)
