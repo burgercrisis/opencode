@@ -1,7 +1,8 @@
 import { realpathSync } from "fs"
-import { dirname, join, relative } from "path"
+import { dirname, join, relative, normalize as pathNormalize } from "path"
 
 export namespace Filesystem {
+  export const normalize = pathNormalize
   export const exists = (p: string) =>
     Bun.file(p)
       .stat()
