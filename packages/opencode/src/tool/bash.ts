@@ -1,5 +1,6 @@
+import { TextDecoder } from "util"
 import z from "zod"
-import { spawn } from "child_process"
+import { spawn } from "bun"
 import { Tool } from "./tool"
 import path from "path"
 import DESCRIPTION from "./bash.txt"
@@ -185,85 +186,100 @@ export const BashTool = Tool.define("bash", async () => {
         },
       })
 
-      const append = (chunk: Buffer) => {
-        output += chunk.toString()
+      const decoder = new TextDecoder()
+      const read = async (reader: ReadableStreamDefaultReader<Uint8Array>, acc: string): Promise<string> => {
+        const result = await reader.read()
+        const chunk = result.value ? decoder.decode(result.value) : ""
+        const newAcc = acc + chunk
         ctx.metadata({
           metadata: {
             // truncate the metadata to avoid GIANT blobs of data (has nothing to do w/ what agent can access)
-            output: output.length > MAX_METADATA_LENGTH ? output.slice(0, MAX_METADATA_LENGTH) + "\n\n..." : output,
+            output: newAcc.length > MAX_METADATA_LENGTH ? newAcc.slice(0, MAX_METADATA_LENGTH) + "\n\n..." : newAcc,
             description: params.description,
           },
+        } as any,
         })
+if (result.done) return acc
+return read(reader, newAcc)
       }
 
-      proc.stdout?.on("data", append)
-      proc.stderr?.on("data", append)
+proc.stdout?.pipeTo(new WritableStream({
+  write(chunk) {
+    append(chunk)
+  }
+}))
 
-      let timedOut = false
-      let aborted = false
-      let exited = false
+proc.stderr?.pipeTo(new WritableStream({
+  write(chunk) {
+    append(chunk)
+  }
+}))
 
-      const kill = () => Shell.killTree(proc, { exited: () => exited })
+let timedOut = false
+let aborted = false
+let exited = false
 
-      if (ctx.abort.aborted) {
-        aborted = true
-        await kill()
-      }
+const kill = () => Shell.killTree(proc as any)
 
-      const abortHandler = () => {
-        aborted = true
-        void kill()
-      }
+if (ctx.abort.aborted) {
+  aborted = true
+  await kill()
+}
 
-      ctx.abort.addEventListener("abort", abortHandler, { once: true })
+const abortHandler = () => {
+  aborted = true
+  void kill()
+}
 
-      const timeoutTimer = setTimeout(() => {
-        timedOut = true
-        void kill()
-      }, timeout + 100)
+ctx.abort.addEventListener("abort", abortHandler, { once: true })
 
-      await new Promise<void>((resolve, reject) => {
-        const cleanup = () => {
-          clearTimeout(timeoutTimer)
-          ctx.abort.removeEventListener("abort", abortHandler)
-        }
+const timeoutTimer = setTimeout(() => {
+  timedOut = true
+  void kill()
+}, timeout + 100)
 
-        proc.once("exit", () => {
-          exited = true
-          cleanup()
-          resolve()
-        })
+await new Promise<void>((resolve, reject) => {
+  const cleanup = () => {
+    clearTimeout(timeoutTimer)
+    ctx.abort.removeEventListener("abort", abortHandler)
+  }
 
-        proc.once("error", (error) => {
-          exited = true
-          cleanup()
-          reject(error)
-        })
-      })
+  proc.on("exit", () => {
+    exited = true
+    cleanup()
+    resolve()
+  })
 
-      const resultMetadata: string[] = []
+  proc.on("error", (error) => {
+    exited = true
+    cleanup()
+    reject(error)
+  })
+})
 
-      if (timedOut) {
-        resultMetadata.push(`bash tool terminated command after exceeding timeout ${timeout} ms`)
-      }
+const resultMetadata: string[] = []
 
-      if (aborted) {
-        resultMetadata.push("User aborted the command")
-      }
+if (timedOut) {
+  resultMetadata.push(`bash tool terminated command after exceeding timeout ${timeout} ms`)
+}
 
-      if (resultMetadata.length > 0) {
-        output += "\n\n<bash_metadata>\n" + resultMetadata.join("\n") + "\n</bash_metadata>"
-      }
+if (aborted) {
+  resultMetadata.push("User aborted the command")
+}
 
-      return {
-        title: params.description,
-        metadata: {
-          output: output.length > MAX_METADATA_LENGTH ? output.slice(0, MAX_METADATA_LENGTH) + "\n\n..." : output,
-          exit: proc.exitCode,
-          description: params.description,
-        },
-        output,
-      }
+if (resultMetadata.length > 0) {
+  output += "\n\n<bash_metadata>\n" + resultMetadata.join("\n") + "\n</bash_metadata>"
+}
+
+return {
+  title: params.description,
+  metadata: {
+    output: output.length > MAX_METADATA_LENGTH ? output.slice(0, MAX_METADATA_LENGTH) + "\n\n..." : output,
+    exit: proc.exitCode,
+    description: params.description,
+  },
+  output,
+}
     },
   }
 })
