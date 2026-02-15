@@ -13,8 +13,11 @@ if (process.platform === "win32") {
 
 const sidecarConfig = getCurrentSidecar(RUST_TARGET)
 
-// Use baseline builds on Windows due to Bun download issues
-const useBaseline = process.platform !== "win32"
+// Use baseline builds based on Windows baseline build configuration
+// This matches build script logic exactly: process.env.OPENCODE_SKIP_WINDOWS_BASELINE !== "false"
+// On Windows, this defaults to skipping baseline unless explicitly overridden
+const SKIP_WINDOWS_BASELINE = process.env.OPENCODE_SKIP_WINDOWS_BASELINE !== "false"
+const useBaseline = SKIP_WINDOWS_BASELINE
 
 // Use correct binary name based on whether we're doing baseline build
 const binaryName = process.platform === "win32" && sidecarConfig.ocBinary.includes("-baseline")
