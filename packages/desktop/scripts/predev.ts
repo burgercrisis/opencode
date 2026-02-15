@@ -13,12 +13,11 @@ if (process.platform === "win32") {
 
 const sidecarConfig = getCurrentSidecar(RUST_TARGET)
 
-// Skip baseline build on Windows due to Bun download issues - use regular build instead
-const isWindows = process.platform === "win32"
-const useBaseline = sidecarConfig.ocBinary.includes("-baseline") && !isWindows
+// Use baseline builds on Windows due to Bun download issues
+const useBaseline = process.platform !== "win32"
 
 // Use correct binary name based on whether we're doing baseline build
-const binaryName = isWindows && sidecarConfig.ocBinary.includes("-baseline")
+const binaryName = process.platform === "win32" && sidecarConfig.ocBinary.includes("-baseline")
   ? sidecarConfig.ocBinary.replace("-baseline", "")
   : sidecarConfig.ocBinary
 
