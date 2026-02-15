@@ -27,7 +27,20 @@ console.log("Generated models-snapshot.ts")
 
 const singleFlag = process.argv.includes("--single")
 const baselineFlag = process.argv.includes("--baseline")
+// Configuration for Windows baseline build behavior
+// Can be overridden via environment variable: OPENCODE_SKIP_WINDOWS_BASELINE=true
+const SKIP_WINDOWS_BASELINE = process.env.OPENCODE_SKIP_WINDOWS_BASELINE !== "false"
+
 const skipInstall = process.argv.includes("--skip-install")
+
+export type BuildTarget = {
+  os: string
+  arch: "arm64" | "x64"
+  abi?: "musl"
+  avx2?: false
+}
+
+export { allTargets }
 
 const allTargets: {
   os: string
@@ -96,9 +109,18 @@ const targets = singleFlag
 
     // When building for the current platform, prefer a single native binary by default.
     // Baseline binaries require additional Bun artifacts and can be flaky to download.
+    // 
+    // Windows-specific limitation: Baseline builds on Windows require additional Bun artifacts
+    // that can be unreliable to download due to network issues, platform-specific
+    // dependencies, or missing Visual Studio Build Tools. This can cause build failures
+    // or long download times that block the development workflow.
+    // 
+    // This behavior can be overridden by setting OPENCODE_SKIP_WINDOWS_BASELINE=false
+    // environment variable if you have a reliable network connection and required dependencies.
     if (item.avx2 === false) {
       // Skip baseline builds on Windows due to Bun download issues
-      if (process.platform === "win32") {
+      if (process.platform === "win32" && SKIP_WINDOWS_BASELINE) {
+        console.log(`Skipping baseline build for Windows (target: ${item.os}-${item.arch}). Set OPENCODE_SKIP_WINDOWS_BASELINE=false to override.`)
         return false
       }
       return baselineFlag
@@ -142,8 +164,8 @@ for (const item of targets) {
   const workerRelativePath = path.relative(dir, parserWorker).replaceAll("\\", "/")
 
   await Bun.build({
-      conditions: ["browser", "import", "default"],
-      tsconfig: "./tsconfig.json",
+    conditions: ["browser", "import", "default"],
+    tsconfig: "./tsconfig.json",
     plugins: [solidPlugin],
     sourcemap: "external",
     compile: {
