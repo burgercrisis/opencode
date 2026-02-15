@@ -398,8 +398,14 @@ function getWorker() {
       if (!promise) return
       pending.delete(id)
       if (type === "enhanced") promise.resolve(html)
+      else if (type === "theme-initialized") promise.resolve(html)
       else promise.reject(new Error(error))
     }
+
+    // Initialize the worker with theme data
+    const initId = nextId++
+    pending.set(initId, { resolve: () => { }, reject: () => { } })
+    worker.postMessage({ type: "init", id: initId, theme: null })
   }
   return worker
 }
