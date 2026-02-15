@@ -1057,7 +1057,7 @@ export namespace SessionPrompt {
               log.error("failed to read MCP resource", { error, clientName, uri: uri.slice(0, 100) })
               // Sanitize error message to avoid leaking internal paths or sensitive info
               const sanitizedMessage = error instanceof Error
-                ? error.message.replace(/\/[^\s]*\/[^\s]*/g, "[path]").slice(0, 200)
+                ? error.message.replace(/(?:\/[a-zA-Z0-9_\-\.]+)+(?:\/[a-zA-Z0-9_\-\.]+)*\/[a-zA-Z0-9_\-\.]+\.[a-zA-Z0-9_\-\.]+|(?:[A-Za-z]:[\\/][a-zA-Z0-9_\-\.]+)+(?:[\\/][a-zA-Z0-9_\-\.]+)*[\\/][a-zA-Z0-9_\-\.]+\.[a-zA-Z0-9_\-\.]+/g, "[path]").slice(0, 200)
                 : "Unknown error"
               pieces.push({
                 id: Identifier.ascending("part"),
