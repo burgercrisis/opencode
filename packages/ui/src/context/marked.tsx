@@ -384,28 +384,62 @@ export interface MarkedContextValue {
   enhance?(html: string): Promise<string>
 }
 
+interface WorkerMessage {
+  type: "init" | "enhance"
+  id: number
+  html?: string
+  theme?: any
+}
+
+interface WorkerResponse {
+  id: number
+  type: "enhanced" | "theme-initialized" | "error"
+  html?: string
+  error?: string
+}
+
 let worker: Worker | undefined
 const pending = new Map<number, { resolve: (html: string) => void; reject: (err: any) => void }>()
 let nextId = 0
+let workerReady = false
 
 function getWorker() {
   if (typeof window === "undefined") return undefined
   if (!worker) {
     worker = new Worker(MarkedWorkerUrl, { type: "module" })
     worker.onmessage = (e) => {
-      const { id, type, html, error } = e.data
+      const { id, type, html, error } = e.data as WorkerResponse
       const promise = pending.get(id)
       if (!promise) return
       pending.delete(id)
-      if (type === "enhanced") promise.resolve(html)
-      else if (type === "theme-initialized") promise.resolve(html)
-      else promise.reject(new Error(error))
+
+      if (type === "enhanced") {
+        promise.resolve(html || "")
+      } else if (type === "theme-initialized") {
+        workerReady = true
+        promise.resolve(html || "")
+      } else if (type === "error") {
+        promise.reject(new Error(error || "Unknown worker error"))
+      }
     }
 
-    // Initialize the worker with theme data
-    const initId = nextId++
-    pending.set(initId, { resolve: () => { }, reject: () => { } })
-    worker.postMessage({ type: "init", id: initId, theme: null })
+    worker.onerror = (error) => {
+      console.error('Worker error:', error)
+      // Reject all pending promises on worker error
+      pending.forEach((promise, id) => {
+        promise.reject(new Error('Worker encountered an error'))
+        pending.delete(id)
+      })
+    }
+
+    // Wait for worker to be ready before sending init message
+    setTimeout(() => {
+      if (worker && !workerReady) {
+        const initId = nextId++
+        pending.set(initId, { resolve: () => { }, reject: () => { } })
+        worker.postMessage({ type: "init", id: initId, html: undefined, theme: undefined } as WorkerMessage)
+      }
+    }, 100) // Small delay to ensure worker is ready
   }
   return worker
 }
@@ -413,10 +447,22 @@ function getWorker() {
 async function enhanceInWorker(html: string): Promise<string> {
   const w = getWorker()
   if (!w) return html
+
+  // Wait for worker to be ready if it's still initializing
+  if (!workerReady) {
+    await new Promise(resolve => {
+      const checkReady = () => {
+        if (workerReady) resolve(undefined)
+        else setTimeout(checkReady, 10)
+      }
+      checkReady()
+    })
+  }
+
   const id = nextId++
   return new Promise((resolve, reject) => {
     pending.set(id, { resolve, reject })
-    w.postMessage({ type: "enhance", id, html })
+    w.postMessage({ type: "enhance", id, html } as WorkerMessage)
   })
 }
 

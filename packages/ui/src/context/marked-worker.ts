@@ -1,6 +1,20 @@
 import katex from "katex"
 import { bundledLanguages, type BundledLanguage, type BuiltinTheme } from "shiki"
 
+interface WorkerMessage {
+  type: "init" | "enhance"
+  id: number
+  html?: string
+  theme?: any
+}
+
+interface WorkerResponse {
+  id: number
+  type: "enhanced" | "theme-initialized" | "error"
+  html?: string
+  error?: string
+}
+
 function renderMathInText(text: string): string {
   let result = text
 
@@ -12,20 +26,22 @@ function renderMathInText(text: string): string {
         displayMode: true,
         throwOnError: false,
       })
-    } catch {
+    } catch (error) {
+      console.error("Math rendering failed:", error)
       return `$$${math}$$`
     }
   })
 
-  // Inline math: $...$
-  const inlineMathRegex = /(?<!\$)\$(?!\$)((?:[^$\\]|\\.)+?)\$(?!\$)/g
+  // Inline math: $...$ (optimized regex without lookbehind)
+  const inlineMathRegex = /\$([^$\n\r][^$\n\r]*?)\$/g
   result = result.replace(inlineMathRegex, (_, math) => {
     try {
       return katex.renderToString(math, {
         displayMode: false,
         throwOnError: false,
       })
-    } catch {
+    } catch (error) {
+      console.error("Inline math rendering failed:", error)
       return `$${math}$`
     }
   })
@@ -55,30 +71,47 @@ async function highlightCodeBlocks(html: string): Promise<string> {
   return html
 }
 
-// Theme will be passed from main thread
-let resolvedTheme: any = null
 
 self.onmessage = async (e) => {
-  const { id, html, theme } = e.data
+  // Type safety validation
+  if (!e.data || typeof e.data !== 'object') {
+    console.error('Invalid worker message received:', e.data)
+    return
+  }
+
+  const { id, html, theme } = e.data as WorkerMessage
+
+  if (typeof id !== 'number') {
+    console.error('Invalid message ID:', id)
+    return
+  }
+
   if (e.data.type === "init") {
     // Worker initialized, ready to process requests
-    self.postMessage({ id, type: "theme-initialized" })
+    self.postMessage({ id, type: "theme-initialized", html: "" })
     return
   }
 
   if (theme) {
-    resolvedTheme = theme
-    self.postMessage({ id, type: "theme-initialized" })
+    // Theme handling - currently not used but kept for future extensibility
+    self.postMessage({ id, type: "theme-initialized", html: "" })
     return
   }
 
   if (e.data.type === "enhance") {
+    if (typeof html !== 'string') {
+      self.postMessage({ id, type: "error", error: "HTML content is required for enhancement" })
+      return
+    }
+
     try {
       const withMath = renderMathExpressions(html)
       const enhanced = await highlightCodeBlocks(withMath)
       self.postMessage({ id, type: "enhanced", html: enhanced })
     } catch (error) {
-      self.postMessage({ id, type: "error", error: (error as Error).message })
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred'
+      console.error('Worker enhancement failed:', errorMessage)
+      self.postMessage({ id, type: "error", error: errorMessage })
     }
   }
 }
