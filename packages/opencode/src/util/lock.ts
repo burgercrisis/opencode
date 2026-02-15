@@ -34,11 +34,13 @@ export namespace Lock {
     if (!lock || lock.writer || lock.readers > 0) return
 
     // Prioritize writers if there are many waiting readers to prevent reader starvation
-    // or if writer has been waiting too long
+    // or if we have maximum concurrent readers active
+    // or if there are waiting writers and lock is available (no active readers)
     const shouldPrioritizeWriters =
       lock.waitingWriters.length > 0 &&
       (lock.waitingReaders.length > MAX_WAITING_READERS ||
-        lock.readerAcquireCount > MAX_CONCURRENT_READERS)
+        lock.readers >= MAX_CONCURRENT_READERS ||
+        (lock.readers === 0 && !lock.writer))
 
     if (shouldPrioritizeWriters) {
       const nextWriter = lock.waitingWriters.shift()
