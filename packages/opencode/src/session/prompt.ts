@@ -263,12 +263,22 @@ export namespace SessionPrompt {
       SessionStatus.set(sessionID, { type: "idle" })
       return
     }
-    // Atomically remove from state before aborting to prevent race conditions
-    // where loop() tries to access callbacks after abort but before deletion
+
+    // Atomically capture the abort controller and callbacks, then remove from state
+    // This prevents race conditions where new sessions could be created
+    const abortController = match.abort
     const callbacks = match.callbacks
+
+    // Mark as cancelled immediately to prevent new callbacks from being added
+    match.callbacks = []
+
+    // Remove from state before aborting to prevent race conditions
     delete s[sessionID]
-    match.abort.abort()
+
+    // Abort the specific controller we captured
+    abortController.abort()
     SessionStatus.set(sessionID, { type: "idle" })
+
     // Resolve any pending callbacks with cancellation error
     for (const cb of callbacks) {
       cb.reject(new Error("Session cancelled"))
@@ -286,8 +296,17 @@ export namespace SessionPrompt {
     const abort = resume_existing ? resume(sessionID) : start(sessionID)
     if (!abort) {
       return new Promise<MessageV2.WithParts>((resolve, reject) => {
-        const callbacks = state()[sessionID].callbacks
-        callbacks.push({ resolve, reject })
+        const sessionState = state()[sessionID]
+        if (!sessionState) {
+          reject(new Error("Session not found"))
+          return
+        }
+        // Check if session has been cancelled (callbacks cleared)
+        if (sessionState.callbacks.length === 0 && sessionState.abort.signal.aborted) {
+          reject(new Error("Session cancelled"))
+          return
+        }
+        sessionState.callbacks.push({ resolve, reject })
       })
     }
 
