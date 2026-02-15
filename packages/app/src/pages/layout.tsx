@@ -1898,20 +1898,6 @@ export default function Layout(props: ParentProps) {
     )
   }
 
-  command.register(() => [
-    {
-      id: "workspace.new",
-      title: language.t("workspace.new"),
-      category: language.t("command.category.workspace"),
-      keybind: "mod+shift+w",
-      disabled: !workspaceSetting(),
-      onSelect: () => {
-        const project = currentProject()
-        if (!project) return
-        return createWorkspace(project)
-      },
-    },
-  ])
   return (
     <div class="relative bg-background-base flex-1 min-h-0 flex flex-col select-none [&_input]:select-text [&_textarea]:select-text [&_[contenteditable]]:select-text">
       <Titlebar />
