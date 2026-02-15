@@ -5,6 +5,7 @@ import { Identifier } from "../id/id"
 import { PermissionNext } from "../permission/next"
 import type { Agent } from "../agent/agent"
 import { Scheduler } from "../scheduler"
+import { Log } from "../util/log"
 
 export namespace Truncate {
   export const MAX_LINES = 2000
@@ -14,7 +15,7 @@ export namespace Truncate {
   const RETENTION_MS = 7 * 24 * 60 * 60 * 1000 // 7 days
   const HOUR_MS = 60 * 60 * 1000
 
-  export type Result = { content: string; truncated: false } | { content: string; truncated: true; outputPath: string }
+  export type Result = { content: string; truncated: false } | { content: string; truncated: true; outputPath?: string }
 
   export interface Options {
     maxLines?: number
@@ -97,7 +98,7 @@ export namespace Truncate {
     try {
       await Bun.write(Bun.file(filepath), normalizedText)
     } catch (writeError) {
-      log.error("Failed to write truncated output to file", { filepath, error: writeError })
+      Log.Default.error("Failed to write truncated output to file", { filepath, error: writeError })
       // Return truncated content without file reference if write fails
       const removed = hitBytes ? totalBytes - bytes : lines.length - out.length
       const unit = hitBytes ? "bytes" : "lines"

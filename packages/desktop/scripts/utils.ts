@@ -54,7 +54,7 @@ export function getCurrentSidecar(target = RUST_TARGET) {
 
 export async function copyBinaryToSidecarFolder(source: string, target = RUST_TARGET) {
   const dest = windowsify(`src-tauri/sidecars/opencode-cli-${target}`)
-  
+
   // Ensure directory exists
   const destDir = dirname(dest)
   if (!existsSync(destDir)) {
@@ -73,17 +73,17 @@ export async function copyBinaryToSidecarFolder(source: string, target = RUST_TA
             }
             unlinkSync(filePath)
           } catch (e) {
-            console.warn(`Could not delete ${filePath}: ${e.message}`)
+            console.warn(`Could not delete ${filePath}: ${e instanceof Error ? e.message : String(e)}`)
           }
         }
       }
     } catch (e) {
-      console.warn(`Could not read sidecar directory: ${e.message}`)
+      console.warn(`Could not read sidecar directory: ${e instanceof Error ? e.message : String(e)}`)
     }
   }
 
   copyFileSync(source, dest)
-  
+
   // Ensure the new file is not read-only and is "unblocked" for Windows
   if (process.platform === "win32") {
     try {

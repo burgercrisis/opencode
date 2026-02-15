@@ -49,9 +49,9 @@ export class SyncServer extends DurableObject<Env> {
     })
   }
 
-  async webSocketMessage(ws, message) {}
+  async webSocketMessage(ws: any, message: any) { }
 
-  async webSocketClose(ws, code, reason, wasClean) {
+  async webSocketClose(ws: any, code: any, reason: any, wasClean: any) {
     ws.close(code, "Durable Object is closing WebSocket")
   }
 
@@ -194,7 +194,7 @@ export default new Hono<{ Bindings: Env }>()
 
     let info
     const messages: Record<string, any> = {}
-    data.forEach((d) => {
+    data.forEach((d: { key: string; content: any }) => {
       const [root, type, ...splits] = d.key.split("/")
       if (root !== "session") return
       if (type === "info") {
@@ -235,8 +235,8 @@ export default new Hono<{ Bindings: Env }>()
     const parsed =
       typeof content === "string" && content.trim().startsWith("{")
         ? (JSON.parse(content) as {
-            text?: string
-          })
+          text?: string
+        })
         : undefined
     const text = typeof parsed?.text === "string" ? parsed.text : typeof content === "string" ? content : ""
 
@@ -289,6 +289,7 @@ export default new Hono<{ Bindings: Env }>()
         audience: EXPECTED_AUDIENCE,
       })
       const sub = payload.sub // e.g. 'repo:my-org/my-repo:ref:refs/heads/main'
+      if (!sub) throw new Error("No sub in payload")
       const parts = sub.split(":")[1].split("/")
       owner = parts[0]
       repo = parts[1]
@@ -336,7 +337,7 @@ export default new Hono<{ Bindings: Env }>()
       // Verify permissions
       const userClient = new Octokit({ auth: token })
       const { data: repoData } = await userClient.repos.get({ owner, repo })
-      if (!repoData.permissions.admin && !repoData.permissions.push && !repoData.permissions.maintain)
+      if (!repoData.permissions || (!repoData.permissions.admin && !repoData.permissions.push && !repoData.permissions.maintain))
         throw new Error("User does not have write permissions")
 
       // Get installation token
@@ -386,7 +387,7 @@ export default new Hono<{ Bindings: Env }>()
     const octokit = new Octokit({ auth: appAuth.token })
     let installation
     try {
-      const ret = await octokit.apps.getRepoInstallation({ owner, repo })
+      const ret = await octokit.apps.getRepoInstallation({ owner: owner!, repo: repo! })
       installation = ret.data
     } catch (err) {
       if (err instanceof Error && err.message.includes("Not Found")) {
