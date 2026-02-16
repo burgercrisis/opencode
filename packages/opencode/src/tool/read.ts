@@ -10,9 +10,10 @@ import { assertExternalDirectory } from "./external-directory"
 import { Identifier } from "../id/id"
 import { InstructionPrompt } from "../session/instruction"
 import DESCRIPTION from "./read.txt"
+import { TOOL } from "../constants"
 
-const DEFAULT_READ_LIMIT = 2000
-const MAX_BYTES = 50 * 1024
+const DEFAULT_READ_LIMIT = TOOL.DEFAULT_READ_LIMIT
+const MAX_BYTES = TOOL.MAX_BYTES
 
 const parameters = z.object({
   filePath: z.string().describe("The absolute path to the file or directory to read"),

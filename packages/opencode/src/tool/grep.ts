@@ -7,9 +7,10 @@ import { Instance } from "../project/instance"
 import path from "path"
 import { assertExternalDirectory } from "./external-directory"
 import { Filesystem } from "../util/filesystem"
+import { TOOL } from "../constants"
 
-const MAX_LINE_LENGTH = 2000
-const MATCH_LIMIT = 250
+const MAX_LINE_LENGTH = TOOL.MAX_LINE_LENGTH
+const MATCH_LIMIT = TOOL.MATCH_LIMIT
 
 const parameters = z.object({
   pattern: z.string().describe("The regex pattern to search for in file contents"),
@@ -70,7 +71,7 @@ export const GrepTool = Tool.define<typeof parameters, { matches: number; trunca
 
     const read = async (acc: Match[], buffer: string): Promise<{ matches: Match[]; truncated: boolean }> => {
       const { done, value } = await reader.read()
-      
+
       const processDone = () => {
         const remaining = buffer.split("|")
         const match = remaining.length >= 3 ? {
@@ -96,10 +97,10 @@ export const GrepTool = Tool.define<typeof parameters, { matches: number; trunca
           const [filePath, lineNumStr, ...lineTextParts] = line.split("|")
           return filePath && lineNumStr && lineTextParts.length > 0
             ? {
-                path: filePath,
-                lineNum: parseInt(lineNumStr, 10),
-                lineText: lineTextParts.join("|"),
-              }
+              path: filePath,
+              lineNum: parseInt(lineNumStr, 10),
+              lineText: lineTextParts.join("|"),
+            }
             : null
         })
         .filter((m): m is Match => m !== null)
@@ -118,48 +119,48 @@ export const GrepTool = Tool.define<typeof parameters, { matches: number; trunca
 
     return ((exitCode === 1 && rawMatches.length === 0) || rawMatches.length === 0)
       ? {
-          title: pattern,
-          metadata: { matches: 0, truncated: false },
-          output: "No matches found",
-        }
+        title: pattern,
+        metadata: { matches: 0, truncated: false },
+        output: "No matches found",
+      }
       : (exitCode !== 0 && exitCode !== 1 && exitCode !== 2 && !truncated)
         ? (() => { throw new Error(`ripgrep failed: ${errorOutput}`) })()
         : (async () => {
-            const hasErrors = exitCode === 2
-            const uniqueFiles = [...new Set(rawMatches.map((m) => m.path))]
-            
-            const fileStats = await uniqueFiles.reduce(async (accPromise, filePath) => {
-              const acc = await accPromise
-              const stats = await Bun.file(filePath).stat().catch(() => null)
-              return acc.set(filePath, stats?.mtime.getTime() ?? 0)
-            }, Promise.resolve(new Map<string, number>()))
+          const hasErrors = exitCode === 2
+          const uniqueFiles = [...new Set(rawMatches.map((m) => m.path))]
 
-            const matches = rawMatches
-              .map((m) => ({ ...m, modTime: fileStats.get(m.path) ?? 0 }))
-              .sort((a, b) => b.modTime - a.modTime)
+          const fileStats = await uniqueFiles.reduce(async (accPromise, filePath) => {
+            const acc = await accPromise
+            const stats = await Bun.file(filePath).stat().catch(() => null)
+            return acc.set(filePath, stats?.mtime.getTime() ?? 0)
+          }, Promise.resolve(new Map<string, number>()))
 
-            const formattedMatches = matches.reduce((acc, match, i) => {
-              const prev = matches[i - 1]
-              const fileHeader = !prev || prev.path !== match.path ? [`${acc.length > 0 ? "\n" : ""}${match.path}:`] : []
-              const truncatedLineText = match.lineText.length > MAX_LINE_LENGTH
-                ? match.lineText.substring(0, MAX_LINE_LENGTH) + "..."
-                : match.lineText
-              return acc.concat(fileHeader, `  Line ${match.lineNum}: ${truncatedLineText}`)
-            }, [] as string[])
+          const matches = rawMatches
+            .map((m) => ({ ...m, modTime: fileStats.get(m.path) ?? 0 }))
+            .sort((a, b) => b.modTime - a.modTime)
 
-            return {
-              title: pattern,
-              metadata: {
-                matches: matches.length,
-                truncated,
-              },
-              output: [
-                `Found ${matches.length} matches`,
-                ...formattedMatches,
-                ...(truncated ? ["", "(Results are truncated. Consider using a more specific path or pattern.)"] : []),
-                ...(hasErrors ? ["", "(Some paths were inaccessible and skipped)"] : []),
-              ].join("\n"),
-            }
-          })()
+          const formattedMatches = matches.reduce((acc, match, i) => {
+            const prev = matches[i - 1]
+            const fileHeader = !prev || prev.path !== match.path ? [`${acc.length > 0 ? "\n" : ""}${match.path}:`] : []
+            const truncatedLineText = match.lineText.length > MAX_LINE_LENGTH
+              ? match.lineText.substring(0, MAX_LINE_LENGTH) + "..."
+              : match.lineText
+            return acc.concat(fileHeader, `  Line ${match.lineNum}: ${truncatedLineText}`)
+          }, [] as string[])
+
+          return {
+            title: pattern,
+            metadata: {
+              matches: matches.length,
+              truncated,
+            },
+            output: [
+              `Found ${matches.length} matches`,
+              ...formattedMatches,
+              ...(truncated ? ["", "(Results are truncated. Consider using a more specific path or pattern.)"] : []),
+              ...(hasErrors ? ["", "(Some paths were inaccessible and skipped)"] : []),
+            ].join("\n"),
+          }
+        })()
   },
 })

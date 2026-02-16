@@ -19,9 +19,10 @@ import { Config } from "../config/config"
 import { BashArity } from "@/permission/arity"
 import { Truncate } from "./truncation"
 import { Plugin } from "@/plugin"
+import { TOOL } from "../constants"
 
-const MAX_METADATA_LENGTH = 30_000
-const DEFAULT_TIMEOUT = Flag.OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS || 2 * 60 * 1000
+const MAX_METADATA_LENGTH = TOOL.MAX_METADATA_LENGTH
+const DEFAULT_TIMEOUT = TOOL.DEFAULT_TIMEOUT
 
 export const log = Log.create({ service: "bash-tool" })
 
@@ -72,19 +73,19 @@ export function processPowerShellOutput(output: string, command: string): { outp
   // Handle the case where Get-NonExistentCmdlet fails with missing mandatory parameters
   if (processed.includes("Get-NonExistentCmdlet") && processed.includes("Cannot process command because of one or more missing mandatory parameters")) {
     processed = "Error: Command 'Get-NonExistentCmdlet' not found. Please verify the command name and ensure the required PowerShell module is installed. " +
-    "Try running 'Get-Command Get-NonExistentCmdlet' to check availability or 'Import-Module <ModuleName>' to load the required module."
+      "Try running 'Get-Command Get-NonExistentCmdlet' to check availability or 'Import-Module <ModuleName>' to load the required module."
   }
 
   // Handle the case where the cmdlet name appears in the error but the specific pattern wasn't matched
   if (processed.includes("Get-NonExistentCmdlet") && processed.includes("not found") && !processed.includes("Get-Command")) {
     processed = "Error: Command 'Get-NonExistentCmdlet' not found. Please verify the command name and ensure the required PowerShell module is installed. " +
-    "Try running 'Get-Command Get-NonExistentCmdlet' to check availability or 'Import-Module <ModuleName>' to load the required module."
+      "Try running 'Get-Command Get-NonExistentCmdlet' to check availability or 'Import-Module <ModuleName>' to load the required module."
   }
 
   // Handle the case where the error message contains "not found" but doesn't include our enhanced message
   if (processed.includes("Get-NonExistentCmdlet") && !processed.includes("Get-Command") && !processed.includes("Import-Module")) {
     processed = "Error: Command 'Get-NonExistentCmdlet' not found. Please verify the command name and ensure the required PowerShell module is installed. " +
-    "Try running 'Get-Command Get-NonExistentCmdlet' to check availability or 'Import-Module <ModuleName>' to load the required module."
+      "Try running 'Get-Command Get-NonExistentCmdlet' to check availability or 'Import-Module <ModuleName>' to load the required module."
   }
 
   // Handle alternative error format for non-existent commands
@@ -100,7 +101,7 @@ export function processPowerShellOutput(output: string, command: string): { outp
     (match, cmdlet) => {
       // Provide helpful guidance about the limitation
       return `Note: The -First parameter is not supported in ${cmdlet} for your PowerShell version. ` +
-             "Consider using 'Select-Object -First N' before formatting, or upgrade to PowerShell 7+ for this feature."
+        "Consider using 'Select-Object -First N' before formatting, or upgrade to PowerShell 7+ for this feature."
     }
   )
 
@@ -115,10 +116,10 @@ export function processPowerShellOutput(output: string, command: string): { outp
     // Handle hanging/timeout scenarios by detecting incomplete credential prompts
     if (processed.trim() === "" && command.includes("Get-Credential")) {
       const errorMsg = "Error: Get-Credential requires interactive input but is running in a non-interactive environment. " +
-      "Alternative approaches:\n" +
-      "1. Use stored credentials: $cred = Get-Credential -UserName 'username' -Password (ConvertTo-SecureString 'password' -AsPlainText -Force)\n" +
-      "2. Use Windows Credential Manager: Get-StoredCredential\n" +
-      "3. For automation, consider using certificate-based authentication or service principals."
+        "Alternative approaches:\n" +
+        "1. Use stored credentials: $cred = Get-Credential -UserName 'username' -Password (ConvertTo-SecureString 'password' -AsPlainText -Force)\n" +
+        "2. Use Windows Credential Manager: Get-StoredCredential\n" +
+        "3. For automation, consider using certificate-based authentication or service principals."
       return { output: errorMsg, hasErrors: true }
     }
 
@@ -135,10 +136,10 @@ export function processPowerShellOutput(output: string, command: string): { outp
     // Handle the case where Get-Credential fails with missing mandatory parameters (non-interactive)
     if (processed.includes("Cannot process command because of one or more missing mandatory parameters: Credential")) {
       processed = "Error: Get-Credential requires interactive input but is running in a non-interactive environment. " +
-      "Alternative approaches:\n" +
-      "1. Use stored credentials: $cred = Get-Credential -UserName 'username' -Password (ConvertTo-SecureString 'password' -AsPlainText -Force)\n" +
-      "2. Use Windows Credential Manager: Get-StoredCredential\n" +
-      "3. For automation, consider using certificate-based authentication or service principals."
+        "Alternative approaches:\n" +
+        "1. Use stored credentials: $cred = Get-Credential -UserName 'username' -Password (ConvertTo-SecureString 'password' -AsPlainText -Force)\n" +
+        "2. Use Windows Credential Manager: Get-StoredCredential\n" +
+        "3. For automation, consider using certificate-based authentication or service principals."
     }
 
     // Handle null reference exceptions that can occur when Get-Credential fails
@@ -403,16 +404,16 @@ export const BashTool = Tool.define<
         const step2 =
           initialProcessedCommand.includes("set") && initialProcessedCommand.includes("&&") && Shell.isCmdCommand(initialProcessedCommand)
             ? iife(() => {
-                const setMatch = initialProcessedCommand.match(/set\s+(\w+)=([^&]+)/i)
-                return setMatch
-                  ? { cmd: initialProcessedCommand, env: { ...initialEnv, [setMatch[1]]: setMatch[2] } }
-                  : { cmd: initialProcessedCommand, env: initialEnv }
-              })
+              const setMatch = initialProcessedCommand.match(/set\s+(\w+)=([^&]+)/i)
+              return setMatch
+                ? { cmd: initialProcessedCommand, env: { ...initialEnv, [setMatch[1]]: setMatch[2] } }
+                : { cmd: initialProcessedCommand, env: initialEnv }
+            })
             : { cmd: initialProcessedCommand, env: initialEnv }
 
-        log.info("BashTool processed command", { 
-          original: params.command, 
-          processed: step2.cmd 
+        log.info("BashTool processed command", {
+          original: params.command,
+          processed: step2.cmd
         })
 
         return { processedCommand: step2.cmd, finalEnv: step2.env }
@@ -487,8 +488,8 @@ export const BashTool = Tool.define<
       const { output: finalOutput, hasErrors, exitCode: overrideExitCode } = iife((): { output: string; hasErrors: boolean; exitCode?: number } => {
         if (Shell.isPowerShellCommand(processedCommand)) {
           const processed = processPowerShellOutput(output, processedCommand)
-          log.info("PowerShell output processed", { 
-            hasErrors: processed.hasErrors, 
+          log.info("PowerShell output processed", {
+            hasErrors: processed.hasErrors,
             outputLength: processed.output.length,
             firstLine: processed.output.split('\n')[0]
           })
@@ -512,8 +513,8 @@ export const BashTool = Tool.define<
       const exitCode = status.timedOut
         ? 124
         : (status.aborted
-            ? 130
-            : (overrideExitCode ?? Shell.normalizeExitCode(proc.exitCode, hasErrors)))
+          ? 130
+          : (overrideExitCode ?? Shell.normalizeExitCode(proc.exitCode, hasErrors)))
 
       const truncated = await Truncate.output(normalizedOutput, {}, undefined)
 

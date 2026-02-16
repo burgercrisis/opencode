@@ -6,13 +6,14 @@ import { PermissionNext } from "../permission/next"
 import type { Agent } from "../agent/agent"
 import { Scheduler } from "../scheduler"
 import { Log } from "../util/log"
+import { TRUNCATE } from "../constants"
 
 export namespace Truncate {
-  export const MAX_LINES = 2000
-  export const MAX_BYTES = 50 * 1024
+  export const MAX_LINES = TRUNCATE.MAX_LINES
+  export const MAX_BYTES = TRUNCATE.MAX_BYTES
   export const DIR = path.join(Global.Path.data, "tool-output")
   export const GLOB = path.join(DIR, "*")
-  const RETENTION_MS = 7 * 24 * 60 * 60 * 1000 // 7 days
+  const RETENTION_MS = TRUNCATE.RETENTION_MS
   const HOUR_MS = 60 * 60 * 1000
 
   export type Result = { content: string; truncated: false } | { content: string; truncated: true; outputPath?: string }

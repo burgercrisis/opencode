@@ -4,10 +4,11 @@ import TurndownService from "turndown"
 import DESCRIPTION from "./webfetch.txt"
 import { abortAfterAny } from "../util/abort"
 import { Identifier } from "../id/id"
+import { TOOL } from "../constants"
 
-const MAX_RESPONSE_SIZE = 5 * 1024 * 1024 // 5MB
-const DEFAULT_TIMEOUT = 30 * 1000 // 30 seconds
-const MAX_TIMEOUT = 120 * 1000 // 2 minutes
+const MAX_RESPONSE_SIZE = TOOL.MAX_RESPONSE_SIZE
+const DEFAULT_TIMEOUT = TOOL.DEFAULT_TIMEOUT
+const MAX_TIMEOUT = TOOL.MAX_TIMEOUT
 
 const parameters = z.object({
   url: z.string().describe("The URL to fetch content from"),

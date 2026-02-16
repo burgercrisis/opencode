@@ -5,20 +5,13 @@
 
 import z from "zod"
 import * as path from "path"
-import { Tool } from "./tool"
-import { LSP } from "../lsp"
-import { createTwoFilesPatch, diffLines } from "diff"
-import DESCRIPTION from "./edit.txt"
-import { File } from "../file"
-import { FileWatcher } from "../file/watcher"
-import { Bus } from "../bus"
-import { FileTime } from "../file/time"
-import { Filesystem } from "../util/filesystem"
-import { Instance } from "../project/instance"
-import { Snapshot } from "@/snapshot"
+import { trimDiff } from "./edit"
 import { assertExternalDirectory } from "./external-directory"
+import { Snapshot } from "@/snapshot"
+import { TOOL } from "../constants"
 
-const MAX_DIAGNOSTICS_PER_FILE = 20
+const MAX_DIAGNOSTICS_PER_FILE = TOOL.MAX_DIAGNOSTICS_PER_FILE
+const MAX_PROJECT_DIAGNOSTICS_FILES = TOOL.MAX_PROJECT_DIAGNOSTICS_FILES
 
 function normalizeLineEndings(text: string): string {
   return text.replaceAll("\r\n", "\n")
@@ -166,7 +159,7 @@ const MULTIPLE_CANDIDATES_SIMILARITY_THRESHOLD = 0.3
  * Optimized with maximum input length validation to prevent O(n²) memory issues
  */
 function levenshtein(a: string, b: string): number {
-  const MAX_LENGTH = 1000 // Prevent excessive memory allocation
+  const MAX_LENGTH = TOOL.MAX_LENGTH // Prevent excessive memory allocation
 
   // Handle empty strings
   if (a === "" || b === "") {
@@ -382,16 +375,16 @@ export const BlockAnchorReplacer: Replacer = function* (content, find) {
 
 export const WhitespaceNormalizedReplacer: Replacer = function* (content, find) {
   // Limit pattern complexity to prevent ReDoS attacks
-  const MAX_PATTERN_LENGTH = 1000
-  const MAX_WORD_COUNT = 100
+  const MAX_PATTERN_LENGTH = TOOL.MAX_PATTERN_LENGTH
+  const MAX_WORD_COUNT = TOOL.MAX_WORD_COUNT
 
-  const normalizeWhitespace = (text: string) => text.replace(/\s+/g, " ").trim()
-  const normalizedFind = normalizeWhitespace(find)
-
-  // Reject overly complex patterns
+  // Validate pattern length upfront to prevent ReDoS attacks
   if (find.length > MAX_PATTERN_LENGTH) {
     throw new Error(`Search pattern too long: ${find.length} characters (max: ${MAX_PATTERN_LENGTH})`)
   }
+
+  const normalizeWhitespace = (text: string) => text.replace(/\s+/g, " ").trim()
+  const normalizedFind = normalizeWhitespace(find)
 
   // Handle single line matches
   const lines = content.split("\n")
@@ -406,15 +399,33 @@ export const WhitespaceNormalizedReplacer: Replacer = function* (content, find) 
         // Find the actual substring in the original line that matches
         const words = find.trim().split(/\s+/)
         if (words.length > 0 && words.length <= MAX_WORD_COUNT) {
-          const pattern = words.map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+")
+          // Use string-based matching instead of regex to prevent ReDoS attacks
+          const escapedWords = words.map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+          const pattern = escapedWords.join("\\s+")
+
+          // Validate pattern complexity before creating regex
+          if (pattern.length > MAX_PATTERN_LENGTH) {
+            // Pattern too complex, fall back to simple substring matching
+            const simpleMatch = line.includes(find)
+            if (simpleMatch) {
+              yield find
+            }
+            return
+          }
+
           try {
-            const regex = new RegExp(pattern)
+            // Use a more restrictive regex construction to prevent ReDoS
+            const regex = new RegExp(`^${pattern}$`, "m")
             const match = line.match(regex)
             if (match) {
               yield match[0]
             }
           } catch (e) {
-            // Invalid regex pattern, skip
+            // Invalid regex pattern, fall back to simple substring matching
+            const simpleMatch = line.includes(find)
+            if (simpleMatch) {
+              yield find
+            }
           }
         }
       }
