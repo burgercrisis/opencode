@@ -12,7 +12,9 @@ function calculateFrecency(entry?: { frequency: number; lastOpen: number }): num
   return entry.frequency * weight
 }
 
-const MAX_FRECENCY_ENTRIES = 1000
+import { CLI } from "../../../constants"
+
+const MAX_FRECENCY_ENTRIES = CLI.MAX_FRECENCY_ENTRIES
 
 export const { use: useFrecency, provider: FrecencyProvider } = createSimpleContext({
   name: "Frecency",
@@ -53,7 +55,7 @@ export const { use: useFrecency, provider: FrecencyProvider } = createSimpleCont
 
       if (sorted.length > 0) {
         const content = sorted.map((entry) => JSON.stringify(entry)).join("\n") + "\n"
-        Bun.write(frecencyFile, content).catch(() => {})
+        Bun.write(frecencyFile, content).catch(() => { })
       }
     })
 
@@ -68,7 +70,7 @@ export const { use: useFrecency, provider: FrecencyProvider } = createSimpleCont
         lastOpen: Date.now(),
       }
       setStore("data", absolutePath, newEntry)
-      appendFile(frecencyFile.name!, JSON.stringify({ path: absolutePath, ...newEntry }) + "\n").catch(() => {})
+      appendFile(frecencyFile.name!, JSON.stringify({ path: absolutePath, ...newEntry }) + "\n").catch(() => { })
 
       if (Object.keys(store.data).length > MAX_FRECENCY_ENTRIES) {
         const sorted = Object.entries(store.data)
@@ -76,7 +78,7 @@ export const { use: useFrecency, provider: FrecencyProvider } = createSimpleCont
           .slice(0, MAX_FRECENCY_ENTRIES)
         setStore("data", Object.fromEntries(sorted))
         const content = sorted.map(([path, entry]) => JSON.stringify({ path, ...entry })).join("\n") + "\n"
-        Bun.write(frecencyFile, content).catch(() => {})
+        Bun.write(frecencyFile, content).catch(() => { })
       }
     }
 

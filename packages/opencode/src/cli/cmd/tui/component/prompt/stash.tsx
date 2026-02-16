@@ -13,7 +13,9 @@ export type StashEntry = {
   timestamp: number
 }
 
-const MAX_STASH_ENTRIES = 50
+import { CLI } from "../../../constants"
+
+const MAX_STASH_ENTRIES = CLI.MAX_STASH_ENTRIES
 
 export const { use: usePromptStash, provider: PromptStashProvider } = createSimpleContext({
   name: "PromptStash",
@@ -39,7 +41,7 @@ export const { use: usePromptStash, provider: PromptStashProvider } = createSimp
       // Rewrite file with only valid entries to self-heal corruption
       if (lines.length > 0) {
         const content = lines.map((line) => JSON.stringify(line)).join("\n") + "\n"
-        writeFile(stashFile.name!, content).catch(() => {})
+        writeFile(stashFile.name!, content).catch(() => { })
       }
     })
 
@@ -66,11 +68,11 @@ export const { use: usePromptStash, provider: PromptStashProvider } = createSimp
 
         if (trimmed) {
           const content = store.entries.map((line) => JSON.stringify(line)).join("\n") + "\n"
-          writeFile(stashFile.name!, content).catch(() => {})
+          writeFile(stashFile.name!, content).catch(() => { })
           return
         }
 
-        appendFile(stashFile.name!, JSON.stringify(stash) + "\n").catch(() => {})
+        appendFile(stashFile.name!, JSON.stringify(stash) + "\n").catch(() => { })
       },
       pop() {
         if (store.entries.length === 0) return undefined
@@ -82,7 +84,7 @@ export const { use: usePromptStash, provider: PromptStashProvider } = createSimp
         )
         const content =
           store.entries.length > 0 ? store.entries.map((line) => JSON.stringify(line)).join("\n") + "\n" : ""
-        writeFile(stashFile.name!, content).catch(() => {})
+        writeFile(stashFile.name!, content).catch(() => { })
         return entry
       },
       remove(index: number) {
@@ -94,7 +96,7 @@ export const { use: usePromptStash, provider: PromptStashProvider } = createSimp
         )
         const content =
           store.entries.length > 0 ? store.entries.map((line) => JSON.stringify(line)).join("\n") + "\n" : ""
-        writeFile(stashFile.name!, content).catch(() => {})
+        writeFile(stashFile.name!, content).catch(() => { })
       },
     }
   },
