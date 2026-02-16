@@ -17,7 +17,7 @@ const sidecarConfig = getCurrentSidecar(RUST_TARGET)
 // This matches build script logic exactly: process.env.OPENCODE_SKIP_WINDOWS_BASELINE !== "false"
 // On Windows, this defaults to skipping baseline unless explicitly overridden
 const SKIP_WINDOWS_BASELINE = process.env.OPENCODE_SKIP_WINDOWS_BASELINE !== "false"
-const useBaseline = SKIP_WINDOWS_BASELINE
+const useBaseline = process.platform !== "win32" || !SKIP_WINDOWS_BASELINE
 
 // Use correct binary name based on whether we're doing baseline build
 const binaryName = process.platform === "win32" && sidecarConfig.ocBinary.includes("-baseline")
