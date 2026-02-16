@@ -26,12 +26,12 @@ export const TOOL = {
   
   // Webfetch limits
   MAX_RESPONSE_SIZE: 5 * 1024 * 1024, // 5MB
-  DEFAULT_TIMEOUT: 30 * 1000, // 30 seconds
-  MAX_TIMEOUT: 120 * 1000, // 2 minutes
+  WEBFETCH_DEFAULT_TIMEOUT: 30 * 1000, // 30 seconds
+  WEBFETCH_MAX_TIMEOUT: 120 * 1000, // 2 minutes
   
   // Bash tool limits
   MAX_METADATA_LENGTH: 30_000,
-  DEFAULT_TIMEOUT: 2 * 60 * 1000, // 2 minutes
+  BASH_DEFAULT_TIMEOUT: 2 * 60 * 1000, // 2 minutes
   
   // Grep tool limits
   MAX_LINE_LENGTH: 2000,

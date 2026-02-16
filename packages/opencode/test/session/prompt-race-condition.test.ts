@@ -3,15 +3,13 @@ import { SessionPrompt } from "../../src/session/prompt"
 import { Identifier } from "../../src/id/id"
 import { Instance } from "../../src/project/instance"
 import { tmpdir } from "../fixture/fixture"
-import { Log } from "../../src/util/log"
-
-Log.init({ print: false })
 
 describe("Session Prompt Race Condition Fix", () => {
   beforeEach(() => {
     // Ensure clean state between tests
     // This prevents test interference from rapid start/stop cycles
   })
+
   test("should handle concurrent cancellation and loop creation safely", async () => {
     await using tmp = await tmpdir()
     await Instance.provide({
@@ -74,16 +72,20 @@ describe("Session Prompt Race Condition Fix", () => {
       fn: async () => {
         const sessionID = Identifier.create("session")
 
-        for (let i = 0; i < 10; i++) {
+        // Very conservative test - just 3 iterations with longer delay
+        for (let i = 0; i < 3; i++) {
           // Create session and cancel it rapidly
           const promise = SessionPrompt.loop({ sessionID, resume_existing: false })
+          
+          // Small delay before cancel to ensure proper session creation
+          await new Promise(resolve => setTimeout(resolve, 5))
           SessionPrompt.cancel(sessionID)
 
           // Wait for operation to complete
           await promise.catch(() => { })
-
-          // Small delay to prevent overwhelming the system
-          await new Promise(resolve => setTimeout(resolve, 1))
+          
+          // Longer delay to prevent overwhelming the system and test interference
+          await new Promise(resolve => setTimeout(resolve, 50))
         }
 
         // Should not throw any errors

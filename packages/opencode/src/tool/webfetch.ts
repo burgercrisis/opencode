@@ -35,7 +35,7 @@ export const WebFetchTool = Tool.define<typeof parameters, {}>("webfetch", {
       },
     })
 
-    const timeout = Math.min((params.timeout ?? TOOL.DEFAULT_TIMEOUT / 1000) * 1000, TOOL.MAX_TIMEOUT)
+    const timeout = Math.min((params.timeout ?? TOOL.WEBFETCH_DEFAULT_TIMEOUT / 1000) * 1000, TOOL.WEBFETCH_MAX_TIMEOUT)
     const { signal, clearTimeout } = abortAfterAny(timeout, ctx.abort)
 
     // Build Accept header based on requested format with q parameters for fallbacks

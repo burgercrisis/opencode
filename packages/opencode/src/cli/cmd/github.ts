@@ -26,6 +26,7 @@ import { Provider } from "../../provider/provider"
 import { Bus } from "../../bus"
 import { MessageV2 } from "../../session/message-v2"
 import { SessionPrompt } from "@/session/prompt"
+import { CLI } from "../../constants"
 import { $ } from "bun"
 
 type GitHubAuthor = {
@@ -326,7 +327,6 @@ export const GithubInstallCommand = cmd({
 
             // Wait for installation
             s.message("Waiting for GitHub app to be installed")
-            import { CLI } from "../../constants"
 
             const MAX_RETRIES = CLI.MAX_RETRIES
             let retries = 0

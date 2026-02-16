@@ -42,7 +42,7 @@ export namespace Lock {
       lock.waitingWriters.length > 0 &&
       (lock.waitingReaders.length > MAX_WAITING_READERS ||
         lock.readers >= MAX_CONCURRENT_READERS ||
-        (lock.readers === 0 && !lock.writer))
+        (lock.readers === 0 && lock.waitingWriters.length > 0))
 
     if (shouldPrioritizeWriters) {
       const nextWriter = lock.waitingWriters.shift()

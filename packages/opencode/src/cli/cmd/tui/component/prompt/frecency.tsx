@@ -4,6 +4,7 @@ import { onMount } from "solid-js"
 import { createStore } from "solid-js/store"
 import { createSimpleContext } from "../../context/helper"
 import { appendFile } from "fs/promises"
+import { CLI } from "../../../../../constants"
 
 function calculateFrecency(entry?: { frequency: number; lastOpen: number }): number {
   if (!entry) return 0
@@ -11,8 +12,6 @@ function calculateFrecency(entry?: { frequency: number; lastOpen: number }): num
   const weight = 1 / (1 + daysSince)
   return entry.frequency * weight
 }
-
-import { CLI } from "../../../constants"
 
 const MAX_FRECENCY_ENTRIES = CLI.MAX_FRECENCY_ENTRIES
 

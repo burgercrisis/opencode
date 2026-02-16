@@ -277,8 +277,8 @@ export const BashTool = Tool.define<
         }
         const powershellJobCmdlets = /(Start-Job|Receive-Job|Wait-Job|Get-Job|Stop-Job|Remove-Job)/i
         return powershellJobCmdlets.test(params.command)
-          ? Math.max(params.timeout ?? TOOL.DEFAULT_TIMEOUT, 10 * 60 * 1000)
-          : params.timeout ?? TOOL.DEFAULT_TIMEOUT
+          ? Math.max(params.timeout ?? TOOL.BASH_DEFAULT_TIMEOUT, 10 * 60 * 1000)
+          : params.timeout ?? TOOL.BASH_DEFAULT_TIMEOUT
       })()
 
       const tree = await parser().then((p) => p.parse(params.command))

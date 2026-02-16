@@ -6,14 +6,13 @@ import { clone } from "remeda"
 import { createSimpleContext } from "../../context/helper"
 import { appendFile, writeFile } from "fs/promises"
 import type { PromptInfo } from "./history"
+import { CLI } from "../../../../../constants"
 
 export type StashEntry = {
   input: string
   parts: PromptInfo["parts"]
   timestamp: number
 }
-
-import { CLI } from "../../../constants"
 
 const MAX_STASH_ENTRIES = CLI.MAX_STASH_ENTRIES
 

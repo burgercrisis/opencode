@@ -6,6 +6,7 @@ import { clone } from "remeda"
 import { createSimpleContext } from "../../context/helper"
 import { appendFile, writeFile } from "fs/promises"
 import type { AgentPart, FilePart, TextPart } from "@opencode-ai/sdk/v2"
+import { CLI } from "../../../../../constants"
 
 export type PromptInfo = {
   input: string
@@ -24,8 +25,6 @@ export type PromptInfo = {
     })
   )[]
 }
-
-import { CLI } from "../../../constants"
 
 const MAX_HISTORY_ENTRIES = CLI.MAX_HISTORY_ENTRIES
 

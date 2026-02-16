@@ -1,4 +1,4 @@
-import fs from "fs/promises"
+import fs from "node:fs/promises"
 import path from "path"
 import { Global } from "../global"
 import { Identifier } from "../id/id"
@@ -119,16 +119,15 @@ export namespace Truncate {
 
     // Handle potential write errors (disk full, permissions, etc.)
     try {
-      await Bun.write(Bun.file(filepath), normalizedText)
+      await fs.writeFile(filepath, normalizedText)
     } catch (writeError) {
-      Log.Default.error("Failed to write truncated output to file", { filepath, error: writeError })
       // Return truncated content without file reference if write fails
       const removed = hitBytes ? totalBytes - bytes : lines.length - out.length
       const unit = hitBytes ? "bytes" : "lines"
       const preview = out.join("\n")
       return {
         content: direction === "head"
-          ? `${preview}\n\n...${removed} ${unit} truncated (file write failed)...`
+          ? `${preview}\n\n...${removed} ${unit} truncated (file write failed)...\n\n${preview}`
           : `...${removed} ${unit} truncated (file write failed)...\n\n${preview}`,
         truncated: true,
         outputPath: undefined,
