@@ -9,6 +9,7 @@ import { Config } from "../config/config"
 import { Instance } from "../project/instance"
 import { Filesystem } from "../util/filesystem"
 import { Scheduler } from "../scheduler"
+import { SNAPSHOT } from "../constants"
 
 /**
  * Snapshot System - Cross-Platform Implementation

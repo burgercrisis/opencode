@@ -9,9 +9,6 @@ import { assertExternalDirectory } from "./external-directory"
 import { Filesystem } from "../util/filesystem"
 import { TOOL } from "../constants"
 
-const MAX_LINE_LENGTH = TOOL.MAX_LINE_LENGTH
-const MATCH_LIMIT = TOOL.MATCH_LIMIT
-
 const parameters = z.object({
   pattern: z.string().describe("The regex pattern to search for in file contents"),
   path: z.string().optional().describe("The directory to search in. Defaults to the current working directory."),
@@ -80,8 +77,8 @@ export const GrepTool = Tool.define<typeof parameters, { matches: number; trunca
           lineText: remaining.slice(2).join("|"),
         } : null
         return {
-          matches: match ? [...acc, match].slice(0, MATCH_LIMIT) : acc,
-          truncated: acc.length >= MATCH_LIMIT || (match !== null && acc.length + 1 > MATCH_LIMIT),
+          matches: match ? [...acc, match].slice(0, TOOL.MATCH_LIMIT) : acc,
+          truncated: acc.length >= TOOL.MATCH_LIMIT || (match !== null && acc.length + 1 > TOOL.MATCH_LIMIT),
         }
       }
 
@@ -106,9 +103,9 @@ export const GrepTool = Tool.define<typeof parameters, { matches: number; trunca
         .filter((m): m is Match => m !== null)
 
       const total = [...acc, ...newMatches]
-      if (total.length >= MATCH_LIMIT) {
+      if (total.length >= TOOL.MATCH_LIMIT) {
         proc.kill()
-        return { matches: total.slice(0, MATCH_LIMIT), truncated: true }
+        return { matches: total.slice(0, TOOL.MATCH_LIMIT), truncated: true }
       }
       return read(total, last)
     }
@@ -142,8 +139,8 @@ export const GrepTool = Tool.define<typeof parameters, { matches: number; trunca
           const formattedMatches = matches.reduce((acc, match, i) => {
             const prev = matches[i - 1]
             const fileHeader = !prev || prev.path !== match.path ? [`${acc.length > 0 ? "\n" : ""}${match.path}:`] : []
-            const truncatedLineText = match.lineText.length > MAX_LINE_LENGTH
-              ? match.lineText.substring(0, MAX_LINE_LENGTH) + "..."
+            const truncatedLineText = match.lineText.length > TOOL.MAX_LINE_LENGTH
+              ? match.lineText.substring(0, TOOL.MAX_LINE_LENGTH) + "..."
               : match.lineText
             return acc.concat(fileHeader, `  Line ${match.lineNum}: ${truncatedLineText}`)
           }, [] as string[])

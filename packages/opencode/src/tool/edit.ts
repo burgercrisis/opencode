@@ -5,13 +5,14 @@
 
 import z from "zod"
 import * as path from "path"
+import { Tool } from "./tool"
 import { trimDiff } from "./edit"
+import DESCRIPTION from "./edit.txt"
 import { assertExternalDirectory } from "./external-directory"
 import { Snapshot } from "@/snapshot"
 import { TOOL } from "../constants"
-
-const MAX_DIAGNOSTICS_PER_FILE = TOOL.MAX_DIAGNOSTICS_PER_FILE
-const MAX_PROJECT_DIAGNOSTICS_FILES = TOOL.MAX_PROJECT_DIAGNOSTICS_FILES
+import { Filesystem } from "../util/filesystem"
+import { LSP } from "../lsp"
 
 function normalizeLineEndings(text: string): string {
   return text.replaceAll("\r\n", "\n")
@@ -130,9 +131,9 @@ export const EditTool = Tool.define("edit", {
     const issues = diagnostics[normalizedFilePath] ?? []
     const errors = issues.filter((item) => item.severity === 1)
     if (errors.length > 0) {
-      const limited = errors.slice(0, MAX_DIAGNOSTICS_PER_FILE)
+      const limited = errors.slice(0, TOOL.MAX_DIAGNOSTICS_PER_FILE)
       const suffix =
-        errors.length > MAX_DIAGNOSTICS_PER_FILE ? `\n... and ${errors.length - MAX_DIAGNOSTICS_PER_FILE} more` : ""
+        errors.length > TOOL.MAX_DIAGNOSTICS_PER_FILE ? `\n... and ${errors.length - TOOL.MAX_DIAGNOSTICS_PER_FILE} more` : ""
       output += `\n\nLSP errors detected in this file, please fix:\n<diagnostics file="${filePath}">\n${limited.map(LSP.Diagnostic.pretty).join("\n")}${suffix}\n</diagnostics>`
     }
 
@@ -374,13 +375,9 @@ export const BlockAnchorReplacer: Replacer = function* (content, find) {
 }
 
 export const WhitespaceNormalizedReplacer: Replacer = function* (content, find) {
-  // Limit pattern complexity to prevent ReDoS attacks
-  const MAX_PATTERN_LENGTH = TOOL.MAX_PATTERN_LENGTH
-  const MAX_WORD_COUNT = TOOL.MAX_WORD_COUNT
-
   // Validate pattern length upfront to prevent ReDoS attacks
-  if (find.length > MAX_PATTERN_LENGTH) {
-    throw new Error(`Search pattern too long: ${find.length} characters (max: ${MAX_PATTERN_LENGTH})`)
+  if (find.length > TOOL.MAX_PATTERN_LENGTH) {
+    throw new Error(`Search pattern too long: ${find.length} characters (max: ${TOOL.MAX_PATTERN_LENGTH})`)
   }
 
   const normalizeWhitespace = (text: string) => text.replace(/\s+/g, " ").trim()
@@ -398,13 +395,13 @@ export const WhitespaceNormalizedReplacer: Replacer = function* (content, find) 
       if (normalizedLine.includes(normalizedFind)) {
         // Find the actual substring in the original line that matches
         const words = find.trim().split(/\s+/)
-        if (words.length > 0 && words.length <= MAX_WORD_COUNT) {
-          // Use string-based matching instead of regex to prevent ReDoS attacks
-          const escapedWords = words.map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
-          const pattern = escapedWords.join("\\s+")
+        if (words.length > 0 && words.length <= TOOL.MAX_WORD_COUNT) {
+          // Additional validation to prevent ReDoS attacks
+          const hasExcessiveRepetition = /\*{5,}/.test(find) || /\+{5,}/.test(find)
+          const hasComplexAlternation = /\|.*\|/.test(find) && find.split('|').length > 10
+          const hasNestedQuantifiers = /\(.*\{.*,.*\}/.test(find)
 
-          // Validate pattern complexity before creating regex
-          if (pattern.length > MAX_PATTERN_LENGTH) {
+          if (hasExcessiveRepetition || hasComplexAlternation || hasNestedQuantifiers) {
             // Pattern too complex, fall back to simple substring matching
             const simpleMatch = line.includes(find)
             if (simpleMatch) {
@@ -413,32 +410,41 @@ export const WhitespaceNormalizedReplacer: Replacer = function* (content, find) 
             return
           }
 
-          try {
-            // Use a more restrictive regex construction to prevent ReDoS
-            const regex = new RegExp(`^${pattern}$`, "m")
-            const match = line.match(regex)
-            if (match) {
-              yield match[0]
+          // Use safe string-based matching with position tracking
+          const lineWords = line.split(/\s+/)
+          const findWords = words
+
+          // Find matching sequence using sliding window approach
+          for (let i = 0; i <= lineWords.length - findWords.length; i++) {
+            let matchCount = 0
+            for (let j = 0; j < findWords.length; j++) {
+              // Simple word matching with length constraints
+              const lineWord = lineWords[i + j]
+              const findWord = findWords[j]
+
+              if (lineWord && findWord &&
+                lineWord.length <= TOOL.MAX_PATTERN_LENGTH &&
+                findWord.length <= TOOL.MAX_PATTERN_LENGTH &&
+                lineWord.toLowerCase().includes(findWord.toLowerCase())) {
+                matchCount++
+              }
             }
-          } catch (e) {
-            // Invalid regex pattern, fall back to simple substring matching
-            const simpleMatch = line.includes(find)
-            if (simpleMatch) {
-              yield find
+
+            if (matchCount === findWords.length) {
+              // Found complete match, reconstruct the original substring
+              const startIdx = lineWords.slice(0, i).join(' ').length
+              const endIdx = startIdx + lineWords.slice(i, i + findWords.length).join(' ').length
+              yield line.substring(startIdx, endIdx)
+              return
             }
           }
-        }
-      }
-    }
-  }
 
-  // Handle multi-line matches
-  const findLines = find.split("\n")
-  if (findLines.length > 1 && findLines.length <= MAX_WORD_COUNT) {
-    for (let i = 0; i <= lines.length - findLines.length; i++) {
-      const block = lines.slice(i, i + findLines.length)
-      if (normalizeWhitespace(block.join("\n")) === normalizedFind) {
-        yield block.join("\n")
+          // Fallback to simple substring matching
+          const simpleMatch = line.includes(find)
+          if (simpleMatch) {
+            yield find
+          }
+        }
       }
     }
   }

@@ -301,12 +301,24 @@ export namespace SessionPrompt {
           reject(new Error("Session not found"))
           return
         }
+
+        // Capture properties atomically to prevent race conditions
+        const { callbacks, abort } = sessionState
+
         // Check if session has been cancelled (callbacks cleared)
-        if (sessionState.callbacks.length === 0 && sessionState.abort.signal.aborted) {
+        if (callbacks.length === 0 && abort.signal.aborted) {
           reject(new Error("Session cancelled"))
           return
         }
-        sessionState.callbacks.push({ resolve, reject })
+
+        // Double-check session still exists before adding callback
+        const currentState = state()[sessionID]
+        if (!currentState || currentState !== sessionState) {
+          reject(new Error("Session not found"))
+          return
+        }
+
+        currentState.callbacks.push({ resolve, reject })
       })
     }
 

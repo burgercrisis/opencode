@@ -21,9 +21,6 @@ import { Truncate } from "./truncation"
 import { Plugin } from "@/plugin"
 import { TOOL } from "../constants"
 
-const MAX_METADATA_LENGTH = TOOL.MAX_METADATA_LENGTH
-const DEFAULT_TIMEOUT = TOOL.DEFAULT_TIMEOUT
-
 export const log = Log.create({ service: "bash-tool" })
 
 export const _resolveWasm = (asset: string) => {
@@ -280,8 +277,8 @@ export const BashTool = Tool.define<
         }
         const powershellJobCmdlets = /(Start-Job|Receive-Job|Wait-Job|Get-Job|Stop-Job|Remove-Job)/i
         return powershellJobCmdlets.test(params.command)
-          ? Math.max(params.timeout ?? DEFAULT_TIMEOUT, 10 * 60 * 1000)
-          : params.timeout ?? DEFAULT_TIMEOUT
+          ? Math.max(params.timeout ?? TOOL.DEFAULT_TIMEOUT, 10 * 60 * 1000)
+          : params.timeout ?? TOOL.DEFAULT_TIMEOUT
       })()
 
       const tree = await parser().then((p) => p.parse(params.command))
@@ -448,8 +445,8 @@ export const BashTool = Tool.define<
         const newAcc = acc + chunk
         ctx.metadata({
           metadata: {
-            output: newAcc.length > MAX_METADATA_LENGTH
-              ? newAcc.slice(0, MAX_METADATA_LENGTH) + "\n\n..."
+            output: newAcc.length > TOOL.MAX_METADATA_LENGTH
+              ? newAcc.slice(0, TOOL.MAX_METADATA_LENGTH) + "\n\n..."
               : newAcc,
             description: params.description,
           } as any,
@@ -522,8 +519,8 @@ export const BashTool = Tool.define<
         title: params.description,
         metadata: {
           output:
-            truncated.content.length > MAX_METADATA_LENGTH
-              ? truncated.content.slice(0, MAX_METADATA_LENGTH) + "\n\n..."
+            truncated.content.length > TOOL.MAX_METADATA_LENGTH
+              ? truncated.content.slice(0, TOOL.MAX_METADATA_LENGTH) + "\n\n..."
               : truncated.content,
           exit: exitCode,
           description: params.description,

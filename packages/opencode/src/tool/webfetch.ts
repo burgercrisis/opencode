@@ -6,10 +6,6 @@ import { abortAfterAny } from "../util/abort"
 import { Identifier } from "../id/id"
 import { TOOL } from "../constants"
 
-const MAX_RESPONSE_SIZE = TOOL.MAX_RESPONSE_SIZE
-const DEFAULT_TIMEOUT = TOOL.DEFAULT_TIMEOUT
-const MAX_TIMEOUT = TOOL.MAX_TIMEOUT
-
 const parameters = z.object({
   url: z.string().describe("The URL to fetch content from"),
   format: z
@@ -39,7 +35,7 @@ export const WebFetchTool = Tool.define<typeof parameters, {}>("webfetch", {
       },
     })
 
-    const timeout = Math.min((params.timeout ?? DEFAULT_TIMEOUT / 1000) * 1000, MAX_TIMEOUT)
+    const timeout = Math.min((params.timeout ?? TOOL.DEFAULT_TIMEOUT / 1000) * 1000, TOOL.MAX_TIMEOUT)
     const { signal, clearTimeout } = abortAfterAny(timeout, ctx.abort)
 
     // Build Accept header based on requested format with q parameters for fallbacks
@@ -72,12 +68,12 @@ export const WebFetchTool = Tool.define<typeof parameters, {}>("webfetch", {
 
     // Check content length
     const contentLength = response.headers.get("content-length")
-    if (contentLength && parseInt(contentLength) > MAX_RESPONSE_SIZE) {
+    if (contentLength && parseInt(contentLength) > TOOL.MAX_RESPONSE_SIZE) {
       throw new Error("Response too large (exceeds 5MB limit)")
     }
 
     const arrayBuffer = await response.arrayBuffer()
-    if (arrayBuffer.byteLength > MAX_RESPONSE_SIZE) {
+    if (arrayBuffer.byteLength > TOOL.MAX_RESPONSE_SIZE) {
       throw new Error("Response too large (exceeds 5MB limit)")
     }
 

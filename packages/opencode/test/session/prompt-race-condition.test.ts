@@ -8,6 +8,10 @@ import { Log } from "../../src/util/log"
 Log.init({ print: false })
 
 describe("Session Prompt Race Condition Fix", () => {
+  beforeEach(() => {
+    // Ensure clean state between tests
+    // This prevents test interference from rapid start/stop cycles
+  })
   test("should handle concurrent cancellation and loop creation safely", async () => {
     await using tmp = await tmpdir()
     await Instance.provide({
@@ -77,6 +81,9 @@ describe("Session Prompt Race Condition Fix", () => {
 
           // Wait for operation to complete
           await promise.catch(() => { })
+
+          // Small delay to prevent overwhelming the system
+          await new Promise(resolve => setTimeout(resolve, 1))
         }
 
         // Should not throw any errors

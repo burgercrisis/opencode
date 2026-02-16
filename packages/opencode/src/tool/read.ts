@@ -12,9 +12,6 @@ import { InstructionPrompt } from "../session/instruction"
 import DESCRIPTION from "./read.txt"
 import { TOOL } from "../constants"
 
-const DEFAULT_READ_LIMIT = TOOL.DEFAULT_READ_LIMIT
-const MAX_BYTES = TOOL.MAX_BYTES
-
 const parameters = z.object({
   filePath: z.string().describe("The absolute path to the file or directory to read"),
   offset: z.coerce.number().describe("The line number to start reading from (1-indexed)").optional(),
@@ -76,7 +73,7 @@ export const ReadTool = Tool.define<typeof parameters, { preview: string; trunca
       )
       entries.sort((a, b) => a.localeCompare(b))
 
-      const limit = params.limit ?? DEFAULT_READ_LIMIT
+      const limit = params.limit ?? TOOL.DEFAULT_READ_LIMIT
       const offset = params.offset ?? 1
       const start = offset - 1
       const sliced = entries.slice(start, start + limit)
@@ -140,7 +137,7 @@ export const ReadTool = Tool.define<typeof parameters, { preview: string; trunca
 
     const text = await file.text()
     const lines = text.split(/\r?\n/)
-    const limit = params.limit ?? DEFAULT_READ_LIMIT
+    const limit = params.limit ?? TOOL.DEFAULT_READ_LIMIT
     const offset = params.offset ?? 1
     const start = offset - 1
     if (start >= lines.length) throw new Error(`Offset ${offset} is out of range for this file (${lines.length} lines)`)
@@ -151,7 +148,7 @@ export const ReadTool = Tool.define<typeof parameters, { preview: string; trunca
     for (let i = start; i < Math.min(lines.length, start + limit); i++) {
       const line = lines[i].length > 2000 ? lines[i].substring(0, 2000) + "..." : lines[i]
       const size = Buffer.byteLength(line, "utf-8") + (raw.length > 0 ? 1 : 0)
-      if (bytes + size > MAX_BYTES) {
+      if (bytes + size > TOOL.MAX_BYTES) {
         truncatedByBytes = true
         break
       }
@@ -173,7 +170,7 @@ export const ReadTool = Tool.define<typeof parameters, { preview: string; trunca
     const truncated = hasMoreLines || truncatedByBytes
 
     if (truncatedByBytes) {
-      output += `\n\n(Output truncated at ${MAX_BYTES} bytes. Use 'offset' parameter to read beyond line ${lastReadLine})`
+      output += `\n\n(Output truncated at ${TOOL.MAX_BYTES} bytes. Use 'offset' parameter to read beyond line ${lastReadLine})`
     } else if (hasMoreLines) {
       output += `\n\n(File has more lines. Use 'offset' parameter to read beyond line ${lastReadLine})`
     } else {
