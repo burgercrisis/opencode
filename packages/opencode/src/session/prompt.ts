@@ -294,8 +294,15 @@ export namespace SessionPrompt {
     const { sessionID, resume_existing } = input
 
     const abort = resume_existing ? resume(sessionID) : start(sessionID)
+
+    // Check for immediate cancellation before proceeding
+    if (abort?.aborted) {
+      throw new Error("Session cancelled")
+    }
+
     if (!abort) {
       return new Promise<MessageV2.WithParts>((resolve, reject) => {
+        // Get session state atomically to prevent race conditions
         const sessionState = state()[sessionID]
         if (!sessionState) {
           reject(new Error("Session not found"))
@@ -330,7 +337,22 @@ export namespace SessionPrompt {
     let structuredOutput: unknown | undefined
 
     let step = 0
-    const session = await Session.get(sessionID)
+
+    // Check for cancellation before accessing session storage
+    if (abort.aborted) {
+      throw new Error("Session cancelled")
+    }
+
+    let session
+    try {
+      session = await Session.get(sessionID)
+    } catch (error) {
+      // If session file was deleted due to cancellation, treat as cancelled
+      if (error instanceof Error && (error.message.includes("Resource not found") || error.name === "NotFoundError")) {
+        throw new Error("Session cancelled")
+      }
+      throw error
+    }
     while (true) {
       SessionStatus.set(sessionID, { type: "busy" })
       log.info("loop", { step, sessionID })
