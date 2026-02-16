@@ -41,7 +41,12 @@ export namespace Truncate {
       // Ensure directory exists before scanning
       await fs.mkdir(DIR, { recursive: true }).catch(() => { })
 
-      const entries = await Array.fromAsync(glob.scan({ cwd: DIR, onlyFiles: true })).catch(() => [] as string[])
+      const entries = await Array.fromAsync(glob.scan({ cwd: DIR, onlyFiles: true }))
+
+      if (entries.length === 0) {
+        Log.Default.debug("No truncation files to clean up", { DIR })
+        return
+      }
 
       // Process deletions in parallel with error handling for each
       await Promise.allSettled(
@@ -49,14 +54,26 @@ export namespace Truncate {
           try {
             if (Identifier.timestamp(entry) < cutoff) {
               await fs.unlink(path.join(DIR, entry))
+              Log.Default.debug("Cleaned up old truncation file", { entry })
             }
           } catch (unlinkError) {
             Log.Default.warn("Failed to delete old truncation file", { entry, error: unlinkError })
           }
         })
       )
+
+      Log.Default.info("Truncation cleanup completed", {
+        totalFiles: entries.length,
+        directory: DIR
+      })
     } catch (cleanupError) {
-      Log.Default.error("Truncation cleanup failed", { error: cleanupError })
+      Log.Default.error("Truncation cleanup failed", {
+        error: cleanupError,
+        directory: DIR,
+        action: "Manual cleanup may be required"
+      })
+      // Re-throw to alert monitoring systems and prevent silent accumulation
+      throw cleanupError
     }
   }
 
