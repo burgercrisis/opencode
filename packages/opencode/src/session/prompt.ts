@@ -264,22 +264,15 @@ export namespace SessionPrompt {
       return
     }
 
-    // Atomically capture the abort controller and callbacks, then remove from state
-    // This prevents race conditions where new sessions could be created
-    const abortController = match.abort
-    const callbacks = match.callbacks
+    // Atomically capture and remove in one operation to eliminate any timing window
+    const { abort: abortController, callbacks } = match
+    match.callbacks = [] // Clear immediately
+    delete s[sessionID]   // Remove from state
 
-    // Mark as cancelled immediately to prevent new callbacks from being added
-    match.callbacks = []
-
-    // Remove from state before aborting to prevent race conditions
-    delete s[sessionID]
-
-    // Abort the specific controller we captured
     abortController.abort()
     SessionStatus.set(sessionID, { type: "idle" })
 
-    // Resolve any pending callbacks with cancellation error
+    // Resolve captured callbacks
     for (const cb of callbacks) {
       cb.reject(new Error("Session cancelled"))
     }
