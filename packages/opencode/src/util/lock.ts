@@ -1,8 +1,10 @@
+import { LOCK } from "../constants"
+
 export namespace Lock {
   // Maximum number of readers before writers get priority to prevent starvation
-  const MAX_CONCURRENT_READERS = 10
-  const MAX_WAITING_READERS = 50
-  const MAX_WAITING_WRITERS = 20
+  const MAX_CONCURRENT_READERS = LOCK.MAX_CONCURRENT_READERS
+  const MAX_WAITING_READERS = LOCK.MAX_WAITING_READERS
+  const MAX_WAITING_WRITERS = LOCK.MAX_WAITING_WRITERS
 
   const locks = new Map<
     string,

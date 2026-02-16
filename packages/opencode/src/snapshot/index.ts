@@ -35,14 +35,14 @@ export namespace Snapshot {
   const log = Log.create({ service: "snapshot" })
   const hour = 60 * 60 * 1000
   const prune = "7.days"
-  
+
   // Performance optimization: cache recent snapshot validations
   // Prevents redundant git cat-file calls for recently validated snapshots
   // Cross-platform: Works consistently on Windows, Linux, and Mac
   const validationCache = new Map<string, { valid: boolean; reason?: string; timestamp: number }>()
-  const VALIDATION_CACHE_TTL = 60000 // 1 minute cache TTL
-  const MAX_CACHE_SIZE = 100 // Maximum cache entries
-  
+  const VALIDATION_CACHE_TTL = SNAPSHOT.VALIDATION_CACHE_TTL
+  const MAX_CACHE_SIZE = SNAPSHOT.MAX_CACHE_SIZE
+
   export function init() {
     Scheduler.register({
       id: "snapshot.cleanup",
@@ -51,11 +51,11 @@ export namespace Snapshot {
       scope: "instance",
     })
   }
-  
+
   export function resetForTest() {
     validationCache.clear()
   }
-  
+
   export async function cleanup() {
     if (Instance.project.vcs !== "git" || Flag.OPENCODE_CLIENT === "acp") return
     const cfg = await Config.get()
@@ -80,7 +80,7 @@ export namespace Snapshot {
     }
     log.info("cleanup", { prune })
   }
-  
+
   /**
    * Execute a git command with retry logic for transient failures.
    * Uses exponential backoff for retry attempts.
@@ -168,7 +168,7 @@ export namespace Snapshot {
 
     if (!gitInitialized) {
       // Create the directory if it doesn't exist
-      await fs.mkdir(git, { recursive: true }).catch(() => {})
+      await fs.mkdir(git, { recursive: true }).catch(() => { })
 
       // Use absolute path for git init to avoid cwd/env issues on Windows
       const initResult = await gitWithRetry(["init", "--bare", gitNormalized], {
@@ -227,7 +227,7 @@ export namespace Snapshot {
     log.info("tracking", { hash, cwd: Instance.directory, git: gitNormalized })
     return hash
   }
-  
+
   /**
    * Validate that a snapshot hash exists and is valid.
    * Prevents restore operations from using corrupted or non-existent snapshots.
@@ -236,35 +236,35 @@ export namespace Snapshot {
     if (!hash || typeof hash !== 'string') {
       return { valid: false, reason: 'Invalid hash format' }
     }
-  
+
     if (hash.length < 40) {
       return { valid: false, reason: 'Hash too short' }
     }
-  
+
     // Check cache first for performance
     const cached = validationCache.get(hash)
     if (cached && Date.now() - cached.timestamp < VALIDATION_CACHE_TTL) {
       log.debug("using cached snapshot validation", { hash })
       return { valid: cached.valid, reason: cached.reason }
     }
-  
+
     const git = gitdir()
     const gitNormalized = Filesystem.normalizeGitPath(git, true)
     const worktreeNormalized = Filesystem.normalizeGitPath(Instance.worktree, true)
-  
+
     try {
       // Check if the hash exists in the git repository
       const catResult = await gitWithRetry(["--git-dir", gitNormalized, "--work-tree", worktreeNormalized, "cat-file", "-t", hash], {
         cwd: Instance.directory,
         maxRetries: 1
       })
-    
+
       if (catResult.exitCode !== 0) {
         const result = { valid: false, reason: 'Snapshot hash not found in repository' }
         cacheValidation(hash, result)
         return result
       }
-  
+
       // Verify it's actually a tree object (snapshots are trees)
       const objectType = catResult.stdout.trim()
       if (objectType !== 'tree') {
@@ -272,7 +272,7 @@ export namespace Snapshot {
         cacheValidation(hash, result)
         return result
       }
-  
+
       const result = { valid: true }
       cacheValidation(hash, result)
       return result
@@ -282,7 +282,7 @@ export namespace Snapshot {
       return result
     }
   }
-  
+
   /**
    * Cache a snapshot validation result for performance optimization.
    */
@@ -293,19 +293,19 @@ export namespace Snapshot {
       const oldestKey = validationCache.keys().next().value as string
       validationCache.delete(oldestKey)
     }
-  
+
     validationCache.set(hash, {
       ...result,
       timestamp: Date.now()
     })
   }
-  
+
   export const Patch = z.object({
     hash: z.string(),
     files: z.string().array(),
   })
   export type Patch = z.infer<typeof Patch>
-  
+
   export async function patch(hash: string): Promise<Patch> {
     const git = gitdir()
     const gitNormalized = Filesystem.normalizeGitPath(git, true)
@@ -326,17 +326,17 @@ export namespace Snapshot {
     // Instead, we need to check what files are different from the snapshot state
     // Use git ls-tree to check if the file existed in the snapshot
     const result = await gitWithRetry(["-c", "core.autocrlf=false", "-c", "core.quotepath=false", "--git-dir", gitNormalized, "--work-tree", worktreeNormalized, "diff", "--no-ext-diff", "--name-only", hash, "--", "."], {
-        cwd: Instance.directory
+      cwd: Instance.directory
     }).catch(() => ({ exitCode: 1, stdout: "", stderr: "" }))
-  
+
     // If git diff fails (common in repos without commits), fall back to checking what files exist
     if (result.exitCode !== 0 || !result.stdout.trim()) {
-      log.warn("git diff failed or returned empty, checking file changes differently", { 
-        hash, 
+      log.warn("git diff failed or returned empty, checking file changes differently", {
+        hash,
         exitCode: result.exitCode,
         stdout: result.stdout.substring(0, 200)
       })
-      
+
       // For repos without commits, we need to check which files are new or modified
       // by comparing against what was in the snapshot tree
       try {
@@ -344,25 +344,25 @@ export namespace Snapshot {
         const lsFilesResult = await gitWithRetry(["--git-dir", gitNormalized, "--work-tree", worktreeNormalized, "ls-files", "--others", "--exclude-standard", "."], {
           cwd: Instance.directory
         }).catch(() => ({ exitCode: 1, stdout: "", stderr: "" }))
-        
+
         const untrackedFiles = lsFilesResult.stdout.trim().split("\n").filter(Boolean)
-        
+
         // Get list of modified tracked files  
         const diffIndexResult = await gitWithRetry(["--git-dir", gitNormalized, "--work-tree", worktreeNormalized, "diff", "--name-only", "."], {
           cwd: Instance.directory
         }).catch(() => ({ exitCode: 1, stdout: "", stderr: "" }))
-        
+
         const modifiedFiles = diffIndexResult.stdout.trim().split("\n").filter(Boolean)
-        
+
         // Combine untracked and modified files
         const allChangedFiles = [...new Set([...untrackedFiles, ...modifiedFiles])]
-        
+
         const normalizedFiles = allChangedFiles.map((x) => {
           // Normalize path separators for Windows using unified utility
           const withWorktree = Filesystem.normalizeGitPath(path.join(Instance.worktree, x), false)
           return withWorktree
         })
-        
+
         return {
           hash,
           files: normalizedFiles,
@@ -372,7 +372,7 @@ export namespace Snapshot {
         return { hash, files: [] }
       }
     }
-  
+
     const files = result.stdout
     const normalizedFiles = files
       .trim()
@@ -384,35 +384,35 @@ export namespace Snapshot {
         const withWorktree = Filesystem.normalizeGitPath(path.join(Instance.worktree, x), false)
         return withWorktree
       })
-    
+
     return {
       hash,
       files: normalizedFiles,
     }
   }
-  
+
   export async function restore(snapshot: string) {
     log.info("restore", { commit: snapshot })
-    
+
     // Validate snapshot hash and existence
     const validation = await validateSnapshot(snapshot)
     if (!validation.valid) {
-      log.error("snapshot validation failed", { 
-        snapshot, 
-        reason: validation.reason 
+      log.error("snapshot validation failed", {
+        snapshot,
+        reason: validation.reason
       })
       return
     }
-    
+
     const git = gitdir()
     const gitNormalized = Filesystem.normalizeGitPath(git, true)
     const worktreeNormalized = Filesystem.normalizeGitPath(Instance.worktree, true)
-    
+
     const result =
       await gitWithRetry(["--git-dir", gitNormalized, "--work-tree", worktreeNormalized, "read-tree", snapshot], {
         cwd: worktreeNormalized
       })
-  
+
     if (result.exitCode !== 0) {
       log.error("failed to read snapshot", {
         snapshot,
@@ -422,12 +422,12 @@ export namespace Snapshot {
       })
       return
     }
-    
+
     const checkoutResult =
       await gitWithRetry(["--git-dir", gitNormalized, "--work-tree", worktreeNormalized, "checkout-index", "-a", "-f"], {
         cwd: worktreeNormalized
       })
-  
+
     if (checkoutResult.exitCode !== 0) {
       log.error("failed to checkout files from snapshot", {
         snapshot,
@@ -436,7 +436,7 @@ export namespace Snapshot {
       })
     }
   }
-  
+
   export async function revert(patches: Patch[]) {
     const git = gitdir()
     const gitNormalized = Filesystem.normalizeGitPath(git, true)
@@ -485,7 +485,7 @@ export namespace Snapshot {
       }, Promise.resolve())
     }, Promise.resolve())
   }
-  
+
   export async function diff(hash: string) {
     const git = gitdir()
     const gitNormalized = Filesystem.normalizeGitPath(git, true)
@@ -504,9 +504,9 @@ export namespace Snapshot {
     }
 
     const result = await gitWithRetry(["-c", "core.autocrlf=false", "--git-dir", gitNormalized, "--work-tree", worktreeNormalized, "diff", "--no-ext-diff", hash, "--", "."], {
-        cwd: worktreeNormalized
+      cwd: worktreeNormalized
     }).catch(() => ({ exitCode: 1, stdout: "", stderr: "" }))
-  
+
     if (result.exitCode !== 0) {
       log.warn("failed to get diff", {
         hash,
@@ -516,10 +516,10 @@ export namespace Snapshot {
       })
       return ""
     }
-  
+
     return result.stdout.trim()
   }
-  
+
   export const FileDiff = z
     .object({
       file: z.string(),
@@ -635,7 +635,7 @@ export namespace Snapshot {
 
     return Buffer.from(process(0, [])).toString("utf8")
   }
-  
+
   function gitdir() {
     const project = Instance.project
     return path.join(Global.Path.data, "snapshot", project.id)
