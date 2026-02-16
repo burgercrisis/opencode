@@ -35,13 +35,28 @@ export namespace Truncate {
   export async function cleanup() {
     const cutoff = Identifier.timestamp(Identifier.create("tool", false, Date.now() - RETENTION_MS))
     const glob = new Bun.Glob("tool_*")
-    const entries = await Array.fromAsync(glob.scan({ cwd: DIR, onlyFiles: true })).catch(() => [] as string[])
-    await entries.reduce(async (acc, entry) => {
-      await acc
-      return Identifier.timestamp(entry) < cutoff
-        ? fs.unlink(path.join(DIR, entry)).catch(() => { })
-        : Promise.resolve()
-    }, Promise.resolve())
+
+    try {
+      // Ensure directory exists before scanning
+      await fs.mkdir(DIR, { recursive: true }).catch(() => { })
+
+      const entries = await Array.fromAsync(glob.scan({ cwd: DIR, onlyFiles: true })).catch(() => [] as string[])
+
+      // Process deletions in parallel with error handling for each
+      await Promise.allSettled(
+        entries.map(async (entry) => {
+          try {
+            if (Identifier.timestamp(entry) < cutoff) {
+              await fs.unlink(path.join(DIR, entry))
+            }
+          } catch (unlinkError) {
+            Log.Default.warn("Failed to delete old truncation file", { entry, error: unlinkError })
+          }
+        })
+      )
+    } catch (cleanupError) {
+      Log.Default.error("Truncation cleanup failed", { error: cleanupError })
+    }
   }
 
   const hasTaskTool = (agent?: Agent.Info): boolean =>
@@ -94,6 +109,13 @@ export namespace Truncate {
     const filepath = path.join(DIR, id)
     const normalizedText = text.replace(/\r\n/g, '\n')
 
+    // Ensure directory exists before writing
+    try {
+      await fs.mkdir(DIR, { recursive: true })
+    } catch (mkdirError) {
+      Log.Default.warn("Failed to create truncation directory", { DIR, error: mkdirError })
+    }
+
     // Handle potential write errors (disk full, permissions, etc.)
     try {
       await Bun.write(Bun.file(filepath), normalizedText)
@@ -105,8 +127,8 @@ export namespace Truncate {
       const preview = out.join("\n")
       return {
         content: direction === "head"
-          ? `${preview}\n\n...${removed} ${unit} truncated...`
-          : `...${removed} ${unit} truncated...\n\n${preview}`,
+          ? `${preview}\n\n...${removed} ${unit} truncated (file write failed)...`
+          : `...${removed} ${unit} truncated (file write failed)...\n\n${preview}`,
         truncated: true,
         outputPath: undefined,
       }
