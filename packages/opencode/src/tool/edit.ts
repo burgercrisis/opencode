@@ -20,6 +20,19 @@ import { assertExternalDirectory } from "./external-directory"
 import { TOOL } from "../constants"
 import { levenshtein } from "@/util/levenshtein"
 
+// Edit tool constants for configurable behavior
+const EDIT_MAX_MATCHES = parseInt(process.env.EDIT_MAX_MATCHES || '1000')
+const EDIT_MAX_CONTEXT_LENGTH = parseInt(process.env.EDIT_MAX_CONTEXT_LENGTH || '150')
+
+// Confidence calculation constants
+const CONFIDENCE_EXACT_MATCH_BONUS = 0.1
+const CONFIDENCE_LONGER_MATCH_BONUS = 0.1
+const CONFIDENCE_NOT_AT_BEGINNING_BONUS = 0.05
+const CONFIDENCE_NOT_AT_BEGINNING_THRESHOLD = 10
+const CONFIDENCE_LONG_STRING_BONUS = 0.1
+const CONFIDENCE_LONG_STRING_THRESHOLD = 50
+const ERROR_CONTEXT_PREVIEW_LENGTH = 50 // Characters to show in error messages
+
 function normalizeLineEndings(text: string): string {
   return text.replaceAll("\r\n", "\n")
 }
@@ -31,6 +44,9 @@ export const EditTool = Tool.define("edit", {
     oldString: z.string().describe("The text to replace"),
     newString: z.string().describe("The text to replace it with (must be different from oldString)"),
     replaceAll: z.boolean().optional().describe("Replace all occurrences of oldString (default false)"),
+    occurrence: z.number().optional().describe("Replace the Nth occurrence (1-based index) when multiple matches exist"),
+    autoContext: z.boolean().optional().describe("Automatically expand context when multiple matches are found (default true)"),
+    confidence: z.number().min(0).max(1).optional().describe("Minimum confidence threshold for automatic selection (0-1, default 0.8)"),
   }),
   async execute(params, ctx) {
     // Comprehensive input validation
@@ -65,6 +81,19 @@ export const EditTool = Tool.define("edit", {
       throw new Error(`String parameters too long: max ${TOOL.MAX_LENGTH} characters allowed`)
     }
 
+    // Validate new parameters
+    if (params.occurrence !== undefined && params.occurrence < 1) {
+      throw new Error("occurrence must be a positive integer (1-based index)")
+    }
+
+    if (params.confidence !== undefined && (params.confidence < 0 || params.confidence > 1)) {
+      throw new Error("confidence must be between 0 and 1")
+    }
+
+    // Set defaults
+    const autoContext = params.autoContext !== false // default true
+    const confidence = params.confidence ?? 0.8 // default 0.8
+
     // BEST OF BOTH WORLDS: Use Filesystem.resolvePath which handles both absolute and relative paths
     const filePath = Filesystem.resolvePath(Instance.directory, params.filePath)
     await assertExternalDirectory(ctx, filePath)
@@ -72,18 +101,30 @@ export const EditTool = Tool.define("edit", {
     let diff = ""
     let contentOld = ""
     let contentNew = ""
-    await FileTime.withLock(filePath, async () => {
-      const file = Bun.file(filePath)
-      const stats = await file.stat().catch(() => { })
-      if (!stats) throw new Error(`File ${filePath} not found`)
-      if (stats.isDirectory()) throw new Error(`Path is a directory, not a file: ${filePath}`)
-      await FileTime.assert(ctx.sessionID, filePath)
-      contentOld = await file.text()
-      contentNew = replace(contentOld, params.oldString, params.newString, params.replaceAll)
 
+    // Read file content outside lock to avoid holding lock during expensive operations
+    const file = Bun.file(filePath)
+    const stats = await file.stat().catch(() => { })
+    if (!stats) throw new Error(`File ${filePath} not found`)
+    if (stats.isDirectory()) throw new Error(`Path is a directory, not a file: ${filePath}`)
+
+    await FileTime.assert(ctx.sessionID, filePath)
+    contentOld = await file.text()
+
+    // Perform expensive match collection and processing outside lock
+    contentNew = replace(contentOld, params.oldString, params.newString, params.replaceAll, {
+      occurrence: params.occurrence,
+      autoContext,
+      confidence
+    })
+
+    // Now acquire lock only for final file operations
+    await FileTime.withLock(filePath, async () => {
+      // Create diff for permission request
       diff = trimDiff(
         createTwoFilesPatch(filePath, filePath, normalizeLineEndings(contentOld), normalizeLineEndings(contentNew)),
       )
+
       await ctx.ask({
         permission: "edit",
         patterns: [path.relative(Instance.worktree, filePath)],
@@ -340,76 +381,18 @@ export const BlockAnchorReplacer: Replacer = function* (content, find) {
 }
 
 export const WhitespaceNormalizedReplacer: Replacer = function* (content, find) {
-  // Validate pattern length upfront to prevent ReDoS attacks
-  if (find.length > TOOL.MAX_PATTERN_LENGTH) {
-    throw new Error(`Search pattern too long: ${find.length} characters (max: ${TOOL.MAX_PATTERN_LENGTH})`)
-  }
-
+  // Simplified version for debugging
   const normalizeWhitespace = (text: string) => text.replace(/\s+/g, " ").trim()
   const normalizedFind = normalizeWhitespace(find)
 
-  // Handle single line matches
   const lines = content.split("\n")
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]
+  for (const line of lines) {
     if (normalizeWhitespace(line) === normalizedFind) {
       yield line
     } else {
-      // Only check for substring matches if the full line doesn't match
-      const normalizedLine = normalizeWhitespace(line)
-      if (normalizedLine.includes(normalizedFind)) {
-        // Find the actual substring in the original line that matches
-        const words = find.trim().split(/\s+/)
-        if (words.length > 0 && words.length <= TOOL.MAX_WORD_COUNT) {
-          // Additional validation to prevent ReDoS attacks
-          const hasExcessiveRepetition = /\*{5,}/.test(find) || /\+{5,}/.test(find)
-          const hasComplexAlternation = /\|.*\|/.test(find) && find.split('|').length > 10
-          const hasNestedQuantifiers = /\(.*\{.*,.*\}/.test(find)
-
-          if (hasExcessiveRepetition || hasComplexAlternation || hasNestedQuantifiers) {
-            // Pattern too complex, fall back to simple substring matching
-            const simpleMatch = line.includes(find)
-            if (simpleMatch) {
-              yield find
-            }
-            return
-          }
-
-          // Use safe string-based matching with position tracking
-          const lineWords = line.split(/\s+/)
-          const findWords = words
-
-          // Find matching sequence using sliding window approach
-          for (let i = 0; i <= lineWords.length - findWords.length; i++) {
-            let matchCount = 0
-            for (let j = 0; j < findWords.length; j++) {
-              // Simple word matching with length constraints
-              const lineWord = lineWords[i + j]
-              const findWord = findWords[j]
-
-              if (lineWord && findWord &&
-                lineWord.length <= TOOL.MAX_PATTERN_LENGTH &&
-                findWord.length <= TOOL.MAX_PATTERN_LENGTH &&
-                lineWord.toLowerCase().includes(findWord.toLowerCase())) {
-                matchCount++
-              }
-            }
-
-            if (matchCount === findWords.length) {
-              // Found complete match, reconstruct the original substring
-              const startIdx = lineWords.slice(0, i).join(' ').length
-              const endIdx = startIdx + lineWords.slice(i, i + findWords.length).join(' ').length
-              yield line.substring(startIdx, endIdx)
-              return
-            }
-          }
-
-          // Fallback to simple substring matching
-          const simpleMatch = line.includes(find)
-          if (simpleMatch) {
-            yield find
-          }
-        }
+      // Check for substring match
+      if (normalizeWhitespace(line).includes(normalizedFind)) {
+        yield find // Just return the original search string
       }
     }
   }
@@ -626,12 +609,46 @@ export function trimDiff(diff: string): string {
   return trimmedLines.join("\n")
 }
 
-export function replace(content: string, oldString: string, newString: string, replaceAll = false): string {
+interface ReplaceOptions {
+  occurrence?: number
+  autoContext?: boolean
+  confidence?: number
+}
+
+export function replace(
+  content: string,
+  oldString: string,
+  newString: string,
+  replaceAll = false,
+  options: ReplaceOptions = {}
+): string {
   if (oldString === newString) {
     throw new Error("No changes to apply: oldString and newString are identical.")
   }
 
+  // Collect all matches with their positions and context
   let notFound = true
+  const allMatches: Array<{
+    search: string
+    index: number
+    line: number
+    context: string
+    confidence: number
+  }> = []
+
+  // Memory management limits to prevent excessive memory usage
+  const MAX_MATCHES = 1000 // Maximum total matches to collect
+  const MAX_CONTEXT_LENGTH = 150 // Reduced from 200 to save memory
+  let totalMatchesCollected = 0
+
+  // Context and confidence calculation constants
+  const CONFIDENCE_EXACT_MATCH_BONUS = 0.1
+  const CONFIDENCE_LONGER_MATCH_BONUS = 0.1
+  const CONFIDENCE_NOT_AT_BEGINNING_BONUS = 0.05
+  const CONFIDENCE_LONG_STRING_BONUS = 0.1
+  const CONFIDENCE_NOT_AT_BEGINNING_THRESHOLD = 10
+  const CONFIDENCE_LONG_STRING_THRESHOLD = 50
+  const ERROR_CONTEXT_PREVIEW_LENGTH = 50 // Characters to show in error messages
 
   for (const replacer of [
     SimpleReplacer,
@@ -644,16 +661,71 @@ export function replace(content: string, oldString: string, newString: string, r
     ContextAwareReplacer,
     MultiOccurrenceReplacer,
   ]) {
-    for (const search of replacer(content, oldString)) {
-      const index = content.indexOf(search)
-      if (index === -1) continue
-      notFound = false
-      if (replaceAll) {
-        return content.replaceAll(search, newString)
+    // Special handling for MultiOccurrenceReplacer to get actual positions
+    if (replacer === MultiOccurrenceReplacer) {
+      let startIndex = 0
+      while (true) {
+        // Memory limit check
+        if (totalMatchesCollected >= MAX_MATCHES) {
+          console.warn(`Edit tool: Reached maximum match limit (${MAX_MATCHES}) to prevent memory exhaustion`)
+          break
+        }
+
+        const index = content.indexOf(oldString, startIndex)
+        if (index === -1) break
+        notFound = false
+
+        // Calculate line number and extract context
+        const lines = content.substring(0, index).split('\n')
+        const lineNumber = lines.length
+        const contextStart = Math.max(0, index - MAX_CONTEXT_LENGTH)
+        const contextEnd = Math.min(content.length, index + oldString.length + MAX_CONTEXT_LENGTH)
+        const context = content.substring(contextStart, contextEnd)
+
+        allMatches.push({
+          search: oldString,
+          index,
+          line: lineNumber,
+          context: context.trim(),
+          confidence: 1.0
+        })
+        totalMatchesCollected++
+        startIndex = index + oldString.length
       }
-      const lastIndex = content.lastIndexOf(search)
-      if (index !== lastIndex) continue
-      return content.substring(0, index) + newString + content.substring(index + search.length)
+    } else {
+      for (const search of replacer(content, oldString)) {
+        // Memory limit check
+        if (totalMatchesCollected >= MAX_MATCHES) {
+          console.warn(`Edit tool: Reached maximum match limit (${MAX_MATCHES}) to prevent memory exhaustion`)
+          break
+        }
+
+        const index = content.indexOf(search)
+        if (index === -1) continue
+        notFound = false
+
+        // Calculate line number and extract context
+        const lines = content.substring(0, index).split('\n')
+        const lineNumber = lines.length
+        const contextStart = Math.max(0, index - MAX_CONTEXT_LENGTH)
+        const contextEnd = Math.min(content.length, index + search.length + MAX_CONTEXT_LENGTH)
+        const context = content.substring(contextStart, contextEnd)
+
+        // Calculate confidence based on various factors
+        let confidence = 1.0
+        if (replacer !== SimpleReplacer) confidence += CONFIDENCE_EXACT_MATCH_BONUS
+        if (search.length > oldString.length) confidence += CONFIDENCE_LONGER_MATCH_BONUS
+        if (lineNumber > CONFIDENCE_NOT_AT_BEGINNING_THRESHOLD) confidence += CONFIDENCE_NOT_AT_BEGINNING_BONUS
+
+        allMatches.push({
+          search,
+          index,
+          line: lineNumber,
+          context: context.trim(),
+          confidence: Math.min(confidence, 1.0)
+        })
+        totalMatchesCollected++
+      }
     }
   }
 
@@ -662,5 +734,181 @@ export function replace(content: string, oldString: string, newString: string, r
       "Could not find oldString in the file. It must match exactly, including whitespace, indentation, and line endings.",
     )
   }
-  throw new Error("Found multiple matches for oldString. Provide more surrounding context to make the match unique.")
+
+  // Handle replaceAll case
+  if (replaceAll) {
+    // Group by unique search strings and replace all
+    const uniqueSearches = [...new Set(allMatches.map(m => m.search))]
+    let result = content
+    for (const search of uniqueSearches) {
+      result = result.replaceAll(search, newString)
+    }
+    return result
+  }
+
+  // Filter unique matches by position
+  const uniqueMatches = allMatches.filter((match, index, self) =>
+    index === self.findIndex(m => m.index === match.index)
+  )
+
+  // Handle explicit occurrence selection
+  if (options.occurrence) {
+    const targetIndex = options.occurrence - 1 // Convert to 0-based
+    if (targetIndex >= uniqueMatches.length) {
+      throw new Error(`occurrence ${options.occurrence} is out of range. Found ${uniqueMatches.length} matches.`)
+    }
+    const match = uniqueMatches[targetIndex]
+    return content.substring(0, match.index) + newString + content.substring(match.index + match.search.length)
+  }
+
+  // If only one unique match, use it
+  if (uniqueMatches.length === 1) {
+    const match = uniqueMatches[0]
+    return content.substring(0, match.index) + newString + content.substring(match.index + match.search.length)
+  }
+
+  // Try auto context expansion if enabled
+  if (options.autoContext !== false) {
+    try {
+      const expandedResult = tryWithContextExpansion(content, oldString, newString, options.confidence || 0.8)
+      if (expandedResult) {
+        return expandedResult
+      }
+    } catch (error) {
+      // Context expansion failed, continue to enhanced error
+    }
+  }
+
+  // Create enhanced error with match information
+  const matchInfo = uniqueMatches.map((match, index) =>
+    `Match ${index + 1} (line ${match.line}): ${match.context.substring(0, ERROR_CONTEXT_PREVIEW_LENGTH)}${match.context.length > ERROR_CONTEXT_PREVIEW_LENGTH ? '...' : ''}`
+  ).join('\n')
+
+  const suggestions = [
+    "Add more surrounding context to oldString to make it unique",
+    "Use occurrence: N to specify which match to replace",
+    "Set replaceAll: true to replace all occurrences",
+    "Set autoContext: false to disable automatic context expansion"
+  ]
+
+  throw new Error(
+    `Found multiple matches for oldString. Please provide more specific context or use one of these solutions:\n\n` +
+    `Found matches:\n${matchInfo}\n\n` +
+    `Suggested solutions:\n${suggestions.map(s => `- ${s}`).join('\n')}`
+  )
 }
+
+function tryWithContextExpansion(
+  content: string,
+  oldString: string,
+  newString: string,
+  minConfidence: number
+): string | null {
+  // Handle edge cases
+  if (!content || content.length === 0) {
+    return null
+  }
+
+  if (!oldString || oldString.length === 0) {
+    return null
+  }
+
+  // Check if oldString exists in content
+  if (content.indexOf(oldString) === -1) {
+    return null
+  }
+
+  const oldLines = oldString.split('\n')
+  const contentLines = content.split('\n')
+
+  // Find all positions where the oldString matches first
+  const allMatches = []
+  let searchStart = 0
+
+  while (true) {
+    const index = content.indexOf(oldString, searchStart)
+    if (index === -1) break
+
+    // Calculate line number
+    const linesBeforeMatch = content.substring(0, index).split('\n').length - 1
+    allMatches.push({
+      index,
+      lineNumber: linesBeforeMatch
+    })
+    searchStart = index + 1
+  }
+
+  // If there's only one match, no need for context expansion
+  if (allMatches.length <= 1) {
+    return content.replace(oldString, newString)
+  }
+
+  // Try expanding context gradually (1, 2, 3 lines before/after)
+  for (let expansion = 1; expansion <= 3; expansion++) {
+    const expandedMatches = []
+
+    // For each match, create expanded context
+    for (const match of allMatches) {
+      const startLine = Math.max(0, match.lineNumber - expansion)
+      const endLine = Math.min(contentLines.length - 1, match.lineNumber + oldLines.length - 1 + expansion)
+
+      // Extract expanded context
+      const contextLines = []
+      for (let i = startLine; i <= endLine; i++) {
+        contextLines.push(contentLines[i])
+      }
+      const expandedOldString = contextLines.join('\n')
+
+      expandedMatches.push({
+        expandedString: expandedOldString,
+        originalIndex: match.index,
+        lineNumber: match.lineNumber
+      })
+    }
+
+    // Count how many times each expanded string appears among all matches
+    const expandedStringCounts = new Map<string, number>()
+    for (const expanded of expandedMatches) {
+      const count = expandedMatches.filter(m => m.expandedString === expanded.expandedString).length
+      expandedStringCounts.set(expanded.expandedString, count)
+    }
+
+    // Look for expanded strings that appear exactly once AND have high confidence
+    for (const match of expandedMatches) {
+      const count = expandedStringCounts.get(match.expandedString) || 0
+      if (count === 1) {
+        // Calculate confidence based on context expansion
+        let confidence = 0.2 // Lower base confidence
+
+        // Higher confidence for more context expansion
+        confidence += expansion * 0.15
+
+        // Higher confidence if the match is not at the very beginning or end
+        if (match.lineNumber > expansion && match.lineNumber < contentLines.length - oldLines.length - expansion) {
+          confidence += 0.15
+        }
+
+        // Higher confidence for longer original strings
+        if (oldString.length > CONFIDENCE_LONG_STRING_THRESHOLD) {
+          confidence += CONFIDENCE_LONG_STRING_BONUS
+        }
+
+        // Higher confidence if there are other groups with multiple matches (indicating good differentiation)
+        const otherGroupsCount = Array.from(expandedStringCounts.values()).filter(c => c > 1).length
+        if (otherGroupsCount > 0) {
+          confidence += 0.15
+        }
+
+        // Only use this match if it meets the confidence threshold
+        if (confidence >= minConfidence) {
+          const expandedNewString = match.expandedString.replace(oldString, newString)
+          return content.replace(match.expandedString, expandedNewString)
+        }
+      }
+    }
+  }
+
+  return null // No unique match found with context expansion
+}
+
+export { tryWithContextExpansion }
