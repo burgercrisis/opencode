@@ -445,11 +445,11 @@ class WorkerManager {
     this.initializationPromise = null
 
     // Clear all pending requests immediately to avoid memory leaks
-    this.pending.forEach((promise) => {
+    this.pending.forEach((promise, id) => {
       try {
         promise.reject(new Error('Worker reset'))
       } catch (e) {
-        // Ignore rejection errors
+        console.warn(`Failed to reject pending promise ${id}:`, e)
       }
     })
     this.pending.clear()
@@ -471,9 +471,10 @@ class WorkerManager {
       this.reset()
     }
 
-    this.state = WorkerState.INITIALIZING
-
+    // Set promise immediately to prevent race conditions
     this.initializationPromise = new Promise((resolve, reject) => {
+      this.state = WorkerState.INITIALIZING
+
       const initId = this.nextId++
       const startTime = performance.now()
 
