@@ -13,6 +13,8 @@ import { LSP } from "../lsp"
 import { Filesystem } from "../util/filesystem"
 import DESCRIPTION from "./apply_patch.txt"
 import { File } from "../file"
+import { FileTime } from "../file/time"
+import { TOOL } from "../constants"
 
 const PatchParams = z.object({
   patchText: z.string().describe("The full patch text that describes all changes to be made"),
@@ -48,8 +50,8 @@ export const ApplyPatchTool = Tool.define<
           change.added
             ? { ...cAcc, additions: cAcc.additions + (change.count || 0) }
             : change.removed
-            ? { ...cAcc, deletions: cAcc.deletions + (change.count || 0) }
-            : cAcc,
+              ? { ...cAcc, deletions: cAcc.deletions + (change.count || 0) }
+              : cAcc,
         { additions: 0, deletions: 0 },
       )
 
@@ -78,6 +80,7 @@ export const ApplyPatchTool = Tool.define<
         }
 
         if (first.type === "delete") {
+          await FileTime.assert(ctx.sessionID, filePath)
           const old = await Bun.file(filePath).text()
           const diff = trimDiff(createTwoFilesPatch(filePath, filePath, old, ""))
           return {
@@ -94,6 +97,7 @@ export const ApplyPatchTool = Tool.define<
         const file = Bun.file(filePath)
         if (!(await file.exists())) throw new Error(`apply_patch verification failed: Failed to read file to update: ${filePath}`)
 
+        await FileTime.assert(ctx.sessionID, filePath)
         const old = await file.text()
         const update = await fileHunks.reduce(async (contentPromise, hunk) => {
           const currentContent = await contentPromise
@@ -195,11 +199,19 @@ export const ApplyPatchTool = Tool.define<
       await Bus.publish(FileWatcher.Event.Updated, update)
     }
 
+    // Update file time tracking for all modified files
     for (const change of fileChanges) {
       if (change.type === "delete") continue
       const target = change.movePath ?? change.filePath
-      await LSP.touchFile(target, true)
+      FileTime.read(ctx.sessionID, target)
     }
+
+    // Batch LSP operations for better performance
+    const lspTargets = fileChanges
+      .filter(change => change.type !== "delete")
+      .map(change => change.movePath ?? change.filePath)
+
+    await Promise.all(lspTargets.map(target => LSP.touchFile(target, true)))
 
     const diagnostics = await LSP.diagnostics()
     const summaryLines = fileChanges.map((change) => {
@@ -214,7 +226,6 @@ export const ApplyPatchTool = Tool.define<
     })
     let output = `Success. Updated the following files:\n${summaryLines.join("\n")}`
 
-    const MAX_DIAGNOSTICS_PER_FILE = 20
     for (const change of fileChanges) {
       if (change.type === "delete") continue
       const target = change.movePath ?? change.filePath
@@ -222,9 +233,9 @@ export const ApplyPatchTool = Tool.define<
       const issues = diagnostics[normalized] ?? []
       const errors = issues.filter((item) => item.severity === 1)
       if (errors.length > 0) {
-        const limited = errors.slice(0, MAX_DIAGNOSTICS_PER_FILE)
+        const limited = errors.slice(0, TOOL.MAX_DIAGNOSTICS_PER_FILE)
         const suffix =
-          errors.length > MAX_DIAGNOSTICS_PER_FILE ? `\n... and ${errors.length - MAX_DIAGNOSTICS_PER_FILE} more` : ""
+          errors.length > TOOL.MAX_DIAGNOSTICS_PER_FILE ? `\n... and ${errors.length - TOOL.MAX_DIAGNOSTICS_PER_FILE} more` : ""
         output += `\n\nLSP errors detected in ${path.relative(Instance.worktree, target)}, please fix:\n<diagnostics file="${target}">\n${limited.map(LSP.Diagnostic.pretty).join("\n")}${suffix}\n</diagnostics>`
       }
     }

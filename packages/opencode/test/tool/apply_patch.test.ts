@@ -3,6 +3,7 @@ import { ApplyPatchTool } from "../../src/tool/apply_patch"
 import { Patch } from "../../src/patch"
 import { Instance } from "../../src/project/instance"
 import { tmpdir } from "../fixture/fixture"
+import { FileTime } from "../../src/file/time"
 import * as fs from "fs/promises"
 import path from "path"
 
@@ -92,7 +93,7 @@ describe("ApplyPatchTool", () => {
 
         expect(result.output).toContain("Success. Updated the following files")
         expect(result.output).toContain("A new.txt")
-        
+
         const newFile = path.join(tmp.path, "new.txt")
         expect(await Bun.file(newFile).exists()).toBe(true)
         // ApplyPatchTool adds a newline if it's missing
@@ -108,6 +109,7 @@ describe("ApplyPatchTool", () => {
       fn: async () => {
         const file = path.join(tmp.path, "old.txt")
         await fs.writeFile(file, "old content")
+        FileTime.read(ctx.sessionID, file) // Mark file as read before deletion
 
         vi.spyOn(Patch, "safeParsePatch").mockReturnValue({
           success: true,
@@ -131,6 +133,7 @@ describe("ApplyPatchTool", () => {
       fn: async () => {
         const file = path.join(tmp.path, "file.txt")
         await fs.writeFile(file, "original content\n")
+        FileTime.read(ctx.sessionID, file) // Mark file as read before update
 
         vi.spyOn(Patch, "safeParsePatch").mockReturnValue({
           success: true,
@@ -157,6 +160,7 @@ describe("ApplyPatchTool", () => {
         const oldFile = path.join(tmp.path, "old.txt")
         const newFile = path.join(tmp.path, "new.txt")
         await fs.writeFile(oldFile, "content\n")
+        FileTime.read(ctx.sessionID, oldFile) // Mark file as read before move
 
         vi.spyOn(Patch, "safeParsePatch").mockReturnValue({
           success: true,
@@ -183,6 +187,7 @@ describe("ApplyPatchTool", () => {
       fn: async () => {
         const file = path.join(tmp.path, "file.txt")
         await fs.writeFile(file, "content\n")
+        FileTime.read(ctx.sessionID, file) // Mark file as read before update
 
         vi.spyOn(Patch, "safeParsePatch").mockReturnValue({
           success: true,
@@ -207,6 +212,7 @@ describe("ApplyPatchTool", () => {
       fn: async () => {
         const file = path.join(tmp.path, "file.ts")
         await fs.writeFile(file, "content\n")
+        FileTime.read(ctx.sessionID, file) // Mark file as read before update
 
         vi.spyOn(Patch, "safeParsePatch").mockReturnValue({
           success: true,
@@ -222,7 +228,7 @@ describe("ApplyPatchTool", () => {
           message: `Error ${i}`,
           range: { start: { line: i, character: 0 }, end: { line: i, character: 10 } }
         }))
-        
+
         vi.spyOn(LSP, "diagnostics").mockResolvedValue({
           [Filesystem.normalizePath(file)]: errors as any
         })
