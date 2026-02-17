@@ -9,17 +9,20 @@ export namespace Lock {
 
   // Lock timeout to prevent stale locks - 30 minutes
   const LOCK_TIMEOUT_MS = 30 * 60 * 1000
+  // Lock acquisition timeout to prevent hanging - 5 minutes
+  const LOCK_ACQUISITION_TIMEOUT_MS = 5 * 60 * 1000
 
   // Test mode - shorter timeout for faster tests
   const TEST_MODE = typeof Bun !== 'undefined' && Bun.env?.NODE_ENV === 'test'
   const CLEANUP_INTERVAL_MS = TEST_MODE ? 100 : 5 * 60 * 1000
   const LOCK_TIMEOUT_TEST_MS = TEST_MODE ? 200 : LOCK_TIMEOUT_MS
+  const LOCK_ACQUISITION_TIMEOUT_TEST_MS = TEST_MODE ? 1000 : LOCK_ACQUISITION_TIMEOUT_MS
 
   interface LockEntry {
     readers: number
     writer: boolean
-    waitingReaders: Array<{ resolve: (value: Disposable) => void; reject: (reason?: any) => void }>
-    waitingWriters: Array<{ resolve: (value: Disposable) => void; reject: (reason?: any) => void }>
+    waitingReaders: Array<{ resolve: (value: Disposable) => void; reject: (reason?: any) => void; timestamp: number }>
+    waitingWriters: Array<{ resolve: (value: Disposable) => void; reject: (reason?: any) => void; timestamp: number }>
     // Track reader acquisition count for fairness
     readerAcquireCount: number
     // Track creation time for timeout cleanup
@@ -62,29 +65,18 @@ export namespace Lock {
         const waitingReaders = lock.waitingReaders.splice(0)
         const waitingWriters = lock.waitingWriters.splice(0)
 
-        // Call waiters with proper rejection
-        try {
-          waitingReaders.forEach(waiter => {
-            try {
-              if (waiter && typeof waiter.reject === 'function') {
-                waiter.reject(new Error("Lock cleaned up due to timeout"))
-              }
-            } catch (error) {
-              // Ignore individual waiter errors during cleanup
-            }
-          })
-          waitingWriters.forEach(waiter => {
-            try {
-              if (waiter && typeof waiter.reject === 'function') {
-                waiter.reject(new Error("Lock cleaned up due to timeout"))
-              }
-            } catch (error) {
-              // Ignore individual waiter errors during cleanup
-            }
-          })
-        } catch (error) {
-          // Ignore any errors during cleanup
-        }
+        // Reject waiters with timeout error
+        const timeoutError = new Error("Lock cleaned up due to timeout")
+        waitingReaders.forEach(waiter => {
+          if (waiter && typeof waiter.reject === 'function') {
+            waiter.reject(timeoutError)
+          }
+        })
+        waitingWriters.forEach(waiter => {
+          if (waiter && typeof waiter.reject === 'function') {
+            waiter.reject(timeoutError)
+          }
+        })
 
         locks.delete(key)
       }
@@ -104,8 +96,10 @@ export namespace Lock {
         lastActivity: now,
       })
       // Start cleanup scheduler on first lock creation
-      // Temporarily disabled for testing
-      // startCleanupScheduler()
+      // Only start in non-test environments to avoid interference with tests
+      if (!TEST_MODE) {
+        startCleanupScheduler()
+      }
     }
     return locks.get(key)!
   }
@@ -167,17 +161,20 @@ export namespace Lock {
 
   export async function read(key: string): Promise<Disposable> {
     const lock = get(key)
-
-    // Update activity timestamp when lock is accessed
-    lock.lastActivity = Date.now()
+    const acquisitionTimeout = TEST_MODE ? LOCK_ACQUISITION_TIMEOUT_TEST_MS : LOCK_ACQUISITION_TIMEOUT_MS
 
     // Check limits to prevent unbounded queue growth
     if (lock.waitingReaders.length >= MAX_WAITING_READERS) {
       throw new Error(`Lock reader queue exceeded maximum size for key: ${key}`)
     }
 
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        reject(new Error(`Lock acquisition timeout for key: ${key}`))
+      }, acquisitionTimeout)
+
       if (!lock.writer && lock.waitingWriters.length === 0 && lock.readers < MAX_CONCURRENT_READERS) {
+        clearTimeout(timeoutId)
         lock.readers++
         lock.readerAcquireCount++
         lock.lastActivity = Date.now()
@@ -188,16 +185,24 @@ export namespace Lock {
           },
         })
       } else {
-        lock.waitingReaders.push(() => {
-          lock.readers++
-          lock.readerAcquireCount++
-          lock.lastActivity = Date.now()
-          resolve({
-            [Symbol.dispose]: () => {
-              lock.readers--
-              process(key)
-            },
-          })
+        lock.waitingReaders.push({
+          resolve: () => {
+            clearTimeout(timeoutId)
+            lock.readers++
+            lock.readerAcquireCount++
+            lock.lastActivity = Date.now()
+            resolve({
+              [Symbol.dispose]: () => {
+                lock.readers--
+                process(key)
+              },
+            })
+          },
+          reject: (reason) => {
+            clearTimeout(timeoutId)
+            reject(reason)
+          },
+          timestamp: Date.now()
         })
       }
     })
@@ -205,17 +210,20 @@ export namespace Lock {
 
   export async function write(key: string): Promise<Disposable> {
     const lock = get(key)
-
-    // Update activity timestamp when lock is accessed
-    lock.lastActivity = Date.now()
+    const acquisitionTimeout = TEST_MODE ? LOCK_ACQUISITION_TIMEOUT_TEST_MS : LOCK_ACQUISITION_TIMEOUT_MS
 
     // Check limits to prevent unbounded queue growth
     if (lock.waitingWriters.length >= MAX_WAITING_WRITERS) {
       throw new Error(`Lock writer queue exceeded maximum size for key: ${key}`)
     }
 
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        reject(new Error(`Lock acquisition timeout for key: ${key}`))
+      }, acquisitionTimeout)
+
       if (!lock.writer && lock.readers === 0) {
+        clearTimeout(timeoutId)
         lock.writer = true
         lock.readerAcquireCount = 0
         lock.lastActivity = Date.now()
@@ -226,16 +234,24 @@ export namespace Lock {
           },
         })
       } else {
-        lock.waitingWriters.push(() => {
-          lock.writer = true
-          lock.readerAcquireCount = 0
-          lock.lastActivity = Date.now()
-          resolve({
-            [Symbol.dispose]: () => {
-              lock.writer = false
-              process(key)
-            },
-          })
+        lock.waitingWriters.push({
+          resolve: () => {
+            clearTimeout(timeoutId)
+            lock.writer = true
+            lock.readerAcquireCount = 0
+            lock.lastActivity = Date.now()
+            resolve({
+              [Symbol.dispose]: () => {
+                lock.writer = false
+                process(key)
+              },
+            })
+          },
+          reject: (reason) => {
+            clearTimeout(timeoutId)
+            reject(reason)
+          },
+          timestamp: Date.now()
         })
       }
     })
