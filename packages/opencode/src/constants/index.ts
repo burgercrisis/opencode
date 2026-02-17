@@ -12,36 +12,36 @@ export const LOCK = {
 // Tool system constants
 export const TOOL = {
   // Diagnostics limits
-  MAX_DIAGNOSTICS_PER_FILE: 20,
-  MAX_PROJECT_DIAGNOSTICS_FILES: 5,
-  
+  MAX_DIAGNOSTICS_PER_FILE: 200,
+  MAX_PROJECT_DIAGNOSTICS_FILES: 100,
+
   // Edit tool limits
-  MAX_PATTERN_LENGTH: 1000,
-  MAX_WORD_COUNT: 100,
-  MAX_LENGTH: 1000, // Levenshtein algorithm
-  
+  MAX_PATTERN_LENGTH: 10000,
+  MAX_WORD_COUNT: 50000,
+  MAX_LENGTH: 500000, // Levenshtein algorithm
+
   // Read tool limits
-  DEFAULT_READ_LIMIT: 2000,
-  MAX_BYTES: 50 * 1024,
-  
+  DEFAULT_READ_LIMIT: 20000,
+  MAX_BYTES: 2 * 1024 * 1024, // 2MB
+
   // Webfetch limits
-  MAX_RESPONSE_SIZE: 5 * 1024 * 1024, // 5MB
-  WEBFETCH_DEFAULT_TIMEOUT: 30 * 1000, // 30 seconds
-  WEBFETCH_MAX_TIMEOUT: 120 * 1000, // 2 minutes
-  
+  MAX_RESPONSE_SIZE: 50 * 1024 * 1024, // 50MB
+  WEBFETCH_DEFAULT_TIMEOUT: 60 * 1000, // 60 seconds
+  WEBFETCH_MAX_TIMEOUT: 300 * 1000, // 5 minutes
+
   // Bash tool limits
-  MAX_METADATA_LENGTH: 30_000,
-  BASH_DEFAULT_TIMEOUT: 2 * 60 * 1000, // 2 minutes
-  
+  MAX_METADATA_LENGTH: 100_000,
+  BASH_DEFAULT_TIMEOUT: 10 * 60 * 1000, // 10 minutes
+
   // Grep tool limits
-  MAX_LINE_LENGTH: 2000,
-  MATCH_LIMIT: 250,
+  MAX_LINE_LENGTH: 50000,
+  MATCH_LIMIT: 5000,
 } as const
 
 // Truncation constants
 export const TRUNCATE = {
-  MAX_LINES: 2000,
-  MAX_BYTES: 50 * 1024,
+  MAX_LINES: 10000,
+  MAX_BYTES: 10 * 1024 * 1024, // 10MB
   RETENTION_MS: 7 * 24 * 60 * 60 * 1000, // 7 days
 } as const
 
@@ -53,8 +53,8 @@ export const SNAPSHOT = {
 
 // CLI constants
 export const CLI = {
-  MAX_STASH_ENTRIES: 50,
-  MAX_FRECENCY_ENTRIES: 1000,
-  MAX_HISTORY_ENTRIES: 50,
-  MAX_RETRIES: 120,
+  MAX_STASH_ENTRIES: 200,
+  MAX_FRECENCY_ENTRIES: 5000,
+  MAX_HISTORY_ENTRIES: 200,
+  MAX_RETRIES: 300,
 } as const
