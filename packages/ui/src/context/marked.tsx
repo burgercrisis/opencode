@@ -414,6 +414,8 @@ class WorkerManager {
   private nextId = 0
   private state: WorkerState = WorkerState.INITIALIZING
   private initializationPromise: Promise<void> | null = null
+  private isShuttingDown = false
+  private stateLock = false
 
   /**
    * Get current worker metrics
@@ -434,14 +436,30 @@ class WorkerManager {
   }
 
   /**
+   * Atomic state transition with proper locking
+   */
+  private setState(newState: WorkerState): void {
+    if (this.stateLock) return
+    this.stateLock = true
+    this.state = newState
+    this.stateLock = false
+  }
+
+  /**
    * Reset worker to ERROR state and clean up resources
    */
   reset(): void {
+    this.isShuttingDown = true
+
     if (this.worker) {
-      this.worker.terminate()
+      try {
+        this.worker.terminate()
+      } catch (e) {
+        console.warn('Failed to terminate worker:', e)
+      }
     }
     this.worker = undefined
-    this.state = WorkerState.INITIALIZING
+    this.setState(WorkerState.INITIALIZING)
     this.initializationPromise = null
 
     // Clear all pending requests immediately to avoid memory leaks
@@ -453,12 +471,17 @@ class WorkerManager {
       }
     })
     this.pending.clear()
+    this.isShuttingDown = false
   }
 
   /**
    * Initialize worker with proper timeout and state management
    */
   async initialize(): Promise<void> {
+    if (this.isShuttingDown) {
+      throw new Error('Worker is shutting down')
+    }
+
     if (this.state === WorkerState.READY) {
       return Promise.resolve()
     }
@@ -473,27 +496,33 @@ class WorkerManager {
 
     // Set promise immediately to prevent race conditions
     this.initializationPromise = new Promise((resolve, reject) => {
-      this.state = WorkerState.INITIALIZING
+      this.setState(WorkerState.INITIALIZING)
 
       const initId = this.nextId++
       const startTime = performance.now()
 
       const timeout = setTimeout(() => {
+        if (this.isShuttingDown) return
+
         const promise = this.pending.get(initId)
         if (promise) {
           this.pending.delete(initId)
-          this.state = WorkerState.ERROR
+          this.setState(WorkerState.ERROR)
           this.initializationPromise = null
-          this.metrics.errorCount++
+          if (this.config.enableMetrics) {
+            this.metrics.errorCount++
+          }
           reject(new Error('Worker initialization timeout'))
         }
       }, this.config.workerTimeout)
 
       this.pending.set(initId, {
         resolve: () => {
+          if (this.isShuttingDown) return
+
           clearTimeout(timeout)
           this.pending.delete(initId)
-          this.state = WorkerState.READY
+          this.setState(WorkerState.READY)
           this.initializationPromise = null
 
           // Record initialization metrics
@@ -504,9 +533,11 @@ class WorkerManager {
           resolve()
         },
         reject: (err) => {
+          if (this.isShuttingDown) return
+
           clearTimeout(timeout)
           this.pending.delete(initId)
-          this.state = WorkerState.ERROR
+          this.setState(WorkerState.ERROR)
           this.initializationPromise = null
           reject(err)
         }
@@ -518,7 +549,7 @@ class WorkerManager {
       } else {
         clearTimeout(timeout)
         this.pending.delete(initId)
-        this.state = WorkerState.ERROR
+        this.setState(WorkerState.ERROR)
         this.initializationPromise = null
         reject(new Error('Failed to create worker'))
       }
@@ -540,6 +571,8 @@ class WorkerManager {
         const { id, type, html, error } = e.data
         const promise = this.pending.get(id)
         if (!promise) return
+
+        // Remove promise before processing to prevent race conditions
         this.pending.delete(id)
 
         if (type === "enhanced") {
@@ -557,11 +590,18 @@ class WorkerManager {
 
       this.worker.onerror = (error) => {
         console.error('Worker error:', error)
-        this.state = WorkerState.ERROR
-        // Reject all pending promises on worker error
-        this.pending.forEach((promise, id) => {
-          promise.reject(new Error('Worker encountered an error'))
-          this.pending.delete(id)
+        this.setState(WorkerState.ERROR)
+
+        // Clean up all pending promises on worker error
+        const pendingPromises = Array.from(this.pending.entries())
+        this.pending.clear()
+
+        pendingPromises.forEach(([id, promise]) => {
+          try {
+            promise.reject(new Error('Worker encountered an error'))
+          } catch (e) {
+            console.warn(`Failed to reject pending promise ${id}:`, e)
+          }
         })
       }
     }
@@ -569,9 +609,21 @@ class WorkerManager {
   }
 
   /**
+   * Terminate worker and clean up all resources
+   */
+  terminate(): void {
+    this.reset()
+    this.setState(WorkerState.TERMINATED)
+  }
+
+  /**
    * Send message to worker with timeout and metrics collection
    */
   async sendMessageWithTimeout<T>(message: Omit<WorkerMessage, 'id'>, timeoutMs?: number): Promise<T> {
+    if (this.isShuttingDown) {
+      throw new Error('Worker is shutting down')
+    }
+
     const id = this.nextId++
     const messageType = message.type
     const startTime = performance.now()
@@ -588,7 +640,7 @@ class WorkerManager {
         resolve: (value) => {
           cleanup()
 
-          // Record metrics for enhancement operations
+          // Record metrics for enhancement operations (throttled)
           if (this.config.enableMetrics && messageType === 'enhance') {
             const duration = performance.now() - startTime
             this.metrics.totalOperations++
@@ -607,6 +659,7 @@ class WorkerManager {
           reject(err)
         }
       })
+
       const w = this.getWorker()
       if (w) {
         w.postMessage({ ...message, id })
@@ -675,7 +728,14 @@ async function enhanceInWorker(html: string): Promise<string> {
     })
   } catch (error) {
     console.error('Worker enhancement failed:', error)
-    return html // Fallback to original HTML
+    // Only fallback if it's a worker error, not for validation errors
+    if (error instanceof Error &&
+      (error.message.includes('Worker') ||
+        error.message.includes('timeout') ||
+        error.message.includes('initialization'))) {
+      return html // Fallback to original HTML
+    }
+    throw error // Re-throw validation and other errors
   }
 }
 
