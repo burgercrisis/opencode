@@ -20,14 +20,80 @@ import { BashArity } from "@/permission/arity"
 import { Truncate } from "./truncation"
 import { Plugin } from "@/plugin"
 import { TOOL } from "../constants"
+import { createUnifiedErrorProcessor, detectShellType } from "./error-processors"
+import type { ShellType } from "./error-processor"
 
 export const log = Log.create({ service: "bash-tool" })
+
+// Unified error processor for all shell types
+const unifiedErrorProcessor = createUnifiedErrorProcessor()
 
 export const _resolveWasm = (asset: string) => {
   if (asset.startsWith("file://")) return fileURLToPath(asset)
   if (asset.startsWith("/") || /^[a-z]:/i.test(asset)) return asset
   const url = new URL(asset, import.meta.url)
   return fileURLToPath(url)
+}
+
+/**
+ * Fallback parser for complex shell constructs when tree-sitter fails
+ * Uses simple string parsing to extract basic command information
+ */
+async function parseCommandWithFallback(command: string, cwd: string): Promise<{
+  directories: Set<string>
+  patterns: Set<string>
+  always: Set<string>
+}> {
+  const directories = new Set<string>()
+  const patterns = new Set<string>()
+  const always = new Set<string>()
+
+  try {
+    // Split on common shell operators to extract individual commands
+    const commands = command.split(/(?:&&|\|\||;|\n|\|)/).map(cmd => cmd.trim()).filter(Boolean)
+
+    for (const cmd of commands) {
+      // Simple tokenization - split on whitespace but respect quotes
+      const tokens = cmd.match(/(?:[^\s"'`]|"(?:\\.|[^"])*"|'(?:\\.|[^'])*'|`(?:\\.|[^`])*`)+/g) || []
+
+      if (tokens.length === 0) continue
+
+      const [commandName, ...args] = tokens
+
+      // Handle common file system commands
+      if (commandName && ["cd", "rm", "cp", "mv", "mkdir", "touch", "chmod", "chown", "cat"].includes(commandName)) {
+        for (const arg of args) {
+          // Skip flags and options
+          if (arg.startsWith("-") || (commandName === "chmod" && arg.startsWith("+"))) continue
+
+          // Remove surrounding quotes if present
+          const cleanArg = arg.replace(/^["'`]|["'`]$/g, '').replace(/\\(.)/g, '$1')
+
+          try {
+            const resolved = path.resolve(cwd, cleanArg)
+            const normalized = Filesystem.normalize(resolved)
+            if (!Instance.containsPath(normalized)) {
+              const dir = (await Filesystem.isDir(normalized)) ? normalized : Filesystem.dirname(normalized)
+              directories.add(dir)
+            }
+          } catch {
+            // If path resolution fails, skip this argument
+            continue
+          }
+        }
+      }
+
+      // Add pattern for non-cd commands
+      if (commandName && commandName !== "cd") {
+        patterns.add(cmd)
+        always.add(commandName + " *")
+      }
+    }
+  } catch (error) {
+    log.warn("Fallback parsing failed", { error, command })
+  }
+
+  return { directories, patterns, always }
 }
 
 const parser = lazy(async () => {
@@ -52,180 +118,45 @@ const parser = lazy(async () => {
 })
 
 /**
- * Processes PowerShell output to improve error handling and user experience
- * @param {string} output - The raw PowerShell command output
- * @param {string} command - The original command that was executed
- * @returns {{output: string, hasErrors: boolean}} Processed output with enhanced error messages and error detection
+ * Process command output using the unified error processing framework
+ * @param output - The raw command output
+ * @param command - The original command that was executed
+ * @param shellType - The type of shell that executed the command
+ * @returns Processed output with enhanced error messages and error detection
  */
-export function processPowerShellOutput(output: string, command: string): { output: string; hasErrors: boolean } {
-  let processed = output
+export function processCommandOutput(
+  output: string,
+  command: string,
+  shellType?: ShellType
+): { output: string; hasErrors: boolean; exitCode?: number } {
+  // Detect shell type if not provided
+  const detectedShellType = shellType || detectShellType(command)
 
-  // 1. Improve non-existent cmdlet error messages with clearer guidance
-  processed = processed.replace(
-    /The term '([^']+)' is not recognized as the name of a cmdlet, function, script file, or operable program\./gi,
-    "Error: Command '$1' not found. Please check the spelling, verify the command name and ensure the required PowerShell module is installed. " +
-    "Try running 'Get-Command $1' to check availability or 'Import-Module <ModuleName>' to load the required module."
-  )
+  // Process using unified framework
+  const result = unifiedErrorProcessor.process(output, command, detectedShellType)
 
-  // Handle the case where Get-NonExistentCmdlet fails with missing mandatory parameters
-  if (processed.includes("Get-NonExistentCmdlet") && processed.includes("Cannot process command because of one or more missing mandatory parameters")) {
-    processed = "Error: Command 'Get-NonExistentCmdlet' not found. Please verify the command name and ensure the required PowerShell module is installed. " +
-      "Try running 'Get-Command Get-NonExistentCmdlet' to check availability or 'Import-Module <ModuleName>' to load the required module."
+  return {
+    output: result.output,
+    hasErrors: result.hasErrors,
+    exitCode: result.exitCode
   }
-
-  // Handle the case where the cmdlet name appears in the error but the specific pattern wasn't matched
-  if (processed.includes("Get-NonExistentCmdlet") && processed.includes("not found") && !processed.includes("Get-Command")) {
-    processed = "Error: Command 'Get-NonExistentCmdlet' not found. Please verify the command name and ensure the required PowerShell module is installed. " +
-      "Try running 'Get-Command Get-NonExistentCmdlet' to check availability or 'Import-Module <ModuleName>' to load the required module."
-  }
-
-  // Handle the case where the error message contains "not found" but doesn't include our enhanced message
-  if (processed.includes("Get-NonExistentCmdlet") && !processed.includes("Get-Command") && !processed.includes("Import-Module")) {
-    processed = "Error: Command 'Get-NonExistentCmdlet' not found. Please verify the command name and ensure the required PowerShell module is installed. " +
-      "Try running 'Get-Command Get-NonExistentCmdlet' to check availability or 'Import-Module <ModuleName>' to load the required module."
-  }
-
-  // Handle alternative error format for non-existent commands
-  processed = processed.replace(
-    /The term '([^']+)' is not recognized/gi,
-    "Error: Command '$1' not found. Please check the spelling and ensure the command is available in your PowerShell session."
-  )
-
-  // 2. Suppress or handle Format-* -First unsupported parameter errors
-  // This is common in older PowerShell versions where -First parameter doesn't exist
-  processed = processed.replace(
-    /(Format-Table|Format-List|Format-Wide|Format-Custom) : A parameter cannot be found that matches parameter name 'First'\./gi,
-    (match, cmdlet) => {
-      // Provide helpful guidance about the limitation
-      return `Note: The -First parameter is not supported in ${cmdlet} for your PowerShell version. ` +
-        "Consider using 'Select-Object -First N' before formatting, or upgrade to PowerShell 7+ for this feature."
-    }
-  )
-
-  // Handle alternative error message format for -First parameter
-  processed = processed.replace(
-    /Format-\w+ : The parameter 'First' is not supported/gi,
-    "Note: The -First parameter is not available in this PowerShell version. Use 'Select-Object -First N' as a workaround."
-  )
-
-  // 3. Handle Get-Credential in non-interactive context with clear fallback message
-  if (processed.includes("Get-Credential") || (processed.trim() === "" && command.includes("Get-Credential"))) {
-    // Handle hanging/timeout scenarios by detecting incomplete credential prompts
-    if (processed.trim() === "" && command.includes("Get-Credential")) {
-      const errorMsg = "Error: Get-Credential requires interactive input but is running in a non-interactive environment. " +
-        "Alternative approaches:\n" +
-        "1. Use stored credentials: $cred = Get-Credential -UserName 'username' -Password (ConvertTo-SecureString 'password' -AsPlainText -Force)\n" +
-        "2. Use Windows Credential Manager: Get-StoredCredential\n" +
-        "3. For automation, consider using certificate-based authentication or service principals."
-      return { output: errorMsg, hasErrors: true }
-    }
-
-    // Handle the main non-interactive error
-    processed = processed.replace(
-      /Get-Credential : Cannot prompt for input in this environment/gi,
-      "Error: Get-Credential requires interactive input but is running in a non-interactive environment. " +
-      "Alternative approaches:\n" +
-      "1. Use stored credentials: $cred = Get-Credential -UserName 'username' -Password (ConvertTo-SecureString 'password' -AsPlainText -Force)\n" +
-      "2. Use Windows Credential Manager: Get-StoredCredential\n" +
-      "3. For automation, consider using certificate-based authentication or service principals."
-    )
-
-    // Handle the case where Get-Credential fails with missing mandatory parameters (non-interactive)
-    if (processed.includes("Cannot process command because of one or more missing mandatory parameters: Credential")) {
-      processed = "Error: Get-Credential requires interactive input but is running in a non-interactive environment. " +
-        "Alternative approaches:\n" +
-        "1. Use stored credentials: $cred = Get-Credential -UserName 'username' -Password (ConvertTo-SecureString 'password' -AsPlainText -Force)\n" +
-        "2. Use Windows Credential Manager: Get-StoredCredential\n" +
-        "3. For automation, consider using certificate-based authentication or service principals."
-    }
-
-    // Handle null reference exceptions that can occur when Get-Credential fails
-    const nullRefPattern = /Object reference not set to an instance of an object\./gi
-    if (nullRefPattern.test(processed)) {
-      // Only replace if this appears to be related to Get-Credential failure
-      if (processed.includes("Get-Credential") && !processed.includes("successfully")) {
-        processed = processed.replace(
-          nullRefPattern,
-          "Error: Get-Credential failed to execute. This typically occurs in non-interactive sessions. " +
-          "Please use alternative authentication methods as suggested above."
-        )
-      }
-      // Keep original error if not related to Get-Credential
-    }
-  }
-
-  // 4. Handle debug-related null reference errors
-  // Detect debug-related NRE patterns when -Debug or Write-Debug was used
-  const debugPattern = /(Write-Debug|-Debug\b|\$DebugPreference)/i
-  if (debugPattern.test(command) || debugPattern.test(processed)) {
-    processed = processed.replace(
-      /Object reference not set to an instance of an object\./gi,
-      "Error: Debug functionality is not supported in non-interactive PowerShell sessions. " +
-      "The -Debug parameter and Write-Debug cmdlet require an interactive host to display debug messages. " +
-      "Alternatives:\n" +
-      "1. Use Write-Verbose instead: Write-Verbose 'Your debug message'\n" +
-      "2. Set $DebugPreference inside your script: $DebugPreference = 'Continue'\n" +
-      "3. Use Write-Host or Write-Output for simple debugging: Write-Host 'Debug: Your message'\n" +
-      "4. For advanced debugging, consider using PowerShell logging: Start-Transcript -Path 'debug.log'"
-    )
-  }
-
-  // Additional general PowerShell error improvements
-  processed = processed.replace(
-    /A positional parameter cannot be found that matches parameter '([^']+)'/gi,
-    "Error: Unknown parameter '$1'. Please check the command syntax and available parameters."
-  )
-
-  processed = processed.replace(
-    /Missing an argument for parameter '([^']+)'/gi,
-    "Error: Missing required value for parameter '$1'. Please provide the necessary argument."
-  )
-
-  // Detect actual PowerShell errors that should result in non-zero exit codes
-  // Focus on Write-Error and other terminal error conditions
-  const hasErrors = (
-    processed.includes("Error: ") ||
-    processed.includes("Write-Error") ||
-    processed.includes("throw") ||
-    processed.includes("Exception") ||
-    processed.includes("not recognized") ||
-    processed.includes("not found") ||
-    processed.includes("cannot be found") ||
-    processed.includes("Object reference not set") ||
-    processed.includes("NullReferenceException") ||
-    /\+ CategoryInfo\s+:/.test(processed) ||
-    /\+ FullyQualifiedErrorId\s+:/.test(processed)
-  )
-
-  return { output: processed, hasErrors }
 }
 
 /**
- * Process CMD command output to fix quote artifacts from variable expansion.
- * @param output The raw output from CMD command execution
- * @param command The original command that was executed
- * @returns Processed output with quote artifacts removed
+ * Legacy function for backward compatibility
+ * @deprecated Use processCommandOutput instead
+ */
+export function processPowerShellOutput(output: string, command: string): { output: string; hasErrors: boolean } {
+  const result = processCommandOutput(output, command, 'powershell')
+  return { output: result.output, hasErrors: result.hasErrors }
+}
+
+/**
+ * Legacy function for backward compatibility
+ * @deprecated Use processCommandOutput instead
  */
 export function processCmdOutput(output: string, command: string): { output: string; hasErrors: boolean; exitCode?: number } {
-  const hasVariables = /%[^%]+%/g.test(command)
-  const cleanOutput = hasVariables ? output.replace(/"$/, "") : output
-
-  // Check for standard CMD "not recognized" error
-  if (cleanOutput.includes("is not recognized as an internal or external command") ||
-    cleanOutput.includes("is not recognized as the name of a cmdlet")) {
-    const processed = cleanOutput.replace(
-      /'([^']+)' is not recognized as an internal or external command, operable program or batch file\./gi,
-      "Error: Command '$1' not found. Please check the spelling and ensure the command is available in your PATH.",
-    )
-    return { output: processed, hasErrors: true, exitCode: 9009 }
-  }
-
-  // Check for "The system cannot find the path specified"
-  if (cleanOutput.includes("The system cannot find the path specified")) {
-    return { output: cleanOutput, hasErrors: true, exitCode: 1 }
-  }
-
-  return { output: cleanOutput, hasErrors: false }
+  return processCommandOutput(output, command, 'cmd')
 }
 
 
@@ -281,65 +212,88 @@ export const BashTool = Tool.define<
           : params.timeout ?? TOOL.BASH_DEFAULT_TIMEOUT
       })()
 
-      const tree = await parser().then((p) => p.parse(params.command))
-      const _tree = !tree ? (() => { throw new Error("Failed to parse command") })() : tree
-
+      // Initialize directories, patterns, and always sets
       const directories = Instance.containsPath(cwd) ? new Set<string>() : new Set([Filesystem.normalize(cwd)])
       const patterns = new Set<string>()
       const always = new Set<string>()
 
-      for (const node of _tree.rootNode.descendantsOfType("command")) {
-        if (!node) continue
+      // Try tree-sitter parsing first, fallback to simple string parsing if it fails
+      try {
+        const tree = await parser().then((p) => p.parse(params.command))
+        const _tree = !tree ? (() => { throw new Error("Failed to parse command") })() : tree
 
-        // Get full command text including redirects if present
-        const commandText = node.parent?.type === "redirected_statement" ? node.parent.text : node.text
+        for (const node of _tree.rootNode.descendantsOfType("command")) {
+          if (!node) continue
 
-        const command = Array.from({ length: node.childCount })
-          .map((_, i) => node.child(i))
-          .filter(
-            (child): child is NonNullable<typeof child> =>
-              !!child && ["command_name", "word", "string", "raw_string", "concatenation"].includes(child.type),
-          )
-          .map((child) => child.text)
+          // Get full command text including redirects if present
+          const commandText = node.parent?.type === "redirected_statement" ? node.parent.text : node.text
 
-        if (command.length === 0) continue
+          const command = Array.from({ length: node.childCount })
+            .map((_, i) => node.child(i))
+            .filter(
+              (child): child is NonNullable<typeof child> =>
+                !!child && ["command_name", "word", "string", "raw_string", "concatenation"].includes(child.type),
+            )
+            .map((child) => child.text)
 
-        // not an exhaustive list, but covers most common cases
-        if (["cd", "rm", "cp", "mv", "mkdir", "touch", "chmod", "chown", "cat"].includes(command[0])) {
-          for (const arg of command.slice(1)) {
-            if (arg.startsWith("-") || (command[0] === "chmod" && arg.startsWith("+"))) continue
+          if (command.length === 0) continue
 
-            const resolved = await (async () => {
-              try {
-                // Try shell realpath first as it handles Git Bash paths better
-                const shellPath = await $`realpath ${arg}`
-                  .cwd(cwd)
-                  .quiet()
-                  .nothrow()
-                  .text()
-                  .then((x) => x.trim())
-                if (shellPath) return shellPath
-              } catch {
-                // Fallback to node-native resolution
+          // not an exhaustive list, but covers most common cases
+          if (["cd", "rm", "cp", "mv", "mkdir", "touch", "chmod", "chown", "cat"].includes(command[0])) {
+            for (const arg of command.slice(1)) {
+              if (arg.startsWith("-") || (command[0] === "chmod" && arg.startsWith("+"))) continue
+
+              const resolved = await (async () => {
+                try {
+                  // Try shell realpath first as it handles Git Bash paths better
+                  const shellPath = await $`realpath ${arg}`
+                    .cwd(cwd)
+                    .quiet()
+                    .nothrow()
+                    .text()
+                    .then((x) => x.trim())
+                  if (shellPath) return shellPath
+                } catch {
+                  // Fallback to node-native resolution
+                }
+                try {
+                  return Filesystem.getCanonicalPath(path.resolve(cwd, arg))
+                } catch {
+                  return path.resolve(cwd, arg)
+                }
+              })()
+
+              const normalized = Filesystem.normalize(resolved)
+              if (!Instance.containsPath(normalized)) {
+                const dir = (await Filesystem.isDir(normalized)) ? normalized : Filesystem.dirname(normalized)
+                directories.add(dir)
               }
-              try {
-                return Filesystem.getCanonicalPath(path.resolve(cwd, arg))
-              } catch {
-                return path.resolve(cwd, arg)
-              }
-            })()
-
-            const normalized = Filesystem.normalize(resolved)
-            if (!Instance.containsPath(normalized)) {
-              const dir = (await Filesystem.isDir(normalized)) ? normalized : Filesystem.dirname(normalized)
-              directories.add(dir)
             }
           }
-        }
 
-        if (command.length && command[0] !== "cd") {
-          patterns.add(commandText)
-          always.add(BashArity.prefix(command).join(" ") + " *")
+          if (command.length && command[0] !== "cd") {
+            patterns.add(commandText)
+            always.add(BashArity.prefix(command).join(" ") + " *")
+          }
+        }
+      } catch (parsingError) {
+        log.warn("Tree-sitter parsing failed, using fallback parser", {
+          command: params.command,
+          error: parsingError instanceof Error ? parsingError.message : String(parsingError)
+        })
+
+        // Use fallback parser for complex shell constructs
+        const fallbackResult = await parseCommandWithFallback(params.command, cwd)
+
+        // Merge fallback results with existing sets
+        for (const dir of fallbackResult.directories) {
+          directories.add(dir)
+        }
+        for (const pattern of fallbackResult.patterns) {
+          patterns.add(pattern)
+        }
+        for (const alwaysPattern of fallbackResult.always) {
+          always.add(alwaysPattern)
         }
       }
 
@@ -483,17 +437,19 @@ export const BashTool = Tool.define<
       ])
 
       const { output: finalOutput, hasErrors, exitCode: overrideExitCode } = iife((): { output: string; hasErrors: boolean; exitCode?: number } => {
-        if (Shell.isPowerShellCommand(processedCommand)) {
-          const processed = processPowerShellOutput(output, processedCommand)
-          log.info("PowerShell output processed", {
-            hasErrors: processed.hasErrors,
-            outputLength: processed.output.length,
-            firstLine: processed.output.split('\n')[0]
-          })
-          return processed
-        }
-        if (Shell.isCmdCommand(processedCommand)) return processCmdOutput(output, processedCommand)
-        return { output, hasErrors: false }
+        // Use unified error processing framework
+        const shellType = detectShellType(processedCommand)
+        const result = processCommandOutput(output, processedCommand, shellType)
+
+        log.info("Command output processed with unified framework", {
+          shellType,
+          hasErrors: result.hasErrors,
+          outputLength: result.output.length,
+          firstLine: result.output.split('\n')[0],
+          exitCode: result.exitCode
+        })
+
+        return result
       })
 
       const resultMetadata = [
