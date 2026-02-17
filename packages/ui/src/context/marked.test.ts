@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test'
+import { validateWorkerMessage, validateWorkerResponse } from './marked-types'
 
 describe('Web Worker Markdown Processing', () => {
   beforeEach(() => {
@@ -10,26 +11,18 @@ describe('Web Worker Markdown Processing', () => {
   })
 
   test('basic validation functions work', () => {
-    // Test the validation functions directly
-    function validateWorkerMessage(data: any): data is { type: string; id: number; html?: string; theme?: any } {
-      if (!data || typeof data !== 'object') return false
-      if (typeof data.type !== 'string') return false
-      if (typeof data.id !== 'number') return false
-      if (data.type === 'init') return true
-      if (data.type === 'enhance' && typeof data.html === 'string') return true
-      return false
-    }
+    // Test the validation functions directly using imported functions
 
     // Valid messages
     expect(validateWorkerMessage({ type: 'init', id: 1 })).toBe(true)
     expect(validateWorkerMessage({ type: 'enhance', id: 2, html: 'test' })).toBe(true)
 
     // Invalid messages
-    expect(validateWorkerMessage(null)).toBe(false)
-    expect(validateWorkerMessage({})).toBe(false)
-    expect(validateWorkerMessage({ type: 'init' })).toBe(false)
-    expect(validateWorkerMessage({ type: 'enhance', id: 1 })).toBe(false) // missing html
-    expect(validateWorkerMessage({ type: 'invalid', id: 1 })).toBe(false)
+    expect(validateWorkerMessage(null)).toBeFalsy()
+    expect(validateWorkerMessage({})).toBeFalsy()
+    expect(validateWorkerMessage({ type: 'init' })).toBeFalsy()
+    expect(validateWorkerMessage({ type: 'enhance', id: 1 })).toBeFalsy() // missing html
+    expect(validateWorkerMessage({ type: 'invalid', id: 1 })).toBeFalsy()
   })
 
   test('error message handling works', () => {

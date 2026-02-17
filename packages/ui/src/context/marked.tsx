@@ -583,40 +583,42 @@ class WorkerManager {
       }
     }
 
-    return Promise.race([
-      new Promise<T>((resolve, reject) => {
-        this.pending.set(id, {
-          resolve: (value) => {
-            cleanup()
-
-            // Record metrics for enhancement operations
-            if (this.config.enableMetrics && messageType === 'enhance') {
-              const duration = performance.now() - startTime
-              this.metrics.totalOperations++
-              this.metrics.averageEnhancementTime = this.metrics.totalOperations === 1 ?
-                duration :
-                (this.metrics.averageEnhancementTime * (this.metrics.totalOperations - 1) + duration) / this.metrics.totalOperations
-            }
-
-            resolve(value)
-          },
-          reject: (err) => {
-            cleanup()
-            if (this.config.enableMetrics) {
-              this.metrics.errorCount++
-            }
-            reject(err)
-          }
-        })
-        const w = this.getWorker()
-        if (w) {
-          w.postMessage({ ...message, id })
-        } else {
+    const mainPromise = new Promise<T>((resolve, reject) => {
+      this.pending.set(id, {
+        resolve: (value) => {
           cleanup()
-          reject(new Error('Worker not available'))
+
+          // Record metrics for enhancement operations
+          if (this.config.enableMetrics && messageType === 'enhance') {
+            const duration = performance.now() - startTime
+            this.metrics.totalOperations++
+            this.metrics.averageEnhancementTime = this.metrics.totalOperations === 1 ?
+              duration :
+              (this.metrics.averageEnhancementTime * (this.metrics.totalOperations - 1) + duration) / this.metrics.totalOperations
+          }
+
+          resolve(value)
+        },
+        reject: (err) => {
+          cleanup()
+          if (this.config.enableMetrics) {
+            this.metrics.errorCount++
+          }
+          reject(err)
         }
-      }),
-      new Promise<never>((_, reject) => {
+      })
+      const w = this.getWorker()
+      if (w) {
+        w.postMessage({ ...message, id })
+      } else {
+        cleanup()
+        reject(new Error('Worker not available'))
+      }
+    })
+
+    // Only create timeout promise if actual timeout is valid and greater than 0
+    if (actualTimeout > 0) {
+      const timeoutPromise = new Promise<never>((_, reject) => {
         setTimeout(() => {
           if (this.pending.has(id)) {
             cleanup()
@@ -627,7 +629,11 @@ class WorkerManager {
           }
         }, actualTimeout)
       })
-    ]).finally(cleanup)
+      return Promise.race([mainPromise, timeoutPromise])
+    }
+
+    // No timeout needed - return main promise directly for performance
+    return mainPromise
   }
 }
 
@@ -662,7 +668,11 @@ export function updateMarkdownConfig(config: Partial<MarkdownConfig>) {
 async function enhanceInWorker(html: string): Promise<string> {
   try {
     await workerManager.initialize()
-    return await workerManager.sendMessageWithTimeout<string>({ type: "enhance", html })
+    return await workerManager.sendMessageWithTimeout<string>({
+      type: "enhance",
+      html,
+      config: workerManager['config'] // Pass current configuration to worker
+    })
   } catch (error) {
     console.error('Worker enhancement failed:', error)
     return html // Fallback to original HTML

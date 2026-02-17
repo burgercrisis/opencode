@@ -1,5 +1,5 @@
 import katex from "katex"
-import { WorkerMessage, WorkerResponse, validateWorkerMessage, validateWorkerResponse } from "./marked-types"
+import { WorkerMessage, WorkerResponse, validateWorkerMessage, validateWorkerResponse, DEFAULT_MARKDOWN_CONFIG, validateHtmlContent } from "./marked-types"
 
 
 function renderMathInText(text: string): string {
@@ -71,11 +71,27 @@ self.onmessage = async (e) => {
       return
     }
 
+    // Get configuration from message or use defaults
+    const config = e.data.config || DEFAULT_MARKDOWN_CONFIG
+
     // Validate HTML content size to prevent memory exhaustion
-    // Note: This should be made configurable via message in future updates
-    const MAX_HTML_SIZE = 1000000 // 1MB default limit
-    if (html.length > MAX_HTML_SIZE) {
-      self.postMessage({ id, type: "error", error: `HTML content too large. Maximum size is ${MAX_HTML_SIZE} bytes` })
+    if (html.length > config.maxHtmlSize) {
+      self.postMessage({
+        id,
+        type: "error",
+        error: `HTML content too large. Size: ${html.length} bytes, Maximum allowed: ${config.maxHtmlSize} bytes`
+      })
+      return
+    }
+
+    // Validate HTML content structure for security and safety
+    const contentValidation = validateHtmlContent(html)
+    if (!contentValidation.isValid) {
+      self.postMessage({
+        id,
+        type: "error",
+        error: contentValidation.error || 'HTML content validation failed'
+      })
       return
     }
 
@@ -85,7 +101,9 @@ self.onmessage = async (e) => {
       const response = { id, type: "enhanced" as const, html: withMath }
       self.postMessage(response)
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred'
+      const errorMessage = error instanceof Error ? error.message :
+        typeof error === 'string' ? error :
+          JSON.stringify(error)
       console.error('Worker enhancement failed:', errorMessage)
       self.postMessage({ id, type: "error" as const, error: errorMessage })
     }

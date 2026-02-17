@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test'
+import { validateWorkerMessage, validateWorkerResponse } from './marked-types'
 
 // Mock the worker URL to avoid import issues
 const mockWorkerUrl = 'mock-worker-url'
@@ -13,34 +14,22 @@ describe('Web Worker Markdown Processing - Unit Tests', () => {
   })
 
   test('worker message validation', () => {
-    function validateWorkerMessage(data: any): data is { type: string; id: number; html?: string; theme?: any } {
-      if (!data || typeof data !== 'object') return false
-      if (typeof data.type !== 'string') return false
-      if (typeof data.id !== 'number') return false
-      if (data.type === 'init') return true
-      if (data.type === 'enhance' && typeof data.html === 'string') return true
-      return false
-    }
+    // Test using imported validation function
 
     // Valid messages
     expect(validateWorkerMessage({ type: 'init', id: 1 })).toBe(true)
     expect(validateWorkerMessage({ type: 'enhance', id: 2, html: 'test' })).toBe(true)
 
     // Invalid messages
-    expect(validateWorkerMessage(null)).toBe(false)
-    expect(validateWorkerMessage({})).toBe(false)
-    expect(validateWorkerMessage({ type: 'init' })).toBe(false)
-    expect(validateWorkerMessage({ type: 'enhance', id: 1 })).toBe(false) // missing html
-    expect(validateWorkerMessage({ type: 'invalid', id: 1 })).toBe(false)
+    expect(validateWorkerMessage(null)).toBeFalsy()
+    expect(validateWorkerMessage({})).toBeFalsy()
+    expect(validateWorkerMessage({ type: 'init' })).toBeFalsy()
+    expect(validateWorkerMessage({ type: 'enhance', id: 1 })).toBeFalsy() // missing html
+    expect(validateWorkerMessage({ type: 'invalid', id: 1 })).toBeFalsy()
   })
 
   test('worker response validation', () => {
-    function validateWorkerResponse(data: any): data is { id: number; type: string; html?: string; error?: string } {
-      if (!data || typeof data !== 'object') return false
-      if (typeof data.id !== 'number') return false
-      if (typeof data.type !== 'string') return false
-      return ['enhanced', 'theme-initialized', 'error'].includes(data.type)
-    }
+    // Test using imported validation function
 
     // Valid responses
     expect(validateWorkerResponse({ id: 1, type: 'enhanced', html: 'test' })).toBe(true)
@@ -48,10 +37,10 @@ describe('Web Worker Markdown Processing - Unit Tests', () => {
     expect(validateWorkerResponse({ id: 3, type: 'error', error: 'test error' })).toBe(true)
 
     // Invalid responses
-    expect(validateWorkerResponse(null)).toBe(false)
-    expect(validateWorkerResponse({})).toBe(false)
-    expect(validateWorkerResponse({ id: 1 })).toBe(false)
-    expect(validateWorkerResponse({ id: 1, type: 'invalid' })).toBe(false)
+    expect(validateWorkerResponse(null)).toBeFalsy()
+    expect(validateWorkerResponse({})).toBeFalsy()
+    expect(validateWorkerResponse({ id: 1 })).toBeFalsy()
+    expect(validateWorkerResponse({ id: 1, type: 'invalid' })).toBeFalsy()
   })
 
   test('pending map cleanup', () => {
