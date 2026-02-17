@@ -6,7 +6,7 @@ describe("Edit Tool Input Validation - Logic Test", () => {
 
     // Test missing filePath
     expect(() => {
-      if (!null) {
+      if (!undefined) {
         throw new Error("filePath is required")
       }
     }).toThrow("filePath is required")
