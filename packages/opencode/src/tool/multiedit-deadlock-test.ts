@@ -157,59 +157,35 @@ describe("MultiEdit Deadlock Analysis", () => {
         }, {} as any)
       } catch (error) {
         finalResult = {
-        },
-        {
-          oldString: "LINE5",
-          newString: "MODIFIED_LINE5",
-          replaceAll: false,
-        },
-        {
-          oldString: "LINE1",
-          newString: "MODIFIED_LINE1",
-          replaceAll: false,
-        },
-        {
-          oldString: "LINE2",
-          newString: "MODIFIED_LINE2",
-          replaceAll: false,
-        },
-        {
-          oldString: "LINE4",
-          newString: "MODIFIED_LINE4",
-          replaceAll: false,
-        },
-        {
-          oldString: "LINE1", // Second edit on same line - should fail or conflict
-          newString: "CONFLICTING_LINE1",
-          replaceAll: false,
+          success: false,
+          output: error instanceof Error ? error.message : String(error)
         }
-        ]
-      }, { } as any)
+      }
 
-  if (result.success) {
-    // If successful, verify all edits were applied
-    const finalContent = await Bun.file(filePath).text()
+      if (finalResult.success) {
+        // If successful, verify all edits were applied
+        const finalContent = await Bun.file(filePath).text()
 
-    // Should contain all modifications except the conflicting one
-    expect(finalContent).toContain("MODIFIED_LINE3")
-    expect(finalContent).toContain("MODIFIED_LINE5")
-    expect(finalContent).toContain("MODIFIED_LINE2")
-    expect(finalContent).toContain("MODIFIED_LINE4")
-    expect(finalContent).toContain("MODIFIED_LINE1")
+        // Should contain all modifications except the conflicting one
+        expect(finalContent).toContain("MODIFIED_LINE3")
+        expect(finalContent).toContain("MODIFIED_LINE5")
+        expect(finalContent).toContain("MODIFIED_LINE2")
+        expect(finalContent).toContain("MODIFIED_LINE4")
+        expect(finalContent).toContain("MODIFIED_LINE1")
 
-    // The conflicting edit should not be applied
-    expect(finalContent).not.toContain("CONFLICTING_LINE1")
-  } else {
-    // If failed, should have meaningful error
-    expect(result.output).toBeDefined()
-    expect(result.output).toContain("Failed to apply edit")
-  }
-} catch (error) {
-  fail("Should not throw unexpected errors")
-}
+        // The conflicting edit should not be applied
+        expect(finalContent).not.toContain("CONFLICTING_LINE1")
+      } else {
+        // If failed, should have meaningful error
+        expect(finalResult.output).toBeDefined()
+        expect(finalResult.output).toContain("Failed to apply edit")
+      }
+    } catch (error) {
+      fail("Should not throw unexpected errors")
+    }
   })
-})
 
-function fail(message: string) {
-  expect(true).toBe(false, message)
-}
+  function fail(message: string) {
+    expect(true).toBe(false, message)
+  }
+})
