@@ -18,6 +18,7 @@ import { Instance } from "../project/instance"
 import { Snapshot } from "@/snapshot"
 import { assertExternalDirectory } from "./external-directory"
 import { TOOL } from "../constants"
+import { levenshtein } from "@/util/levenshtein"
 
 function normalizeLineEndings(text: string): string {
   return text.replaceAll("\r\n", "\n")
@@ -32,12 +33,36 @@ export const EditTool = Tool.define("edit", {
     replaceAll: z.boolean().optional().describe("Replace all occurrences of oldString (default false)"),
   }),
   async execute(params, ctx) {
+    // Comprehensive input validation
     if (!params.filePath) {
       throw new Error("filePath is required")
     }
 
+    if (!params.oldString || params.oldString.length === 0) {
+      throw new Error("oldString is required and cannot be empty")
+    }
+
+    if (!params.newString || params.newString.length === 0) {
+      throw new Error("newString is required and cannot be empty")
+    }
+
     if (params.oldString === params.newString) {
       throw new Error("No changes to apply: oldString and newString are identical.")
+    }
+
+    // Validate filePath format and security
+    if (typeof params.filePath !== 'string') {
+      throw new Error("filePath must be a string")
+    }
+
+    // Check for potentially dangerous patterns in oldString
+    if (params.oldString.includes('\0') || params.newString.includes('\0')) {
+      throw new Error("String parameters cannot contain null bytes")
+    }
+
+    // Validate string lengths to prevent resource exhaustion
+    if (params.oldString.length > TOOL.MAX_LENGTH || params.newString.length > TOOL.MAX_LENGTH) {
+      throw new Error(`String parameters too long: max ${TOOL.MAX_LENGTH} characters allowed`)
     }
 
     // BEST OF BOTH WORLDS: Use Filesystem.resolvePath which handles both absolute and relative paths
@@ -48,31 +73,6 @@ export const EditTool = Tool.define("edit", {
     let contentOld = ""
     let contentNew = ""
     await FileTime.withLock(filePath, async () => {
-      if (params.oldString === "") {
-        const existed = await Bun.file(filePath).exists()
-        contentNew = params.newString
-        diff = trimDiff(createTwoFilesPatch(filePath, filePath, contentOld, contentNew))
-        await ctx.ask({
-          permission: "edit",
-          patterns: [path.relative(Instance.worktree, filePath)],
-          always: ["*"],
-          metadata: {
-            filepath: filePath,
-            diff,
-          },
-        })
-        await Bun.write(filePath, params.newString)
-        await Bus.publish(File.Event.Edited, {
-          file: filePath,
-        })
-        await Bus.publish(FileWatcher.Event.Updated, {
-          file: filePath,
-          event: existed ? "change" : "add",
-        })
-        FileTime.read(ctx.sessionID, filePath)
-        return
-      }
-
       const file = Bun.file(filePath)
       const stats = await file.stat().catch(() => { })
       if (!stats) throw new Error(`File ${filePath} not found`)
@@ -159,46 +159,6 @@ export type Replacer = (content: string, find: string) => Generator<string, void
 // Similarity thresholds for block anchor fallback matching
 const SINGLE_CANDIDATE_SIMILARITY_THRESHOLD = 0.0
 const MULTIPLE_CANDIDATES_SIMILARITY_THRESHOLD = 0.3
-
-/**
- * Levenshtein distance algorithm implementation
- * Optimized with maximum input length validation to prevent O(n²) memory issues
- */
-function levenshtein(a: string, b: string): number {
-  const MAX_LENGTH = TOOL.MAX_LENGTH // Prevent excessive memory allocation
-
-  // Handle empty strings
-  if (a === "" || b === "") {
-    return Math.max(a.length, b.length)
-  }
-
-  // Truncate inputs if too long (preserves approximate matching behavior)
-  const strA = a.length > MAX_LENGTH ? a.slice(0, MAX_LENGTH) : a
-  const strB = b.length > MAX_LENGTH ? b.slice(0, MAX_LENGTH) : b
-
-  const lenA = strA.length
-  const lenB = strB.length
-
-  // Use two-row optimization to reduce memory from O(n²) to O(n)
-  let prevRow = Array.from({ length: lenB + 1 }, (_, j) => j)
-  let currRow = new Array(lenB + 1).fill(0)
-
-  for (let i = 1; i <= lenA; i++) {
-    currRow[0] = i
-    for (let j = 1; j <= lenB; j++) {
-      const cost = strA[i - 1] === strB[j - 1] ? 0 : 1
-      currRow[j] = Math.min(
-        prevRow[j] + 1,      // deletion
-        currRow[j - 1] + 1,  // insertion
-        prevRow[j - 1] + cost // substitution
-      )
-    }
-    // Swap rows
-    [prevRow, currRow] = [currRow, prevRow]
-  }
-
-  return prevRow[lenB]
-}
 
 export const SimpleReplacer: Replacer = function* (_content, find) {
   yield find

@@ -46,6 +46,42 @@ import { iife } from "@/util/iife"
 import { Shell } from "@/shell/shell"
 import { Truncate } from "@/tool/truncation"
 
+/**
+ * Comprehensive path sanitization to prevent leaking internal paths or sensitive information
+ * Handles Windows, Unix, UNC paths, and various edge cases including bypass attempts
+ * Patterns ordered from most specific to least specific to avoid false positives
+ */
+export function sanitizePath(message: string): string {
+  return message
+    // URL-encoded paths (most specific first) - expanded patterns
+    .replace(/%5[Cc]|%2[Ff]|%3[Aa]|%2[Ee]|%2[Ee]%2[Ee]/gi, "")
+    // Double-encoded variants
+    .replace(/%255[Cc]|%252[Ff]|%253[Aa]|%252[Ee]/gi, "")
+    // UNC paths (\\server\share\file.ext) - enhanced pattern
+    .replace(/\\\\[\\]?[a-zA-Z0-9_\-\.\\\/]+(?:[\\/][a-zA-Z0-9_\-\.\\\/]+)*[\\/][a-zA-Z0-9_\-\.\\\/]+\.[a-zA-Z0-9_\-\.]+/g, "[path]")
+    // Windows paths with drive letters (C:\path\to\file.ext) - enhanced
+    .replace(/[a-zA-Z]:[\\/](?:[a-zA-Z0-9_\-\.\\\/]+[\\/])*[a-zA-Z0-9_\-\.\\\/]+\.[a-zA-Z0-9_\-\.]+/g, "[path]")
+    // Unix absolute paths (/path/to/file.ext) - enhanced
+    .replace(/\/(?:[a-zA-Z0-9_\-\.\\\/]+[\\/])*[a-zA-Z0-9_\-\.\\\/]+\.[a-zA-Z0-9_\-\.]+/g, "[path]")
+    // Relative paths with directory traversal (../path/to/file.ext) - enhanced
+    .replace(/(?:\.\.[\\/])+(?:[a-zA-Z0-9_\-\.\\\/]+[\\/])*[a-zA-Z0-9_\-\.\\\/]+\.[a-zA-Z0-9_\-\.]+/g, "[path]")
+    // Quoted paths with spaces and special characters - enhanced
+    .replace(/"[^"]*[\\/][^"]*\.[a-zA-Z0-9_\-\.]+[^"]*"/g, "[path]")
+    .replace(/'[^']*[\\/][^']*\.[a-zA-Z0-9_\-\.]+[^']*'/g, "[path]")
+    // Extended Unicode and international paths - comprehensive ranges
+    .replace(/[\u00c0-\u017f\u0400-\u04ff\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\u0590-\u05ff\u0600-\u06ff]+[\\/][\u00c0-\u017f\u0400-\u04ff\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\u0590-\u05ff\u0600-\u06ff\w\-\.\\\/]*[\u00c0-\u017f\u0400-\u04ff\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\u0590-\u05ff\u0600-\u06ff\w\-\.\\\/]+\.[a-zA-Z0-9_\-\.]+/g, "[path]")
+    // Mixed separators and obfuscated paths - enhanced
+    .replace(/[\w\-\.\\\/]+[\\\/][\w\-\.\\\/]*[\w\-\.\\\/]+\.[a-zA-Z0-9_\-\.]+/g, "[path]")
+    // Specific sensitive file extensions - more comprehensive
+    .replace(/\b[\w\-\.\\\/]+\.(?:key|pem|crt|p12|env|config|cache|secret|private|credential|token|pass|pwd|auth|cert|pfx|jks|keystore)\b/gi, "[file]")
+    // Handle encoded dots and slashes in file extensions
+    .replace(/\b[\w\-\.\\\/]+\.(?:k%65%79|p%65m|c%72t|p%31%32|e%6Ev|c%6F%6ef%69g|c%61che|s%65cret|pr%69vate|cr%65dential)\b/gi, "[file]")
+    // Clean up multiple consecutive [path] or [file] replacements
+    .replace(/(\[path\])+|(\[file\])+/g, (match) => match.includes('[file]') ? '[file]' : '[path]')
+    // Final cleanup for any remaining path-like patterns
+    .replace(/[a-zA-Z0-9_\-\.\\\/]{3,}[\\/][a-zA-Z0-9_\-\.\\\/]{3,}/g, "[path]")
+}
+
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
 
@@ -200,9 +236,37 @@ export namespace SessionPrompt {
         const name = match[1]
         if (seen.has(name)) return
         seen.add(name)
+
+        // Validate and sanitize the name to prevent path traversal attacks
+        // Remove null bytes and control characters
+        let sanitizedName = name.replace(/\0/g, '')
+
+        // Remove path traversal sequences
+        sanitizedName = sanitizedName.replace(/\.\.[\\/]/g, '')
+        sanitizedName = sanitizedName.replace(/[\\/]\.[\\/]/g, '')
+        sanitizedName = sanitizedName.replace(/[\\/]\.\.[\\/]/g, '')
+
+        // Remove consecutive slashes/backslashes
+        sanitizedName = sanitizedName.replace(/[\\/]+/g, '/')
+        sanitizedName = sanitizedName.replace(/[\\/]+/g, '/')
+
+        // Remove dangerous path components
+        const pathParts = sanitizedName.split('/')
+        const safeParts = pathParts.filter(part =>
+          part !== '' &&
+          part !== '.' &&
+          part !== '..' &&
+          !part.startsWith('..') &&
+          !part.includes('../') &&
+          !part.includes('..\\')
+        )
+        sanitizedName = safeParts.join('/')
+
         const filepath = name.startsWith("~/")
-          ? path.join(os.homedir(), name.slice(2))
-          : path.resolve(Instance.worktree, name)
+          ? path.join(os.homedir(), sanitizedName.slice(2))
+          : Filesystem.validateFilepath(sanitizedName, Instance.worktree).valid
+            ? path.resolve(Instance.worktree, sanitizedName)
+            : path.resolve(Instance.worktree, sanitizedName.replace(/[^a-zA-Z0-9._-]/g, '_'))
 
         const stats = await fs.stat(filepath).catch(() => undefined)
         if (!stats) {
@@ -1084,7 +1148,7 @@ export namespace SessionPrompt {
               log.error("failed to read MCP resource", { error, clientName, uri: uri.slice(0, 100) })
               // Sanitize error message to avoid leaking internal paths or sensitive info
               const sanitizedMessage = error instanceof Error
-                ? error.message.replace(/(?:\/[a-zA-Z0-9_\-\.]+)+(?:\/[a-zA-Z0-9_\-\.]+)*\/[a-zA-Z0-9_\-\.]+\.[a-zA-Z0-9_\-\.]+|(?:[A-Za-z]:[\\/][a-zA-Z0-9_\-\.]+)+(?:[\\/][a-zA-Z0-9_\-\.]+)*[\\/][a-zA-Z0-9_\-\.]+\.[a-zA-Z0-9_\-\.]+/g, "[path]").slice(0, 200)
+                ? sanitizePath(error.message).slice(0, 200)
                 : "Unknown error"
               pieces.push({
                 id: Identifier.ascending("part"),
