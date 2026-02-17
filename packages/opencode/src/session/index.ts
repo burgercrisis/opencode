@@ -464,7 +464,6 @@ export namespace Session {
       const info = fromRow(row)
       Database.effect(() => Bus.publish(Event.Updated, { info }))
       return info
->>>>>>> d8c25bfeb44771cc3a3ba17bf8de6ad2add9de2c
     })
   })
 
