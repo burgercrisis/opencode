@@ -1,0 +1,16 @@
+{
+  "teams": {
+    "desktop": ["adamdotdevin", "iamdavidhill", "Brendonovich", "nexxeln"],
+    "zen": ["fwang", "MrMushrooooom"],
+    "tui": ["thdxr", "kommander", "rekram1-node"],
+    "core": ["thdxr", "rekram1-node", "jlongster"],
+    "docs": ["R44VC0RP"],
+    "windows": ["Hona"]
+  },
+  "labelMappings": {
+    "desktop": "web"
+  },
+  "assigneeMappings": {
+    "jlongster": "thdxr"
+  }
+}
