@@ -27,7 +27,6 @@ import { LspTool } from "./lsp"
 import { Truncate } from "./truncation"
 import { PlanExitTool, PlanEnterTool } from "./plan"
 import { ApplyPatchTool } from "./apply_patch"
-import { PatchTool } from "./patch"
 
 export namespace ToolRegistry {
   const log = Log.create({ service: "tool.registry" })
@@ -119,7 +118,6 @@ export namespace ToolRegistry {
       CodeSearchTool,
       SkillTool,
       ApplyPatchTool,
-      PatchTool,
       ...(Flag.OPENCODE_EXPERIMENTAL_LSP_TOOL ? [LspTool] : []),
       ...(config.experimental?.batch_tool === true ? [BatchTool] : []),
       ...(Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE && Flag.OPENCODE_CLIENT === "cli"
@@ -142,16 +140,6 @@ export namespace ToolRegistry {
   ) {
     const allTools = await all()
 
-    const usePatch = (() => {
-      const isGpt = model.modelID.includes("gpt-")
-      const isOss = model.modelID.includes("oss")
-      const isGpt4 = model.modelID.includes("gpt-4")
-      const isGpt5 = model.modelID.includes("gpt-5")
-      const isO1 = model.modelID.includes("o1")
-      const isO3 = model.modelID.includes("o3")
-      return isGpt && !isOss && !isGpt4 && !isGpt5 && !isO1 && !isO3
-    })()
-
     return Promise.all(
       allTools
         .filter((t) => {
@@ -162,11 +150,8 @@ export namespace ToolRegistry {
 
           return (
             isSearch ||
-            (isApplyPatch
-              ? usePatch
-              : isEditOrWrite || isPatch
-                ? !usePatch
-                : true)
+            isApplyPatch ||
+            (isEditOrWrite || isPatch ? false : true)
           )
         })
         .map(async (t) => {

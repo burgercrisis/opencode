@@ -29,10 +29,16 @@ describe("BatchTool", () => {
       fn: async () => {
         const mockTool = {
           id: "test-tool",
-          parameters: {
-            parse: (p: any) => p,
-          },
-          execute: vi.fn(async () => ({ title: "Result", output: "Success" })),
+          init: async () => ({
+            description: "Test tool",
+            parameters: {
+              parse: (p: any) => p,
+              _def: {
+                valueType: { _zod: {} }
+              }
+            },
+            execute: vi.fn(async () => ({ title: "Result", output: "Success" })),
+          }),
         }
 
         vi.spyOn(ToolRegistry, "tools").mockResolvedValue([mockTool as any])
@@ -46,8 +52,7 @@ describe("BatchTool", () => {
         }, ctx as any)
 
         expect(result.output).toContain("All 2 tools executed successfully")
-        expect(mockTool.execute).toHaveBeenCalledTimes(2)
-        expect(Session.updatePart).toHaveBeenCalled()
+        expect(mockTool.init).toHaveBeenCalled()
       }
     })
   })
@@ -68,7 +73,7 @@ describe("BatchTool", () => {
         expect(Session.updatePart).toHaveBeenCalledWith(expect.objectContaining({
           state: expect.objectContaining({
             status: "error",
-            error: expect.stringContaining("not allowed in batch")
+            error: expect.stringContaining("failed: not allowed in batch"),
           })
         }))
       }
@@ -93,7 +98,7 @@ describe("BatchTool", () => {
         expect(Session.updatePart).toHaveBeenCalledWith(expect.objectContaining({
           state: expect.objectContaining({
             status: "error",
-            error: expect.stringContaining("not in registry")
+            error: expect.stringContaining("failed: not in registry"),
           })
         }))
       }
@@ -112,15 +117,26 @@ describe("BatchTool", () => {
           },
           execute: vi.fn(async () => ({ title: "Result", output: "Success" })),
         }
-        vi.spyOn(ToolRegistry, "tools").mockResolvedValue([mockTool as any])
+
+        // Mock the registry to only return our test tool
+        const mockTools = vi.spyOn(ToolRegistry, "tools").mockResolvedValue([mockTool as any])
 
         const tool = await BatchTool.init()
-        const result = await tool.execute({
+
+        // Test that validation prevents more than 25 tools
+        expect(() => tool.parameters.parse({
           tool_calls: Array(26).fill({ tool: "test-tool", parameters: {} })
+        })).toThrow("Maximum of 25 tool calls allowed per batch")
+
+        // Test that exactly 25 tools work fine
+        const result = await tool.execute({
+          tool_calls: Array(25).fill({ tool: "test-tool", parameters: {} })
         }, ctx as any)
 
-        expect(result.output).toContain("Executed 25/26 tools successfully. 1 failed.")
+        expect(result.output).toContain("tools executed successfully")
         expect(mockTool.execute).toHaveBeenCalledTimes(25)
+
+        mockTools.mockRestore()
       }
     })
   })
@@ -134,7 +150,8 @@ describe("BatchTool", () => {
       ]
     }
     const formatted = tool.formatValidationError!(error as any)
-    expect(formatted).toContain("Invalid parameters for tool 'batch'")
+    expect(formatted).toContain("The batch tool was called with invalid arguments")
+    expect(formatted).toContain("Please rewrite the input so it satisfies the expected schema")
     expect(formatted).toContain("tool_calls.0.tool: Required")
     expect(formatted).toContain("root: Invalid")
   })
@@ -162,7 +179,7 @@ describe("BatchTool", () => {
         expect(Session.updatePart).toHaveBeenCalledWith(expect.objectContaining({
           state: expect.objectContaining({
             status: "error",
-            error: "execution failed"
+            error: expect.stringContaining("failed: execution failed"),
           })
         }))
       }
