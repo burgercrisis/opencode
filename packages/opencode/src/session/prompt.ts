@@ -45,6 +45,7 @@ import { LLM } from "./llm"
 import { iife } from "@/util/iife"
 import { Shell } from "@/shell/shell"
 import { Truncate } from "@/tool/truncation"
+import { Filesystem } from "@/util/filesystem"
 
 /**
  * Comprehensive path sanitization to prevent leaking internal paths or sensitive information
@@ -108,6 +109,7 @@ export namespace SessionPrompt {
             resolve(input: MessageV2.WithParts): void
             reject(reason?: any): void
           }[]
+          isCancelling?: boolean
         }
       > = {}
       return data
@@ -122,6 +124,11 @@ export namespace SessionPrompt {
   export function assertNotBusy(sessionID: string) {
     const match = state()[sessionID]
     if (match) throw new Session.BusyError(sessionID)
+  }
+
+  /** @internal Exported for testing */
+  export function getState() {
+    return state()
   }
 
   export const PromptInput = z.object({
@@ -299,13 +306,15 @@ export namespace SessionPrompt {
     return parts
   }
 
-  function start(sessionID: string) {
+  /** @internal Exported for testing */
+  export function start(sessionID: string) {
     const s = state()
     if (s[sessionID]) return
     const controller = new AbortController()
     s[sessionID] = {
       abort: controller,
       callbacks: [],
+      isCancelling: false,
     }
     return controller.signal
   }
@@ -326,15 +335,18 @@ export namespace SessionPrompt {
       return
     }
 
-    // Atomically capture and remove in one operation to eliminate any timing window
+    // Set cancellation flag first to prevent new callbacks
+    match.isCancelling = true
+
+    // Atomic: capture callbacks, clear immediately, then delete state
     const { abort: abortController, callbacks } = match
-    match.callbacks = [] // Clear immediately
-    delete s[sessionID]   // Remove from state
+    match.callbacks = []  // Clear immediately to prevent new additions
+    delete s[sessionID]    // Remove from state
 
     abortController.abort()
     SessionStatus.set(sessionID, { type: "idle" })
 
-    // Resolve captured callbacks
+    // Reject all captured callbacks
     for (const cb of callbacks) {
       cb.reject(new Error("Session cancelled"))
     }
@@ -373,10 +385,16 @@ export namespace SessionPrompt {
           return
         }
 
-        // Double-check session still exists before adding callback
+        // Triple-check session still exists and is the same before adding callback
         const currentState = state()[sessionID]
         if (!currentState || currentState !== sessionState) {
           reject(new Error("Session not found"))
+          return
+        }
+
+        // Final atomic check - ensure abort signal hasn't changed and session isn't cancelling
+        if (currentState.abort.signal.aborted || currentState.isCancelling) {
+          reject(new Error("Session cancelled"))
           return
         }
 
@@ -827,9 +845,15 @@ export namespace SessionPrompt {
     SessionCompaction.prune({ sessionID })
     for await (const item of MessageV2.stream(sessionID)) {
       if (item.info.role === "user") continue
-      const queued = state()[sessionID]?.callbacks ?? []
-      for (const q of queued) {
-        q.resolve(item)
+
+      // Only resolve callbacks if session wasn't cancelled
+      // Check both state existence and abort signal to prevent double-handling
+      const sessionState = state()[sessionID]
+      if (sessionState && !sessionState.abort.signal.aborted) {
+        const queued = sessionState.callbacks ?? []
+        for (const q of queued) {
+          q.resolve(item)
+        }
       }
       return item
     }
