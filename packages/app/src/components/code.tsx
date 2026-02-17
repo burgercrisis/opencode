@@ -1,6 +1,6 @@
 import { bundledLanguages, type BundledLanguage } from "shiki"
 import { splitProps, type ComponentProps, createEffect, onMount, onCleanup, createMemo, createResource } from "solid-js"
-import { useFile, type SelectedLineRange } from "@/context/file"
+import { useFile, type SelectedLineRange, type FileSelection } from "@/context/file"
 import { useLayout } from "@/context/layout"
 import { useShiki } from "@/context/shiki"
 import { getFileExtension, getNodeOffsetInLine, getSelectionInContainer } from "@/utils"
@@ -77,7 +77,7 @@ export function Code(props: Props) {
       if (file.active()?.path !== local.file.name) return
       const d = getSelectionInContainer(container)
       if (!d) return
-      const p = file.selection(local.file.name)
+      const p = file.selection(local.file.name) as FileSelection | null
       if (p && p.startLine === d.sl && p.endLine === d.el && p.startChar === d.sch && p.endChar === d.ech) return
       file.setSelection(local.file.name, { startLine: d.sl, startChar: d.sch, endLine: d.el, endChar: d.ech })
     }
@@ -119,7 +119,7 @@ export function Code(props: Props) {
   createEffect(() => {
     const content = html()
     if (!container || !content) return
-    const top = file.scrollTop(local.file.name)
+    const top = file.scrollTop(local.file.name) as number | undefined
     if (top !== undefined && container.scrollTop !== top) container.scrollTop = top
     local.onRendered?.()
   })
@@ -131,7 +131,7 @@ export function Code(props: Props) {
     if (file.active()?.path !== local.file.name) return
     const codeEl = container.querySelector("code") as HTMLElement | undefined
     if (!codeEl) return
-    const target = file.selection(local.file.name)
+    const target = file.selection(local.file.name) as FileSelection | null
     const current = getSelectionInContainer(container)
     const sel = window.getSelection()
     if (!sel) return
@@ -147,6 +147,7 @@ export function Code(props: Props) {
     }
     const matches = !!(
       current &&
+      target &&
       current.sl === target.startLine &&
       current.sch === target.startChar &&
       current.el === target.endLine &&
@@ -155,10 +156,10 @@ export function Code(props: Props) {
     if (matches) return
     const lines = Array.from(codeEl.querySelectorAll(".line"))
     if (lines.length === 0) return
-    let sIdx = Math.max(0, target.startLine - 1)
-    let eIdx = Math.max(0, target.endLine - 1)
-    let sChar = Math.max(0, target.startChar || 0)
-    let eChar = Math.max(0, target.endChar || 0)
+    let sIdx = Math.max(0, (target?.startLine ?? 1) - 1)
+    let eIdx = Math.max(0, (target?.endLine ?? 1) - 1)
+    let sChar = Math.max(0, (target?.startChar ?? 0))
+    let eChar = Math.max(0, (target?.endChar ?? 0))
     if (sIdx > eIdx || (sIdx === eIdx && sChar > eChar)) {
       const ti = sIdx
       sIdx = eIdx
@@ -278,7 +279,7 @@ export function Code(props: Props) {
     const content = html()
     if (!container || !content) return
     const view = layout.review.diffStyle()
-    const raw = file.changeIndex(local.file.name)
+    const raw = file.changeIndex(local.file.name) as number | undefined
     if (raw === undefined) return
     const total = countGroups()
     if (total <= 0) return
@@ -478,10 +479,10 @@ function transformerUnifiedDiff(): any {
 
       const m = meta.get(line) || {}
 
-      ;(this as any).addClassToHast(node, "diff-line")
-      ;(this as any).addClassToHast(node, `diff-${kind}`)
+        ; (this as any).addClassToHast(node, "diff-line")
+        ; (this as any).addClassToHast(node, `diff-${kind}`)
       node.properties = node.properties || {}
-      ;(node.properties as any)["data-diff"] = kind
+        ; (node.properties as any)["data-diff"] = kind
       if (m.old != undefined) (node.properties as any)["data-old"] = String(m.old)
       if (m.new != undefined) (node.properties as any)["data-new"] = String(m.new)
 
@@ -538,7 +539,7 @@ function transformerDiffGroups(): any {
           group += 1
           inGroup = true
         }
-        ;(node.properties as any)["data-chgrp"] = String(group)
+        ; (node.properties as any)["data-chgrp"] = String(group)
       } else {
         inGroup = false
       }

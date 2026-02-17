@@ -115,19 +115,16 @@ export function MessageTimeline(props: {
         </div>
         <div
           ref={props.setScrollRef}
-          onWheel={[{
-            handler: (e) => {
-              const root = e.currentTarget
-              const delta = normalizeWheelDelta({
-                deltaY: e.deltaY,
-                deltaMode: e.deltaMode,
-                rootHeight: root.clientHeight,
-              })
-              if (!delta) return
-              markBoundaryGesture({ root, target: e.target, delta, onMarkScrollGesture: props.onMarkScrollGesture })
-            },
-            passive: true
-          }]}
+          onWheel={(e: WheelEvent & { currentTarget: HTMLDivElement; target: Element }) => {
+            const root = e.currentTarget
+            const delta = normalizeWheelDelta({
+              deltaY: e.deltaY,
+              deltaMode: e.deltaMode,
+              rootHeight: root.clientHeight,
+            })
+            if (!delta) return
+            markBoundaryGesture({ root, target: e.target, delta, onMarkScrollGesture: props.onMarkScrollGesture })
+          }}
           onTouchStart={(e) => {
             touchGesture = e.touches[0]?.clientY
           }}
