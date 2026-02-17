@@ -1,5 +1,4 @@
 import { Plugin } from "../plugin"
-import { Share } from "../share/share"
 import { Format } from "../format"
 import { LSP } from "../lsp"
 import { FileWatcher } from "../file/watcher"
@@ -19,21 +18,15 @@ import { LLMConcurrencyMachine } from "../session/llm-concurrency-machine"
 export async function InstanceBootstrap() {
   if (Flag.OPENCODE_EXPERIMENTAL_NO_BOOTSTRAP) return
   Log.Default.info("bootstrapping", { directory: Instance.directory })
-  await Promise.all([
-    Plugin.init(),
-    LSP.init(),
-    (async () => {
-      Share.init()
-      ShareNext.init()
-      Format.init()
-      FileWatcher.init()
-      File.init()
-      Vcs.init()
-      Snapshot.init()
-      Truncate.init()
-      await LLMConcurrencyMachine.init()
-    })(),
-  ])
+  await Plugin.init()
+  ShareNext.init()
+  Format.init()
+  await LSP.init()
+  FileWatcher.init()
+  File.init()
+  Vcs.init()
+  Snapshot.init()
+  Truncate.init()
 
   Bus.subscribe(Command.Event.Executed, async (payload) => {
     if (payload.properties.name === Command.Default.INIT) {

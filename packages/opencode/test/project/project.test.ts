@@ -1,12 +1,10 @@
 import { describe, expect, mock, test } from "bun:test"
-import type { Project as ProjectNS } from "../../src/project/project"
+import { Project } from "../../src/project/project"
 import { Log } from "../../src/util/log"
-import { Storage } from "../../src/storage/storage"
-import { Filesystem } from "../../src/util/filesystem"
 import { $ } from "bun"
 import path from "path"
-import fs from "fs/promises"
 import { tmpdir } from "../fixture/fixture"
+import { GlobalBus } from "../../src/bus/global"
 
 Log.init({ print: false })
 
@@ -66,10 +64,6 @@ async function loadProject() {
   return (await import("../../src/project/project")).Project
 }
 
-function expectPath(received: string, expected: string) {
-  expect(Filesystem.normalize(received)).toBe(Filesystem.normalize(expected))
-}
-
 describe("Project.fromDirectory", () => {
   test("should handle git repository with no commits", async () => {
     const p = await loadProject()
@@ -79,8 +73,9 @@ describe("Project.fromDirectory", () => {
     const { project } = await p.fromDirectory(tmp.path)
 
     expect(project).toBeDefined()
+    expect(project.id).toBe("global")
     expect(project.vcs).toBe("git")
-    expectPath(project.worktree, tmp.path)
+    expect(project.worktree).toBe(tmp.path)
 
     const opencodeFile = path.join(tmp.path, ".git", "opencode")
     const fileExists = await Bun.file(opencodeFile).exists()
@@ -96,7 +91,7 @@ describe("Project.fromDirectory", () => {
     expect(project).toBeDefined()
     expect(project.id).not.toBe("global")
     expect(project.vcs).toBe("git")
-    expectPath(project.worktree, tmp.path)
+    expect(project.worktree).toBe(tmp.path)
 
     const opencodeFile = path.join(tmp.path, ".git", "opencode")
     const fileExists = await Bun.file(opencodeFile).exists()
@@ -148,8 +143,8 @@ describe("Project.fromDirectory with worktrees", () => {
 
     const { project, sandbox } = await p.fromDirectory(tmp.path)
 
-    expectPath(project.worktree, tmp.path)
-    expectPath(sandbox, tmp.path)
+    expect(project.worktree).toBe(tmp.path)
+    expect(sandbox).toBe(tmp.path)
     expect(project.sandboxes).not.toContain(tmp.path)
   })
 
@@ -157,41 +152,51 @@ describe("Project.fromDirectory with worktrees", () => {
     const p = await loadProject()
     await using tmp = await tmpdir({ git: true })
 
-    const worktreePath = path.join(tmp.path, "..", "worktree-test-" + Math.random().toString(36).slice(2))
-    await $`git worktree add ${worktreePath} -b test-branch`.cwd(tmp.path).quiet()
+    const worktreePath = path.join(tmp.path, "..", path.basename(tmp.path) + "-worktree")
+    try {
+      await $`git worktree add ${worktreePath} -b test-branch-${Date.now()}`.cwd(tmp.path).quiet()
 
-    const { project, sandbox } = await p.fromDirectory(worktreePath)
+      const { project, sandbox } = await p.fromDirectory(worktreePath)
 
-    expectPath(project.worktree, tmp.path)
-    expectPath(sandbox, worktreePath)
-    expect(project.sandboxes.map(Filesystem.normalize)).toContain(Filesystem.normalize(worktreePath))
-    expect(project.sandboxes.map(Filesystem.normalize)).not.toContain(Filesystem.normalize(tmp.path))
-
-    await $`git worktree remove ${worktreePath}`.cwd(tmp.path).quiet()
-    await fs.rm(worktreePath, { recursive: true, force: true }).catch(() => {})
+      expect(project.worktree).toBe(tmp.path)
+      expect(sandbox).toBe(worktreePath)
+      expect(project.sandboxes).toContain(worktreePath)
+      expect(project.sandboxes).not.toContain(tmp.path)
+    } finally {
+      await $`git worktree remove ${worktreePath}`
+        .cwd(tmp.path)
+        .quiet()
+        .catch(() => {})
+    }
   })
 
   test("should accumulate multiple worktrees in sandboxes", async () => {
     const p = await loadProject()
     await using tmp = await tmpdir({ git: true })
 
-    const worktree1 = path.join(tmp.path, "..", "worktree-1-" + Math.random().toString(36).slice(2))
-    const worktree2 = path.join(tmp.path, "..", "worktree-2-" + Math.random().toString(36).slice(2))
-    await $`git worktree add ${worktree1} -b branch-1`.cwd(tmp.path).quiet()
-    await $`git worktree add ${worktree2} -b branch-2`.cwd(tmp.path).quiet()
+    const worktree1 = path.join(tmp.path, "..", path.basename(tmp.path) + "-wt1")
+    const worktree2 = path.join(tmp.path, "..", path.basename(tmp.path) + "-wt2")
+    try {
+      await $`git worktree add ${worktree1} -b branch-${Date.now()}`.cwd(tmp.path).quiet()
+      await $`git worktree add ${worktree2} -b branch-${Date.now() + 1}`.cwd(tmp.path).quiet()
 
-    await p.fromDirectory(worktree1)
-    const { project } = await p.fromDirectory(worktree2)
+      await p.fromDirectory(worktree1)
+      const { project } = await p.fromDirectory(worktree2)
 
-    expectPath(project.worktree, tmp.path)
-    expect(project.sandboxes.map(Filesystem.normalize)).toContain(Filesystem.normalize(worktree1))
-    expect(project.sandboxes.map(Filesystem.normalize)).toContain(Filesystem.normalize(worktree2))
-    expect(project.sandboxes.map(Filesystem.normalize)).not.toContain(Filesystem.normalize(tmp.path))
-
-    await $`git worktree remove ${worktree1}`.cwd(tmp.path).quiet()
-    await $`git worktree remove ${worktree2}`.cwd(tmp.path).quiet()
-    await fs.rm(worktree1, { recursive: true, force: true }).catch(() => {})
-    await fs.rm(worktree2, { recursive: true, force: true }).catch(() => {})
+      expect(project.worktree).toBe(tmp.path)
+      expect(project.sandboxes).toContain(worktree1)
+      expect(project.sandboxes).toContain(worktree2)
+      expect(project.sandboxes).not.toContain(tmp.path)
+    } finally {
+      await $`git worktree remove ${worktree1}`
+        .cwd(tmp.path)
+        .quiet()
+        .catch(() => {})
+      await $`git worktree remove ${worktree2}`
+        .cwd(tmp.path)
+        .quiet()
+        .catch(() => {})
+    }
   })
 })
 
@@ -206,11 +211,12 @@ describe("Project.discover", () => {
 
     await p.discover(project)
 
-    const updated = await Storage.read<ProjectNS.Info>(["project", project.id])
-    expect(updated.icon).toBeDefined()
-    expect(updated.icon?.url).toStartWith("data:")
-    expect(updated.icon?.url).toContain("base64")
-    expect(updated.icon?.color).toBeUndefined()
+    const updated = Project.get(project.id)
+    expect(updated).toBeDefined()
+    expect(updated!.icon).toBeDefined()
+    expect(updated!.icon?.url).toStartWith("data:")
+    expect(updated!.icon?.url).toContain("base64")
+    expect(updated!.icon?.color).toBeUndefined()
   })
 
   test("should not discover non-image files", async () => {
@@ -222,7 +228,120 @@ describe("Project.discover", () => {
 
     await p.discover(project)
 
-    const updated = await Storage.read<ProjectNS.Info>(["project", project.id])
-    expect(updated.icon).toBeUndefined()
+    const updated = Project.get(project.id)
+    expect(updated).toBeDefined()
+    expect(updated!.icon).toBeUndefined()
+  })
+})
+
+describe("Project.update", () => {
+  test("should update name", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const { project } = await Project.fromDirectory(tmp.path)
+
+    const updated = await Project.update({
+      projectID: project.id,
+      name: "New Project Name",
+    })
+
+    expect(updated.name).toBe("New Project Name")
+
+    const fromDb = Project.get(project.id)
+    expect(fromDb?.name).toBe("New Project Name")
+  })
+
+  test("should update icon url", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const { project } = await Project.fromDirectory(tmp.path)
+
+    const updated = await Project.update({
+      projectID: project.id,
+      icon: { url: "https://example.com/icon.png" },
+    })
+
+    expect(updated.icon?.url).toBe("https://example.com/icon.png")
+
+    const fromDb = Project.get(project.id)
+    expect(fromDb?.icon?.url).toBe("https://example.com/icon.png")
+  })
+
+  test("should update icon color", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const { project } = await Project.fromDirectory(tmp.path)
+
+    const updated = await Project.update({
+      projectID: project.id,
+      icon: { color: "#ff0000" },
+    })
+
+    expect(updated.icon?.color).toBe("#ff0000")
+
+    const fromDb = Project.get(project.id)
+    expect(fromDb?.icon?.color).toBe("#ff0000")
+  })
+
+  test("should update commands", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const { project } = await Project.fromDirectory(tmp.path)
+
+    const updated = await Project.update({
+      projectID: project.id,
+      commands: { start: "npm run dev" },
+    })
+
+    expect(updated.commands?.start).toBe("npm run dev")
+
+    const fromDb = Project.get(project.id)
+    expect(fromDb?.commands?.start).toBe("npm run dev")
+  })
+
+  test("should throw error when project not found", async () => {
+    await using tmp = await tmpdir({ git: true })
+
+    await expect(
+      Project.update({
+        projectID: "nonexistent-project-id",
+        name: "Should Fail",
+      }),
+    ).rejects.toThrow("Project not found: nonexistent-project-id")
+  })
+
+  test("should emit GlobalBus event on update", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const { project } = await Project.fromDirectory(tmp.path)
+
+    let eventFired = false
+    let eventPayload: any = null
+
+    GlobalBus.on("event", (data) => {
+      eventFired = true
+      eventPayload = data
+    })
+
+    await Project.update({
+      projectID: project.id,
+      name: "Updated Name",
+    })
+
+    expect(eventFired).toBe(true)
+    expect(eventPayload.payload.type).toBe("project.updated")
+    expect(eventPayload.payload.properties.name).toBe("Updated Name")
+  })
+
+  test("should update multiple fields at once", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const { project } = await Project.fromDirectory(tmp.path)
+
+    const updated = await Project.update({
+      projectID: project.id,
+      name: "Multi Update",
+      icon: { url: "https://example.com/favicon.ico", color: "#00ff00" },
+      commands: { start: "make start" },
+    })
+
+    expect(updated.name).toBe("Multi Update")
+    expect(updated.icon?.url).toBe("https://example.com/favicon.ico")
+    expect(updated.icon?.color).toBe("#00ff00")
+    expect(updated.commands?.start).toBe("make start")
   })
 })

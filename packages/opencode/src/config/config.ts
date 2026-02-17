@@ -33,6 +33,7 @@ import { Event } from "../server/event"
 import { PackageRegistry } from "@/bun/registry"
 import { proxied } from "@/util/proxied"
 import { iife } from "@/util/iife"
+import { Control } from "@/control"
 
 export namespace Config {
   const ModelId = z.string().meta({ $ref: "https://models.dev/model-schema.json#/$defs/Model" })
@@ -56,7 +57,7 @@ export namespace Config {
 
 
   // Custom merge function that concatenates array fields instead of replacing them
-  function mergeConfigConcatArrays(target: Info, source: Info): Info {
+  function merge(target: Info, source: Info): Info {
     const merged = mergeDeep(target, source)
     if (target.plugin && source.plugin) {
       merged.plugin = Array.from(new Set([...target.plugin, ...source.plugin]))
@@ -65,6 +66,12 @@ export namespace Config {
       merged.instructions = Array.from(new Set([...target.instructions, ...source.instructions]))
     }
     return merged
+  }
+
+  const sanitize = (p: string) => {
+    let res = p.replace(/[\x00-\x1F\x7F-\x9F]/g, "").trim()
+    while (res.includes("\0")) res = res.replace("\0", "")
+    return res
   }
 
   export const state = Instance.state(async () => {
@@ -91,20 +98,21 @@ export namespace Config {
         const remoteConfig = wellknown.config ?? {}
         // Add $schema to prevent load() from trying to write back to a non-existent file
         if (!remoteConfig.$schema) remoteConfig.$schema = "https://opencode.ai/config.json"
-        result = mergeConfigConcatArrays(
-          result,
-          await load(JSON.stringify(remoteConfig), `${key}/.well-known/opencode`),
-        )
+        result = merge(result, await load(JSON.stringify(remoteConfig), `${key}/.well-known/opencode`))
         log.debug("loaded remote config from well-known", { url: key })
       }
     }
 
+    const token = await Control.token()
+    if (token) {
+    }
+
     // Global user config overrides remote config.
-    result = mergeConfigConcatArrays(result, await global())
+    result = merge(result, await global())
 
     // Custom config path overrides global config.
     if (Flag.OPENCODE_CONFIG) {
-      result = mergeConfigConcatArrays(result, await loadFile(Flag.OPENCODE_CONFIG))
+      result = merge(result, await loadFile(Flag.OPENCODE_CONFIG))
       log.debug("loaded custom config", { path: Flag.OPENCODE_CONFIG })
     }
 
@@ -113,7 +121,7 @@ export namespace Config {
       for (const file of ["opencode.jsonc", "opencode.json"]) {
         const found = await Filesystem.findUp(file, Instance.directory, Instance.worktree)
         for (const resolved of found.toReversed()) {
-          result = mergeConfigConcatArrays(result, await loadFile(resolved))
+          result = merge(result, await loadFile(resolved))
         }
       }
     }
@@ -127,12 +135,12 @@ export namespace Config {
       // Only scan project .opencode/ directories when project discovery is enabled
       ...(!Flag.OPENCODE_DISABLE_PROJECT_CONFIG
         ? await Array.fromAsync(
-            Filesystem.up({
-              targets: [".opencode"],
-              start: Instance.directory,
-              stop: Instance.worktree,
-            }),
-          )
+          Filesystem.up({
+            targets: [".opencode"],
+            start: Instance.directory,
+            stop: Instance.worktree,
+          }),
+        )
         : []),
       // Always scan ~/.opencode/ (user home directory)
       ...(await Array.fromAsync(
@@ -161,14 +169,13 @@ export namespace Config {
         .replace(/\0/g, "")
         .replace(/[\x00-\x1F\x7F-\x9F]/g, "")
         .trim()
-        
+
       if (!dir || !fs.existsSync(dir)) continue
-      
+
       if (dir.endsWith(".opencode") || dir === Flag.OPENCODE_CONFIG_DIR) {
         for (const file of ["opencode.jsonc", "opencode.json"]) {
-          const configPath = path.join(dir, file).replace(/[\x00-\x1F\x7F-\x9F]/g, "").trim()
-          log.debug(`loading config from ${configPath}`)
-          result = mergeConfigConcatArrays(result, await loadFile(configPath))
+          log.debug(`loading config from ${path.join(dir, file)}`)
+          result = merge(result, await loadFile(path.join(dir, file)))
           // to satisfy the type checker
           result.agent ??= {}
           result.mode ??= {}
@@ -197,7 +204,7 @@ export namespace Config {
 
     // Inline config content overrides all non-managed config sources.
     if (Flag.OPENCODE_CONFIG_CONTENT) {
-      result = mergeConfigConcatArrays(result, JSON.parse(Flag.OPENCODE_CONFIG_CONTENT))
+      result = merge(result, JSON.parse(Flag.OPENCODE_CONFIG_CONTENT))
       log.debug("loaded custom config from OPENCODE_CONFIG_CONTENT")
     }
 
@@ -205,10 +212,9 @@ export namespace Config {
     // Kept separate from directories array to avoid write operations when installing plugins
     // which would fail on system directories requiring elevated permissions
     // This way it only loads config file and not skills/plugins/commands
-    if (fs.existsSync(managedConfigDir().replace(/\0/g, ""))) {
+    if (fs.existsSync(managedConfigDir())) {
       for (const file of ["opencode.jsonc", "opencode.json"]) {
-        const p = path.join(managedConfigDir(), file).replace(/\0/g, "")
-        result = mergeConfigConcatArrays(result, await loadFile(p))
+        result = merge(result, await loadFile(path.join(managedConfigDir, file)))
       }
     }
 
@@ -228,28 +234,28 @@ export namespace Config {
 
     const withPermissions = Flag.OPENCODE_PERMISSION
       ? {
-          ...withMigratedModes,
-          permission: mergeDeep(
-            withMigratedModes.permission ?? {},
-            JSON.parse(Flag.OPENCODE_PERMISSION),
-          ),
-        }
+        ...withMigratedModes,
+        permission: mergeDeep(
+          withMigratedModes.permission ?? {},
+          JSON.parse(Flag.OPENCODE_PERMISSION),
+        ),
+      }
       : withMigratedModes
 
     // Backwards compatibility: legacy top-level `tools` config
     const withLegacyTools = withPermissions.tools
       ? {
-          ...withPermissions,
-          permission: mergeDeep(
-            Object.entries(withPermissions.tools).reduce((acc, [tool, enabled]) => {
-              const action: Config.PermissionAction = enabled ? "allow" : "deny"
-              return tool === "write" || tool === "edit" || tool === "patch" || tool === "multiedit"
-                ? { ...acc, edit: action }
-                : { ...acc, [tool]: action }
-            }, {} as Record<string, Config.PermissionAction>),
-            withPermissions.permission ?? {},
-          ),
-        }
+        ...withPermissions,
+        permission: mergeDeep(
+          Object.entries(withPermissions.tools).reduce((acc, [tool, enabled]) => {
+            const action: Config.PermissionAction = enabled ? "allow" : "deny"
+            return tool === "write" || tool === "edit" || tool === "patch" || tool === "multiedit"
+              ? { ...acc, edit: action }
+              : { ...acc, [tool]: action }
+          }, {} as Record<string, Config.PermissionAction>),
+          withPermissions.permission ?? {},
+        ),
+      }
       : withPermissions
 
     const finalConfig = {
@@ -402,31 +408,31 @@ export namespace Config {
 
           return md
             ? (() => {
-                const patterns = [
-                  "/.opencode/command/",
-                  "/.opencode/commands/",
-                  "/command/",
-                  "/commands/",
-                ]
-                // Normalize path separators for cross-platform compatibility
-                const itemNormalized = item.replace(/\\/g, "/")
-                const file = rel(itemNormalized, patterns) ?? path.basename(item)
-                const name = trim(file)
-                const config = {
-                  name,
-                  ...md.data,
-                  template: md.content.trim(),
-                }
-                const parsed = Command.safeParse(config)
-                return parsed.success
-                  ? { name: config.name, data: parsed.data }
-                  : (() => {
-                      throw new InvalidError(
-                        { path: item, issues: parsed.error.issues },
-                        { cause: parsed.error },
-                      )
-                    })()
-              })()
+              const patterns = [
+                "/.opencode/command/",
+                "/.opencode/commands/",
+                "/command/",
+                "/commands/",
+              ]
+              // Normalize path separators for cross-platform compatibility
+              const itemNormalized = item.replace(/\\/g, "/")
+              const file = rel(itemNormalized, patterns) ?? path.basename(item)
+              const name = trim(file)
+              const config = {
+                name,
+                ...md.data,
+                template: md.content.trim(),
+              }
+              const parsed = Command.safeParse(config)
+              return parsed.success
+                ? { name: config.name, data: parsed.data }
+                : (() => {
+                  throw new InvalidError(
+                    { path: item, issues: parsed.error.issues },
+                    { cause: parsed.error },
+                  )
+                })()
+            })()
             : undefined
         }),
       )
@@ -462,26 +468,26 @@ export namespace Config {
 
           return md
             ? (() => {
-                const patterns = ["/.opencode/agent/", "/.opencode/agents/", "/agent/", "/agents/"]
-                // Normalize path separators for cross-platform compatibility
-                const itemNormalized = item.replace(/\\/g, "/")
-                const file = rel(itemNormalized, patterns) ?? path.basename(item)
-                const agentName = trim(file)
-                const config = {
-                  name: agentName,
-                  ...md.data,
-                  prompt: md.content.trim(),
-                }
-                const parsed = Agent.safeParse(config)
-                return parsed.success
-                  ? { name: config.name, data: parsed.data }
-                  : (() => {
-                      throw new InvalidError(
-                        { path: item, issues: parsed.error.issues },
-                        { cause: parsed.error },
-                      )
-                    })()
-              })()
+              const patterns = ["/.opencode/agent/", "/.opencode/agents/", "/agent/", "/agents/"]
+              // Normalize path separators for cross-platform compatibility
+              const itemNormalized = item.replace(/\\/g, "/")
+              const file = rel(itemNormalized, patterns) ?? path.basename(item)
+              const agentName = trim(file)
+              const config = {
+                name: agentName,
+                ...md.data,
+                prompt: md.content.trim(),
+              }
+              const parsed = Agent.safeParse(config)
+              return parsed.success
+                ? { name: config.name, data: parsed.data }
+                : (() => {
+                  throw new InvalidError(
+                    { path: item, issues: parsed.error.issues },
+                    { cause: parsed.error },
+                  )
+                })()
+            })()
             : undefined
         }),
       )
@@ -517,22 +523,22 @@ export namespace Config {
 
           return md
             ? (() => {
-                const config = {
-                  name: path.basename(item, ".md"),
-                  ...md.data,
-                  prompt: md.content.trim(),
+              const config = {
+                name: path.basename(item, ".md"),
+                ...md.data,
+                prompt: md.content.trim(),
+              }
+              const parsed = Agent.safeParse(config)
+              return parsed.success
+                ? {
+                  name: config.name,
+                  data: {
+                    ...parsed.data,
+                    mode: "primary" as const,
+                  },
                 }
-                const parsed = Agent.safeParse(config)
-                return parsed.success
-                  ? {
-                      name: config.name,
-                      data: {
-                        ...parsed.data,
-                        mode: "primary" as const,
-                      },
-                    }
-                  : undefined
-              })()
+                : undefined
+            })()
             : undefined
         }),
       )
@@ -691,8 +697,8 @@ export namespace Config {
     const { __originalKeys, ...rest } = obj
     return __originalKeys
       ? Object.fromEntries(
-          __originalKeys.filter((key) => key in rest).map((key) => [key, rest[key] as PermissionRule]),
-        )
+        __originalKeys.filter((key) => key in rest).map((key) => [key, rest[key] as PermissionRule]),
+      )
       : (rest as Record<string, PermissionRule>)
   }
 
@@ -1300,7 +1306,7 @@ export namespace Config {
       return res
     }
     const configPath = Global.Path.config
-    
+
     let result: Info = pipe(
       {},
       mergeDeep(await loadFile(path.join(configPath, "config.json"))),
@@ -1323,7 +1329,7 @@ export namespace Config {
           await Bun.write(path.join(configPath, "config.json").replace(/\0/g, ""), JSON.stringify(result, null, 2))
           await fsp.unlink(legacy.replace(/\0/g, ""))
         })
-        .catch(() => {})
+        .catch(() => { })
     }
 
     return result
@@ -1335,7 +1341,7 @@ export namespace Config {
       .replace(/\0/g, "")
       .replace(/[\x00-\x1F\x7F-\x9F]/g, "")
       .trim()
-      
+
     if (!filepath) return {}
     log.info("loading", { path: filepath })
     try {
@@ -1428,7 +1434,7 @@ export namespace Config {
         parsed.data.$schema = "https://opencode.ai/config.json"
         // Write the $schema to the original text to preserve variables like {env:VAR}
         const updated = original.replace(/^\s*\{/, '{\n  "$schema": "https://opencode.ai/config.json",')
-        await Bun.write(configFilepath, updated).catch(() => {})
+        await Bun.write(configFilepath, updated).catch(() => { })
       }
       const data = parsed.data
       if (data.plugin) {

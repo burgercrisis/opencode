@@ -222,19 +222,6 @@ export namespace ACP {
               await this.sdk.permission.reply({ requestID: p.id, reply: "reject", directory: dir })
               return
             }
-
-            if (res.outcome.optionId !== "reject" && p.permission == "edit") {
-              const meta = p.metadata || {}
-              const file = typeof meta["filepath"] === "string" ? meta["filepath"] : ""
-              const diff = typeof meta["diff"] === "string" ? meta["diff"] : ""
-              const f = Bun.file(file)
-              if (await f.exists()) {
-                const text = await f.text()
-                const next = getNewContent(text, diff)
-                if (next) this.connection.writeTextFile({ sessionId: s.id, path: file, content: next })
-              }
-            }
-
             await this.sdk.permission.reply({
               requestID: p.id,
               reply: res.outcome.optionId as "once" | "always" | "reject",
@@ -392,6 +379,70 @@ export namespace ACP {
                 update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: delta } },
               })
               .catch((error) => log.error("failed to send text to ACP", { error }))
+=======
+          }
+          return
+        }
+
+        case "message.part.delta": {
+          const props = event.properties
+          const session = this.sessionManager.tryGet(props.sessionID)
+          if (!session) return
+          const sessionId = session.id
+
+          const message = await this.sdk.session
+            .message(
+              {
+                sessionID: props.sessionID,
+                messageID: props.messageID,
+                directory: session.cwd,
+              },
+              { throwOnError: true },
+            )
+            .then((x) => x.data)
+            .catch((error) => {
+              log.error("unexpected error when fetching message", { error })
+              return undefined
+            })
+
+          if (!message || message.info.role !== "assistant") return
+
+          const part = message.parts.find((p) => p.id === props.partID)
+          if (!part) return
+
+          if (part.type === "text" && props.field === "text" && part.ignored !== true) {
+            await this.connection
+              .sessionUpdate({
+                sessionId,
+                update: {
+                  sessionUpdate: "agent_message_chunk",
+                  content: {
+                    type: "text",
+                    text: props.delta,
+                  },
+                },
+              })
+              .catch((error) => {
+                log.error("failed to send text delta to ACP", { error })
+              })
+            return
+          }
+
+          if (part.type === "reasoning" && props.field === "text") {
+            await this.connection
+              .sessionUpdate({
+                sessionId,
+                update: {
+                  sessionUpdate: "agent_thought_chunk",
+                  content: {
+                    type: "text",
+                    text: props.delta,
+                  },
+                },
+              })
+              .catch((error) => {
+                log.error("failed to send reasoning delta to ACP", { error })
+              })
           }
           return
         }
@@ -704,102 +755,102 @@ export namespace ACP {
             }
           } else if (part.type === "text") {
             if (part.text) {
-            const audience: Role[] | undefined = part.synthetic ? ["assistant"] : part.ignored ? ["user"] : undefined
-            await this.connection
-              .sessionUpdate({
-                sessionId,
-                update: {
-                  sessionUpdate: message.info.role === "user" ? "user_message_chunk" : "agent_message_chunk",
-                  content: {
-                    type: "text",
-                    text: part.text,
-                    ...(audience && { annotations: { audience } }),
+              const audience: Role[] | undefined = part.synthetic ? ["assistant"] : part.ignored ? ["user"] : undefined
+              await this.connection
+                .sessionUpdate({
+                  sessionId,
+                  update: {
+                    sessionUpdate: message.info.role === "user" ? "user_message_chunk" : "agent_message_chunk",
+                    content: {
+                      type: "text",
+                      text: part.text,
+                      ...(audience && { annotations: { audience } }),
+                    },
                   },
-                },
-              })
-              .catch((err) => {
+                })
+                .catch((err) => {
                   log.error("failed to send text to ACP", { error: err })
                 })
             }
           } else if (part.type === "file") {
             // Replay file attachments as appropriate ACP content blocks.
-          // OpenCode stores files internally as { type: "file", url, filename, mime }.
-          // We convert these back to ACP blocks based on the URL scheme and MIME type:
-          // - file:// URLs → resource_link
-          // - data: URLs with image/* → image block
-          // - data: URLs with text/* or application/json → resource with text
-          // - data: URLs with other types → resource with blob
-          const url = part.url
-          const filename = part.filename ?? "file"
-          const mime = part.mime || "application/octet-stream"
-          const messageChunk = message.info.role === "user" ? "user_message_chunk" : "agent_message_chunk"
+            // OpenCode stores files internally as { type: "file", url, filename, mime }.
+            // We convert these back to ACP blocks based on the URL scheme and MIME type:
+            // - file:// URLs → resource_link
+            // - data: URLs with image/* → image block
+            // - data: URLs with text/* or application/json → resource with text
+            // - data: URLs with other types → resource with blob
+            const url = part.url
+            const filename = part.filename ?? "file"
+            const mime = part.mime || "application/octet-stream"
+            const messageChunk = message.info.role === "user" ? "user_message_chunk" : "agent_message_chunk"
 
-          if (url.startsWith("file://")) {
-            // Local file reference - send as resource_link
-            await this.connection
-              .sessionUpdate({
-                sessionId,
-                update: {
-                  sessionUpdate: messageChunk,
-                  content: { type: "resource_link", uri: url, name: filename, mimeType: mime },
-                },
-              })
-              .catch((err) => {
-                log.error("failed to send resource_link to ACP", { error: err })
-              })
-          } else if (url.startsWith("data:")) {
-            // Embedded content - parse data URL and send as appropriate block type
-            const base64Match = url.match(/^data:([^;]+);base64,(.*)$/)
-            const dataMime = base64Match?.[1]
-            const base64Data = base64Match?.[2] ?? ""
-
-            const effectiveMime = dataMime || mime
-
-            if (effectiveMime.startsWith("image/")) {
-              // Image - send as image block
+            if (url.startsWith("file://")) {
+              // Local file reference - send as resource_link
               await this.connection
                 .sessionUpdate({
                   sessionId,
                   update: {
                     sessionUpdate: messageChunk,
-                    content: {
-                      type: "image",
-                      mimeType: effectiveMime,
-                      data: base64Data,
-                      uri: pathToFileURL(filename).href,
-                    },
+                    content: { type: "resource_link", uri: url, name: filename, mimeType: mime },
                   },
                 })
                 .catch((err) => {
-                  log.error("failed to send image to ACP", { error: err })
+                  log.error("failed to send resource_link to ACP", { error: err })
                 })
-            } else {
-              // Non-image: text types get decoded, binary types stay as blob
-              const isText = effectiveMime.startsWith("text/") || effectiveMime === "application/json"
-              const fileUri = pathToFileURL(filename).href
-              const resource = isText
-                ? {
+            } else if (url.startsWith("data:")) {
+              // Embedded content - parse data URL and send as appropriate block type
+              const base64Match = url.match(/^data:([^;]+);base64,(.*)$/)
+              const dataMime = base64Match?.[1]
+              const base64Data = base64Match?.[2] ?? ""
+
+              const effectiveMime = dataMime || mime
+
+              if (effectiveMime.startsWith("image/")) {
+                // Image - send as image block
+                await this.connection
+                  .sessionUpdate({
+                    sessionId,
+                    update: {
+                      sessionUpdate: messageChunk,
+                      content: {
+                        type: "image",
+                        mimeType: effectiveMime,
+                        data: base64Data,
+                        uri: pathToFileURL(filename).href,
+                      },
+                    },
+                  })
+                  .catch((err) => {
+                    log.error("failed to send image to ACP", { error: err })
+                  })
+              } else {
+                // Non-image: text types get decoded, binary types stay as blob
+                const isText = effectiveMime.startsWith("text/") || effectiveMime === "application/json"
+                const fileUri = pathToFileURL(filename).href
+                const resource = isText
+                  ? {
                     uri: fileUri,
                     mimeType: effectiveMime,
                     text: Buffer.from(base64Data, "base64").toString("utf-8"),
                   }
-                : { uri: fileUri, mimeType: effectiveMime, blob: base64Data }
+                  : { uri: fileUri, mimeType: effectiveMime, blob: base64Data }
 
-              await this.connection
-                .sessionUpdate({
-                  sessionId,
-                  update: {
-                    sessionUpdate: messageChunk,
-                    content: { type: "resource", resource },
-                  },
-                })
-                .catch((err) => {
-                  log.error("failed to send resource to ACP", { error: err })
-                })
+                await this.connection
+                  .sessionUpdate({
+                    sessionId,
+                    update: {
+                      sessionUpdate: messageChunk,
+                      content: { type: "resource", resource },
+                    },
+                  })
+                  .catch((err) => {
+                    log.error("failed to send resource to ACP", { error: err })
+                  })
+              }
             }
           }
-        }
-      })
+        })
 
         return processParts(remaining.slice(1))
       }
@@ -862,9 +913,9 @@ export namespace ACP {
       const currentModeId = modeState.currentModeId
       const modes = currentModeId
         ? {
-            availableModes: modeState.availableModes,
-            currentModeId,
-          }
+          availableModes: modeState.availableModes,
+          currentModeId,
+        }
         : undefined
 
       const commands = await this.config.sdk.command
@@ -1078,9 +1129,9 @@ export namespace ACP {
 
       const cmd = text.startsWith("/")
         ? (() => {
-            const [name, ...rest] = text.slice(1).split(/\s+/)
-            return { name, args: rest.join(" ").trim() }
-          })()
+          const [name, ...rest] = text.slice(1).split(/\s+/)
+          return { name, args: rest.join(" ").trim() }
+        })()
         : undefined
 
       if (!cmd) {

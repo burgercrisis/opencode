@@ -50,6 +50,19 @@ type CopyLabels = {
   copied: string
 }
 
+const urlPattern = /^https?:\/\/[^\s<>()`"']+$/
+
+function codeUrl(text: string) {
+  const href = text.trim().replace(/[),.;!?]+$/, "")
+  if (!urlPattern.test(href)) return
+  try {
+    const url = new URL(href)
+    return url.toString()
+  } catch {
+    return
+  }
+}
+
 function createIcon(path: string, slot: string) {
   const icon = document.createElement("div")
   icon.setAttribute("data-component", "icon")
@@ -111,9 +124,39 @@ function setupCodeCopy(root: HTMLDivElement, labels: CopyLabels) {
     wrapper.appendChild(createCopyButton(labels))
   }
 
+  const markCodeLinks = () => {
+    const codeNodes = Array.from(root.querySelectorAll(":not(pre) > code"))
+    for (const code of codeNodes) {
+      const href = codeUrl(code.textContent ?? "")
+      const parentLink =
+        code.parentElement instanceof HTMLAnchorElement && code.parentElement.classList.contains("external-link")
+          ? code.parentElement
+          : null
+
+      if (!href) {
+        if (parentLink) parentLink.replaceWith(code)
+        continue
+      }
+
+      if (parentLink) {
+        parentLink.href = href
+        continue
+      }
+
+      const link = document.createElement("a")
+      link.href = href
+      link.className = "external-link"
+      link.target = "_blank"
+      link.rel = "noopener noreferrer"
+      code.parentNode?.replaceChild(link, code)
+      link.appendChild(code)
+    }
+  }
+
   const handleClick = async (event: MouseEvent) => {
     const target = event.target
     if (!(target instanceof Element)) return
+
     const button = target.closest('[data-slot="markdown-copy-button"]')
     if (!(button instanceof HTMLButtonElement)) return
     const code = button.closest('[data-component="markdown-code"]')?.querySelector("code")
@@ -130,7 +173,10 @@ function setupCodeCopy(root: HTMLDivElement, labels: CopyLabels) {
   }
 
   const blocks = Array.from(root.querySelectorAll("pre"))
-  blocks.forEach(ensureWrapper)
+  for (const block of blocks) {
+    ensureWrapper(block)
+  }
+  markCodeLinks()
 
   const buttons = Array.from(root.querySelectorAll('[data-slot="markdown-copy-button"]'))
   buttons.forEach((button) => {
@@ -141,8 +187,8 @@ function setupCodeCopy(root: HTMLDivElement, labels: CopyLabels) {
 
   return () => {
     root.removeEventListener("click", handleClick)
-  Array.from(timeouts.values()).forEach(clearTimeout)
-}
+    Array.from(timeouts.values()).forEach(clearTimeout)
+  }
 }
 
 function touch(key: string, value: Entry) {

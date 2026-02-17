@@ -57,6 +57,30 @@ export namespace Provider {
     return isGpt5OrLater(modelID) && !modelID.startsWith("gpt-5-mini")
   }
 
+  function googleVertexVars(options: Record<string, any>) {
+    const project =
+      options["project"] ?? Env.get("GOOGLE_CLOUD_PROJECT") ?? Env.get("GCP_PROJECT") ?? Env.get("GCLOUD_PROJECT")
+    const location =
+      options["location"] ?? Env.get("GOOGLE_CLOUD_LOCATION") ?? Env.get("VERTEX_LOCATION") ?? "us-central1"
+    const endpoint = location === "global" ? "aiplatform.googleapis.com" : `${location}-aiplatform.googleapis.com`
+
+    return {
+      GOOGLE_VERTEX_PROJECT: project,
+      GOOGLE_VERTEX_LOCATION: location,
+      GOOGLE_VERTEX_ENDPOINT: endpoint,
+    }
+  }
+
+  function loadBaseURL(model: Model, options: Record<string, any>) {
+    const raw = options["baseURL"] ?? model.api.url
+    if (typeof raw !== "string") return raw
+    const vars = model.providerID === "google-vertex" ? googleVertexVars(options) : undefined
+    return raw.replace(/\$\{([^}]+)\}/g, (match, key) => {
+      const val = Env.get(String(key)) ?? vars?.[String(key) as keyof typeof vars]
+      return val ?? match
+    })
+  }
+
   const BUNDLED_PROVIDERS: Record<string, (options: any) => SDK> = {
     "@ai-sdk/amazon-bedrock": (options) => createAmazonBedrock(options),
     "@ai-sdk/anthropic": (options) => createAnthropic(options),
@@ -364,9 +388,16 @@ export namespace Provider {
         },
       }
     },
-    "google-vertex": async () => {
-      const project = Env.get("GOOGLE_CLOUD_PROJECT") ?? Env.get("GCP_PROJECT") ?? Env.get("GCLOUD_PROJECT")
-      const location = Env.get("GOOGLE_CLOUD_LOCATION") ?? Env.get("VERTEX_LOCATION") ?? "us-east5"
+    "google-vertex": async (provider) => {
+      const project =
+        provider.options?.project ??
+        Env.get("GOOGLE_CLOUD_PROJECT") ??
+        Env.get("GCP_PROJECT") ??
+        Env.get("GCLOUD_PROJECT")
+
+      const location =
+        provider.options?.location ?? Env.get("GOOGLE_CLOUD_LOCATION") ?? Env.get("VERTEX_LOCATION") ?? "us-central1"
+
       const autoload = Boolean(project)
       if (!autoload) return { autoload: false }
       return {
@@ -374,6 +405,18 @@ export namespace Provider {
         options: {
           project,
           location,
+          fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
+            const { GoogleAuth } = await import(await BunProc.install("google-auth-library"))
+            const auth = new GoogleAuth()
+            const client = await auth.getApplicationDefault()
+            const credentials = await client.credential
+            const token = await credentials.getAccessToken()
+
+            const headers = new Headers(init?.headers)
+            headers.set("Authorization", `Bearer ${token.token}`)
+
+            return fetch(input, { ...init, headers })
+          },
         },
         async getModel(sdk: any, model: Model) {
           const id = String(model.api.id).trim()
@@ -516,7 +559,7 @@ export namespace Provider {
       if (!apiToken) {
         throw new Error(
           "CLOUDFLARE_API_TOKEN (or CF_AIG_TOKEN) is required for Cloudflare AI Gateway. " +
-            "Set it via environment variable or run `opencode auth cloudflare-ai-gateway`.",
+          "Set it via environment variable or run `opencode auth cloudflare-ai-gateway`.",
         )
       }
 
@@ -691,13 +734,13 @@ export namespace Provider {
         },
         experimentalOver200K: model.cost?.context_over_200k
           ? {
-              cache: {
-                read: model.cost.context_over_200k.cache_read ?? 0,
-                write: model.cost.context_over_200k.cache_write ?? 0,
-              },
-              input: model.cost.context_over_200k.input,
-              output: model.cost.context_over_200k.output,
-            }
+            cache: {
+              read: model.cost.context_over_200k.cache_read ?? 0,
+              write: model.cost.context_over_200k.cache_write ?? 0,
+            },
+            input: model.cost.context_over_200k.input,
+            output: model.cost.context_over_200k.output,
+          }
           : undefined,
       },
       limit: {
@@ -917,12 +960,12 @@ export namespace Provider {
       const nextAcc = iife(async () => {
         const withAuth = auth
           ? {
-              ...acc,
-              [providerID]: mergeDeep(acc[providerID] ?? database[providerID], {
-                source: "custom",
-                options: await plugin.auth!.loader!(() => Auth.get(providerID) as any, database[providerID]),
-              } as any),
-            }
+            ...acc,
+            [providerID]: mergeDeep(acc[providerID] ?? database[providerID], {
+              source: "custom",
+              options: await plugin.auth!.loader!(() => Auth.get(providerID) as any, database[providerID]),
+            } as any),
+          }
           : acc
 
         if (providerID === "github-copilot") {
@@ -1061,13 +1104,16 @@ export namespace Provider {
       const provider = s.providers[model.providerID]
       const options = { ...provider.options }
 
+      if (model.providerID === "google-vertex" && !model.api.npm.includes("@ai-sdk/openai-compatible")) {
+        delete options.fetch
+      }
+
       if (model.api.npm.includes("@ai-sdk/openai-compatible") && options["includeUsage"] !== false) {
         options["includeUsage"] = true
       }
 
-      const resolvedBaseURL = resolveModelBaseURL(model, options)
-      if (!options["baseURL"] && resolvedBaseURL) options["baseURL"] = resolvedBaseURL
-
+      const baseURL = loadBaseURL(model, options)
+      if (baseURL !== undefined) options["baseURL"] = baseURL
       if (options["apiKey"] === undefined && provider.key) options["apiKey"] = provider.key
       if (model.headers)
         options["headers"] = {
@@ -1096,35 +1142,35 @@ export namespace Provider {
           opts.signal = combined
         }
 
-      // Strip openai itemId metadata following what codex does
-      // Codex uses #[serde(skip_serializing)] on id fields for all item types:
-      // Message, Reasoning, FunctionCall, LocalShellCall, CustomToolCall, WebSearchCall
-      // IDs are only re-attached for Azure with store=true
-      const stripIds = options["stripIds"] !== false
-      if (
-        stripIds &&
-        model.api.npm === "@ai-sdk/openai" &&
-        opts.body &&
-        opts.method === "POST" &&
-        (opts.body as string).includes('"id"')
-      ) {
-        const body = JSON.parse(opts.body as string)
-        const isAzure = model.providerID.includes("azure") || model.api.npm.includes("azure")
-        const keepIds = isAzure && body.store === true
-        if (!keepIds && Array.isArray(body.input)) {
-          const input = body.input.map((item: any) => {
-            if (item && typeof item === "object" && "id" in item) {
-              const { id, ...rest } = item
-              return rest
+        // Strip openai itemId metadata following what codex does
+        // Codex uses #[serde(skip_serializing)] on id fields for all item types:
+        // Message, Reasoning, FunctionCall, LocalShellCall, CustomToolCall, WebSearchCall
+        // IDs are only re-attached for Azure with store=true
+        const stripIds = options["stripIds"] !== false
+        if (
+          stripIds &&
+          model.api.npm === "@ai-sdk/openai" &&
+          opts.body &&
+          opts.method === "POST" &&
+          (opts.body as string).includes('"id"')
+        ) {
+          const body = JSON.parse(opts.body as string)
+          const isAzure = model.providerID.includes("azure") || model.api.npm.includes("azure")
+          const keepIds = isAzure && body.store === true
+          if (!keepIds && Array.isArray(body.input)) {
+            const input = body.input.map((item: any) => {
+              if (item && typeof item === "object" && "id" in item) {
+                const { id, ...rest } = item
+                return rest
+              }
+              return item
+            })
+            const changed = input.some((item: any, index: number) => item !== body.input[index])
+            if (changed) {
+              opts.body = JSON.stringify({ ...body, input })
             }
-            return item
-          })
-          const changed = input.some((item: any, index: number) => item !== body.input[index])
-          if (changed) {
-            opts.body = JSON.stringify({ ...body, input })
           }
         }
-      }
 
         return fetchFn(input, {
           ...opts,
