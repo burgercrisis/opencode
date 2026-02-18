@@ -2,12 +2,31 @@ import { render } from "solid-js/web"
 import { MetaProvider } from "@solidjs/meta"
 import "@opencode-ai/app/index.css"
 import { Font } from "@opencode-ai/ui/font"
-import { Splash } from "@opencode-ai/ui/logo"
 import { Progress } from "@opencode-ai/ui/progress"
-import "./styles.css"
 import { createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js"
 import { commands, events, InitStep } from "./bindings"
 import { Channel } from "@tauri-apps/api/core"
+
+// Define BURGERCODE logo inline to avoid import issues
+const burgercodeLogo = {
+  left: [
+    "                   ",
+    "                    ___           ___           ___           ___           ___          _____          ___     ",
+    "     _____         /__\\         /  /\\         /  /\\         /  /\\         /  /\\        /  /::\\        /  /\\    ",
+    "    /  /::\\        \\  \\:\\       /  /::\\       /  /:/_       /  /:/_       /  /::\\       /  /:/        /  /::\\      /  /:/_   ",
+    "   /  /:/\\:\\        \\  \\:\\     /  /:/\\:\\     /  /:/ /\\     /  /:/ /\\     /  /:/\\:\\     /  /:/        /  /:/\\:\\    /  /:/  \\:\\    /  /:/ /\\  "
+  ],
+  right: [
+    "             ▄     ",
+    "   /  /:/~/::\\   ___  \\  \\:\\   /  /:/~/:/    /  /:/_/::\\   /  /:/ /:/_   /  /:/~/:/    /  /:/  ___   /  /:/  \\:\\  /__/:/ \\__\\:|  /  /:/ /:/_ ",
+    " /__/:/ /:/\\:| /__/\\  \\__\\:\\ /__/:/ /:/___ /__/:/__\\/\\ /__/:/ /:/ /\\ /__/:/ /:/___ /__/:/  /  /\\ /__/:/ \\__\\:\\ \\  \\:\\ /  /:/ /__/:/ /:/ /\\",
+    " \\  \\:\\/:/~/:/ \\  \\:\\ /  /:/ \\  \\:\\/:::::/ \\  \\:\\ /~~/:/ \\  \\:\\/:/ /:/ \\  \\:\\ /  /:/ \\  \\:\\  /:/ \\  \\:\\/:/ /:/",
+    "  \\  \\::/ /:/   \\  \\:\\  /:/   \\  \\::/~~~~   \\  \\:\\  /:/   \\  \\::/ /:/   \\  \\::/~~~~   \\  \\:\\  /:/   \\  \\:\\  /:/    \\  \\:\\/:/    \\  \\::/ /:/ ",
+    "   \\  \\:\\/:/     \\  \\:\\/:/     \\  \\:\\        \\  \\:\\/:/     \\  \\:\\/:/     \\  \\:\\        \\  \\:\\/:/     \\  \\:\\/:/      \\  \\::/      \\  \\:\\/:/  ",
+    "    \\  \\::/       \\  \\::/       \\  \\:\\        \\  \\::/       \\  \\::/       \\  \\:\\        \\  \\::/       \\  \\::/        \\__\\/        \\  \\::/   ",
+    "     \\__\\/         \\__\\/         \\__\\/         \\__\\/         \\__\\/         \\__\\/         \\__\\/                       \\__\\/    "
+  ]
+}
 
 const root = document.getElementById("root")!
 const lines = ["Just a moment...", "Migrating your database", "This may take a couple of minutes"]
@@ -64,7 +83,18 @@ render(() => {
       <div class="w-screen h-screen bg-background-base flex items-center justify-center">
         <Font />
         <div class="flex flex-col items-center gap-11">
-          <Splash class="w-20 h-25 opacity-15" />
+          <div class="flex flex-col items-center gap-4">
+            <pre class="text-text-weak text-12-normal font-mono leading-tight">
+              {burgercodeLogo.left.map((line: string, i: number) => (
+                <div class={i === 0 ? "text-center" : ""}>{line}</div>
+              ))}
+            </pre>
+            <pre class="text-text-strong text-12-normal font-mono leading-tight">
+              {burgercodeLogo.right.map((line: string, i: number) => (
+                <div class={i === 0 ? "text-center" : ""}>{line}</div>
+              ))}
+            </pre>
+          </div>
           <div class="w-60 flex flex-col items-center gap-4" aria-live="polite">
             <span class="w-full overflow-hidden text-center text-ellipsis whitespace-nowrap text-text-strong text-14-normal">
               {status()}
@@ -73,7 +103,7 @@ render(() => {
               value={value()}
               class="w-20 [&_[data-slot='progress-track']]:h-1 [&_[data-slot='progress-track']]:border-0 [&_[data-slot='progress-track']]:rounded-none [&_[data-slot='progress-track']]:bg-surface-weak [&_[data-slot='progress-fill']]:rounded-none [&_[data-slot='progress-fill']]:bg-icon-warning-base"
               aria-label="Database migration progress"
-              getValueLabel={({ value }) => `${Math.round(value)}%`}
+              getValueLabel={({ value }: { value: number }) => `${Math.round(value)}%`}
             />
           </div>
         </div>
