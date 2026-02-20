@@ -412,6 +412,10 @@
         "typescript": "catalog:",
       },
     },
+    "packages/shared": {
+      "name": "@opencode-ai/shared",
+      "version": "1.0.0",
+    },
     "packages/slack": {
       "name": "@opencode-ai/slack",
       "version": "1.2.6",
@@ -1311,6 +1315,8 @@
     "@opencode-ai/script": ["@opencode-ai/script@workspace:packages/script"],
 
     "@opencode-ai/sdk": ["@opencode-ai/sdk@workspace:packages/sdk/js"],
+
+    "@opencode-ai/shared": ["@opencode-ai/shared@workspace:packages/shared"],
 
     "@opencode-ai/slack": ["@opencode-ai/slack@workspace:packages/slack"],
 

@@ -489,270 +489,273 @@ describe("BashTool", () => {
             const tool = await BashTool.init()
             await tool.execute({ command: "echo %EXPAND_ME%", description: "test" }, ctx)
 
-          })
-      })
-
-    test("handles powershell job cmdlets with extended timeout", async () => {
-      await using tmp = await tmpdir()
-      await Instance.provide({
-        directory: tmp.path,
-        fn: async () => {
-          mocks.bunSpawn.mockImplementation(mockSpawn("job started"))
-
-          const tool = await BashTool.init()
-          const result = await tool.execute({
-            command: "Start-Job -ScriptBlock { echo hello }",
-            description: "starts a job"
-          }, ctx)
-
-          expect(result.output).toBe("job started")
-        },
-      })
-    })
-
-    test("handles path resolution for common commands", async () => {
-      await using tmp = await tmpdir()
-      const externalDir = path.join(path.dirname(tmp.path), "external-dir")
-      await Instance.provide({
-        directory: tmp.path,
-        fn: async () => {
-          mocks.bunSpawn.mockImplementation(mockSpawn("done"))
-
-          const tool = await BashTool.init()
-
-          // Test 'mkdir' with external path
-          await tool.execute({
-            command: `mkdir ${externalDir}`,
-            description: "makes dir"
-          }, ctx)
-
-          expect(ctx.ask).toHaveBeenCalledWith(expect.objectContaining({
-            permission: "external_directory"
-          }))
-        },
-      })
-    })
-
-    test("handles CMD environment variable setting", async () => {
-      if (process.platform !== "win32") return
-
-      await using tmp = await tmpdir()
-      await Instance.provide({
-        directory: tmp.path,
-        fn: async () => {
-          mocks.bunSpawn.mockImplementation(mockSpawn("expanded"))
-
-          const tool = await BashTool.init()
-          await tool.execute({
-            command: "set FOO=bar && echo %FOO%",
-            description: "sets and echoes"
-          }, ctx)
-        },
-      })
-    })
-
-    test("validates timeout value", async () => {
-      await using tmp = await tmpdir()
-      await Instance.provide({
-        directory: tmp.path,
-        fn: async () => {
-          const tool = await BashTool.init()
-          await expect(tool.execute({
-            command: "echo hello",
-            timeout: -1,
-            description: "invalid"
-          }, ctx)).rejects.toThrow("Invalid timeout value")
-        },
-      })
-    })
-
-    test("execute coverage gaps", async () => {
-      await using tmp = await tmpdir()
-      await Instance.provide({
-        directory: tmp.path,
-        fn: async () => {
-          const tool = await BashTool.init()
-
-          // Line 311: Path resolution fallback
-          const getCanonicalPath = vi.spyOn(Filesystem, "getCanonicalPath").mockImplementation(() => { throw new Error("mock") })
-          mocks.bunSpawn.mockImplementation(mockSpawn("done"))
-          await tool.execute({ command: "mkdir invalid/path", description: "test" }, ctx)
-          getCanonicalPath.mockRestore()
-
-          // Line 391: step2 else case (set without match)
-          if (process.platform === "win32") {
-            mocks.shellIsCmdCommand.mockReturnValue(true)
-            await tool.execute({ command: "set FOO && echo hello", description: "test" }, ctx)
-          }
-        }
-      })
-    })
-
-    test("abort handling", async () => {
-      await using tmp = await tmpdir()
-      await Instance.provide({
-        directory: tmp.path,
-        fn: async () => {
-          const abortController = new AbortController()
-          const localCtx = { ...ctx, abort: abortController.signal }
-
-          // Use a deferred promise for exited that we can control
-          let resolveExited: any
-          const exitedPromise = new Promise((resolve) => {
-            resolveExited = resolve
-          })
-
-          mocks.bunSpawn.mockReturnValue({
-            stdout: new ReadableStream({ start(c) { c.close() } }),
-            stderr: new ReadableStream({ start(c) { c.close() } }),
-            exited: exitedPromise,
-            kill: () => {
-              resolveExited(130)
-              return Promise.resolve()
-            },
-          } as any)
-
-          const tool = await BashTool.init()
-          const executePromise = tool.execute({ command: "sleep 100", description: "test" }, localCtx)
-
-          // Give it a tiny bit of time to set up the listener
-          await new Promise(r => setTimeout(r, 1))
-
-          abortController.abort()
-
-          const result = await executePromise
-          expect(result.metadata.exit).toBe(130)
-          expect(result.output).toContain("User aborted the command")
-        }
-      })
-    })
-
-    test("baseEnv expansion on Windows", async () => {
-      const originalPlatform = process.platform
-      const originalEnv = process.env
-
-      try {
-        // @ts-ignore
-        Object.defineProperty(process, "platform", { value: "win32", configurable: true })
-        process.env = { ...originalEnv, TEST_VAR: "test-value", EXPAND_ME: "%TEST_VAR%" }
-
-        await using tmp = await tmpdir()
-        await Instance.provide({
-          directory: tmp.path,
-          fn: async () => {
-            mocks.bunSpawn.mockImplementation(mockSpawn("done"))
-            const tool = await BashTool.init()
-            await tool.execute({ command: "echo %EXPAND_ME%", description: "test" }, ctx)
-
-            // Verify that the environment passed to spawn has the expanded variable
-            const spawnCall = mocks.bunSpawn.mock.calls[0]
-            const env = spawnCall[1].env
-            expect(env.EXPAND_ME).toBe("test-value")
-          }
-        })
-
-        // Test val === undefined case (line 355-356)
-        process.env = { ...originalEnv, EXPAND_ME: "%NON_EXISTENT_VAR%" }
-        await using tmp2 = await tmpdir()
-        await Instance.provide({
-          directory: tmp2.path,
-          fn: async () => {
-            mocks.bunSpawn.mockImplementation(mockSpawn("done"))
-            const tool = await BashTool.init()
-            await tool.execute({ command: "echo %EXPAND_ME%", description: "test" }, ctx)
-
             const spawnCall = mocks.bunSpawn.mock.calls[1]
             const env = spawnCall[1].env
             expect(env.EXPAND_ME).toBe("%NON_EXISTENT_VAR%")
+          })
+
+        test("handles powershell job cmdlets with extended timeout", async () => {
+          await using tmp = await tmpdir()
+          await Instance.provide({
+            directory: tmp.path,
+            fn: async () => {
+              mocks.bunSpawn.mockImplementation(mockSpawn("job started"))
+
+              const tool = await BashTool.init()
+              const result = await tool.execute({
+                command: "Start-Job -ScriptBlock { echo hello }",
+                description: "starts a job"
+              }, ctx)
+
+              expect(result.output).toBe("job started")
+            },
+          })
+        })
+
+        test("handles path resolution for common commands", async () => {
+          await using tmp = await tmpdir()
+          const externalDir = path.join(path.dirname(tmp.path), "external-dir")
+          await Instance.provide({
+            directory: tmp.path,
+            fn: async () => {
+              mocks.bunSpawn.mockImplementation(mockSpawn("done"))
+
+              const tool = await BashTool.init()
+
+              // Test 'mkdir' with external path
+              await tool.execute({
+                command: `mkdir ${externalDir}`,
+                description: "makes dir"
+              }, ctx)
+
+              expect(ctx.ask).toHaveBeenCalledWith(expect.objectContaining({
+                permission: "external_directory"
+              }))
+            },
+          })
+        })
+
+        test("handles CMD environment variable setting", async () => {
+          if (process.platform !== "win32") return
+
+          await using tmp = await tmpdir()
+          await Instance.provide({
+            directory: tmp.path,
+            fn: async () => {
+              mocks.bunSpawn.mockImplementation(mockSpawn("expanded"))
+
+              const tool = await BashTool.init()
+              await tool.execute({
+                command: "set FOO=bar && echo %FOO%",
+                description: "sets and echoes"
+              }, ctx)
+            },
+          })
+        })
+
+        test("validates timeout value", async () => {
+          await using tmp = await tmpdir()
+          await Instance.provide({
+            directory: tmp.path,
+            fn: async () => {
+              const tool = await BashTool.init()
+              await expect(tool.execute({
+                command: "echo hello",
+                timeout: -1,
+                description: "invalid"
+              }, ctx)).rejects.toThrow("Invalid timeout value")
+            },
+          })
+        })
+
+        test("execute coverage gaps", async () => {
+          await using tmp = await tmpdir()
+          await Instance.provide({
+            directory: tmp.path,
+            fn: async () => {
+              const tool = await BashTool.init()
+
+              // Line 311: Path resolution fallback
+              const getCanonicalPath = vi.spyOn(Filesystem, "getCanonicalPath").mockImplementation(() => { throw new Error("mock") })
+              mocks.bunSpawn.mockImplementation(mockSpawn("done"))
+              await tool.execute({ command: "mkdir invalid/path", description: "test" }, ctx)
+              getCanonicalPath.mockRestore()
+
+              // Line 391: step2 else case (set without match)
+              if (process.platform === "win32") {
+                mocks.shellIsCmdCommand.mockReturnValue(true)
+                await tool.execute({ command: "set FOO && echo hello", description: "test" }, ctx)
+              }
+            }
+          })
+        })
+
+        test("abort handling", async () => {
+          await using tmp = await tmpdir()
+          await Instance.provide({
+            directory: tmp.path,
+            fn: async () => {
+              const abortController = new AbortController()
+              const localCtx = { ...ctx, abort: abortController.signal }
+
+              // Use a deferred promise for exited that we can control
+              let resolveExited: any
+              const exitedPromise = new Promise((resolve) => {
+                resolveExited = resolve
+              })
+
+              mocks.bunSpawn.mockReturnValue({
+                stdout: new ReadableStream({ start(c) { c.close() } }),
+                stderr: new ReadableStream({ start(c) { c.close() } }),
+                exited: exitedPromise,
+                kill: () => {
+                  resolveExited(130)
+                  return Promise.resolve()
+                },
+              } as any)
+
+              const tool = await BashTool.init()
+              const executePromise = tool.execute({ command: "sleep 100", description: "test" }, localCtx)
+
+              // Give it a tiny bit of time to set up the listener
+              await new Promise(r => setTimeout(r, 1))
+
+              abortController.abort()
+
+              const result = await executePromise
+              expect(result.metadata.exit).toBe(130)
+              expect(result.output).toContain("User aborted the command")
+            }
+          })
+        })
+
+        test("baseEnv expansion on Windows", async () => {
+          const originalPlatform = process.platform
+          const originalEnv = process.env
+
+          try {
+            // @ts-ignore
+            Object.defineProperty(process, "platform", { value: "win32", configurable: true })
+            process.env = { ...originalEnv, TEST_VAR: "test-value", EXPAND_ME: "%TEST_VAR%" }
+
+            await using tmp = await tmpdir()
+            await Instance.provide({
+              directory: tmp.path,
+              fn: async () => {
+                mocks.bunSpawn.mockImplementation(mockSpawn("done"))
+                const tool = await BashTool.init()
+                await tool.execute({ command: "echo %EXPAND_ME%", description: "test" }, ctx)
+
+                // Verify that the environment passed to spawn has the expanded variable
+                const spawnCall = mocks.bunSpawn.mock.calls[0]
+                const env = spawnCall[1].env
+                expect(env.EXPAND_ME).toBe("test-value")
+              }
+            })
+
+            // Test val === undefined case (line 355-356)
+            process.env = { ...originalEnv, EXPAND_ME: "%NON_EXISTENT_VAR%" }
+            await using tmp2 = await tmpdir()
+            await Instance.provide({
+              directory: tmp2.path,
+              fn: async () => {
+                mocks.bunSpawn.mockImplementation(mockSpawn("done"))
+
+                const spawnCall = mocks.bunSpawn.mock.calls[1]
+                const env = spawnCall[1].env
+                expect(env.EXPAND_ME).toBe("%NON_EXISTENT_VAR%")
+              }
+            })
+          } finally {
+            // @ts-ignore
+            Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true })
+            process.env = originalEnv
           }
         })
-      } finally {
-        // @ts-ignore
-        Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true })
-        process.env = originalEnv
-      }
-    })
+
+        describe("Fallback Parsing", () => {
+          test("should use fallback parser when tree-sitter parsing fails", async () => {
+            await using tmp = await tmpdir()
+            await Instance.provide({
+              directory: tmp.path,
+              fn: async () => {
+                // Create a complex command that might cause parsing issues
+                const complexCommand = 'find . -name "*.ts" -exec grep "TODO" {} \\; | xargs -I {} cp {} /tmp/backup/'
+
+                mocks.bunSpawn.mockImplementation(mockSpawn("success"))
+
+                const tool = await BashTool.init()
+
+                // This should not throw an error even with complex command
+                const result = await tool.execute(
+                  {
+                    command: complexCommand,
+                    description: "test complex command parsing"
+                  },
+                  ctx
+                )
+
+                expect(result.exit).toBe(0)
+                expect(result.output).toBe("success")
+
+                // Verify that the command was executed despite parsing issues
+                expect(mocks.bunSpawn).toHaveBeenCalled()
+              }
+            })
+          })
+
+          test("should handle quoted arguments correctly in fallback parser", async () => {
+            await using tmp = await tmpdir()
+            await Instance.provide({
+              directory: tmp.path,
+              fn: async () => {
+                // Create a command with complex quoting
+                const quotedCommand = 'cp "file with spaces.txt" \'another file.txt\' `file with \`nested\` quotes.txt'
+
+                mocks.bunSpawn.mockImplementation(mockSpawn("success"))
+
+                const tool = await BashTool.init()
+
+                const result = await tool.execute(
+                  {
+                    command: quotedCommand,
+                    description: "test quoted arguments"
+                  },
+                  ctx
+                )
+
+                expect(result.exit).toBe(0)
+                expect(result.output).toBe("success")
+              }
+            })
+          })
+
+          test("should handle chained commands in fallback parser", async () => {
+            await using tmp = await tmpdir()
+            await Instance.provide({
+              directory: tmp.path,
+              fn: async () => {
+                // Create a command with chaining operators
+                const chainedCommand = 'mkdir test && cd test && touch file.txt || echo "failed"'
+
+                mocks.bunSpawn.mockImplementation(mockSpawn("success"))
+
+                const tool = await BashTool.init()
+
+                const result = await tool.execute(
+                  {
+                    command: chainedCommand,
+                    description: "test chained commands"
+                  },
+                  ctx
+                )
+
+                expect(result.exit).toBe(0)
+                expect(result.output).toBe("success")
+              }
+            })
+          })
+        })
+      })
 
     describe("Fallback Parsing", () => {
-      test("should use fallback parser when tree-sitter parsing fails", async () => {
-        await using tmp = await tmpdir()
-        await Instance.provide({
-          directory: tmp.path,
-          fn: async () => {
-            // Create a complex command that might cause parsing issues
-            const complexCommand = 'find . -name "*.ts" -exec grep "TODO" {} \\; | xargs -I {} cp {} /tmp/backup/'
-
-            mocks.bunSpawn.mockImplementation(mockSpawn("success"))
-
-            const tool = await BashTool.init()
-
-            // This should not throw an error even with complex command
-            const result = await tool.execute(
-              {
-                command: complexCommand,
-                description: "test complex command parsing"
-              },
-              ctx
-            )
-
-            expect(result.exit).toBe(0)
-            expect(result.output).toBe("success")
-
-            // Verify that the command was executed despite parsing issues
-            expect(mocks.bunSpawn).toHaveBeenCalled()
-          }
-        })
-      })
-
-      test("should handle quoted arguments correctly in fallback parser", async () => {
-        await using tmp = await tmpdir()
-        await Instance.provide({
-          directory: tmp.path,
-          fn: async () => {
-            // Create a command with complex quoting
-            const quotedCommand = 'cp "file with spaces.txt" \'another file.txt\' `file with \`nested\` quotes.txt'
-
-            mocks.bunSpawn.mockImplementation(mockSpawn("success"))
-
-            const tool = await BashTool.init()
-
-            const result = await tool.execute(
-              {
-                command: quotedCommand,
-                description: "test quoted arguments"
-              },
-              ctx
-            )
-
-            expect(result.exit).toBe(0)
-            expect(result.output).toBe("success")
-          }
-        })
-      })
-
-      test("should handle chained commands in fallback parser", async () => {
-        await using tmp = await tmpdir()
-        await Instance.provide({
-          directory: tmp.path,
-          fn: async () => {
-            // Create a command with chaining operators
-            const chainedCommand = 'mkdir test && cd test && touch file.txt || echo "failed"'
-
-            mocks.bunSpawn.mockImplementation(mockSpawn("success"))
-
-            const tool = await BashTool.init()
-
-            const result = await tool.execute(
-              {
-                command: chainedCommand,
-                description: "test chained commands"
-              },
-              ctx
-            )
-
-            expect(result.exit).toBe(0)
-            expect(result.output).toBe("success")
-          }
-        })
-      })
-    })
