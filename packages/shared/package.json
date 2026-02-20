@@ -1,0 +1,37 @@
+{
+  "name": "@opencode-ai/shared",
+  "version": "1.0.0",
+  "description": "Shared utilities and components for OpenCode",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/opencode-ai/opencode"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "catalog:",
+    "@types/bun": "catalog:",
+    "@types/node": "catalog:"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./logo": {
+      "types": "./dist/logo.d.ts",
+      "default": "./dist/logo.js"
+    }
+  },
+  "files": [
+    "dist/**/*"
+  ],
+  "private": true
+}
