@@ -55,6 +55,4 @@ export const DEFAULT_THEMES: Record<string, DesktopTheme> = {
   solarized: solarizedTheme,
   tokyonight: tokyonightTheme,
   vesper: vesperTheme,
-  "custom-theme": customTheme,
-  ipomoea: ipomoeaTheme,
 }
