@@ -103,28 +103,9 @@ const unsafeCSS = `
   );
 }
 
-[data-diffs-header],
-[data-diff] {
-  [data-separator-wrapper] {
-    margin: 0 !important;
-    border-radius: 0 !important;
-  }
-  [data-expand-button] {
-    width: 6.5ch !important;
-    height: 24px !important;
-    justify-content: end !important;
-    padding-left: 3ch !important;
-    padding-inline: 1ch !important;
-  }
-  [data-separator-multi-button] {
-    grid-template-rows: 10px 10px !important;
-    [data-expand-button] {
-      height: 12px !important;
-    }
-  }
-  [data-separator-content] {
-    height: 24px !important;
-  }
+[data-diff-header],
+[data-diff],
+[data-file] {
   [data-separator] {
     height: 24px;
   }
@@ -142,6 +123,7 @@ const unsafeCSS = `
   }
   [data-code] {
     overflow-x: auto !important;
+    overflow-y: hidden !important;
   }
 }`
 

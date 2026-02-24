@@ -40,9 +40,10 @@ export const WriteTool = Tool.define<typeof parameters, { diagnostics: any; file
         : path.join(Instance.directory, params.filePath)
     )
 
+    // BEST OF BOTH WORLDS: Use file locking from HEAD for safety
     return await FileTime.withLock(filepath, async () => {
       try {
-        // Validate external directory access
+        // Validate external directory access (from HEAD)
         await assertExternalDirectory(ctx, filepath)
 
         // Ensure parent directory exists
@@ -58,21 +59,12 @@ export const WriteTool = Tool.define<typeof parameters, { diagnostics: any; file
           throw new Error(`Failed to create parent directory ${parentDir}: ${error instanceof Error ? error.message : String(error)}`)
         }
 
-        // Check file existence and read content safely
+        // Check file existence and read content safely (from HEAD using Bun.file)
         const file = Bun.file(filepath)
-        let exists = false
-        let contentOld = ""
+        const exists = await file.exists()
+        const contentOld = exists ? await file.text() : ""
 
-        try {
-          exists = await file.exists()
-          if (exists) {
-            contentOld = await file.text()
-          }
-        } catch (error) {
-          throw new Error(`Failed to read file ${filepath}: ${error instanceof Error ? error.message : String(error)}`)
-        }
-
-        // Assert file time if file exists
+        // Assert file time if file exists (from both)
         if (exists) {
           await FileTime.assert(ctx.sessionID, filepath)
         }

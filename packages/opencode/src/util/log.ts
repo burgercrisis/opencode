@@ -1,7 +1,9 @@
 import path from "path"
 import fs from "fs/promises"
+import { createWriteStream } from "fs"
 import { Global } from "../global"
 import z from "zod"
+import { Glob } from "./glob"
 
 export namespace Log {
   export const Level = z.enum(["DEBUG", "INFO", "WARN", "ERROR"]).meta({ ref: "LogLevel", description: "Log level" })
@@ -38,21 +40,6 @@ export namespace Log {
 
   const loggers = new Map<string, Logger>()
 
-  const defaultWrite = (msg: any) => {
-    process.stderr.write(msg)
-    return msg.length
-  }
-
-  /**
-   * Internal test helper to clear all loggers.
-   * @internal
-   */
-  export function resetForTest() {
-    loggers.clear()
-    level = "INFO"
-    write = defaultWrite
-  }
-
   export const Default = create({ service: "default" })
 
   export interface Options {
@@ -65,39 +52,40 @@ export namespace Log {
   export function file() {
     return logpath
   }
-  let write = defaultWrite
+  let write = (msg: any) => {
+    process.stderr.write(msg)
+    return msg.length
+  }
 
   export async function init(options: Options) {
     if (options.level) level = options.level
-    await cleanup(Global.Path.log)
+    cleanup(Global.Path.log)
     if (options.print) return
     logpath = path.join(
       Global.Path.log,
       options.dev ? "dev.log" : new Date().toISOString().split(".")[0].replace(/:/g, "") + ".log",
     )
-    const logfile = Bun.file(logpath)
     await fs.truncate(logpath).catch(() => {})
-    const writer = logfile.writer()
+    const stream = createWriteStream(logpath, { flags: "a" })
     write = async (msg: any) => {
-      const num = writer.write(msg)
-      writer.flush()
-      return num
+      return new Promise((resolve, reject) => {
+        stream.write(msg, (err) => {
+          if (err) reject(err)
+          else resolve(msg.length)
+        })
+      })
     }
   }
 
   async function cleanup(dir: string) {
-    // Ensure the directory exists before scanning
-    await fs.mkdir(dir, { recursive: true }).catch(() => {})
-    const glob = new Bun.Glob("*.log")
-    const files = await Array.fromAsync(
-      glob.scan({
-        cwd: dir,
-        absolute: true,
-      }),
-    )
-    if (files.length <= 10) return
+    const files = await Glob.scan("????-??-??T??????.log", {
+      cwd: dir,
+      absolute: true,
+      include: "file",
+    })
+    if (files.length <= 5) return
 
-    const filesToDelete = files.toSorted().slice(0, -10)
+    const filesToDelete = files.slice(0, -10)
     await Promise.all(filesToDelete.map((file) => fs.unlink(file).catch(() => {})))
   }
 

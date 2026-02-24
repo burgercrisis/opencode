@@ -2,6 +2,7 @@ import path from "path"
 import os from "os"
 import fs from "fs/promises"
 import z from "zod"
+import { Filesystem } from "../util/filesystem"
 import { Identifier } from "../id/id"
 import { MessageV2 } from "./message-v2"
 import { Log } from "../util/log"
@@ -21,7 +22,6 @@ import PROMPT_PLAN from "../session/prompt/plan.txt"
 import BUILD_SWITCH from "../session/prompt/build-switch.txt"
 import MAX_STEPS from "../session/prompt/max-steps.txt"
 import { defer } from "../util/defer"
-import { clone } from "remeda"
 import { ToolRegistry } from "../tool/registry"
 import { MCP } from "../mcp"
 import { LSP } from "../lsp"
@@ -45,43 +45,6 @@ import { LLM } from "./llm"
 import { iife } from "@/util/iife"
 import { Shell } from "@/shell/shell"
 import { Truncate } from "@/tool/truncation"
-import { Filesystem } from "@/util/filesystem"
-
-/**
- * Comprehensive path sanitization to prevent leaking internal paths or sensitive information
- * Handles Windows, Unix, UNC paths, and various edge cases including bypass attempts
- * Patterns ordered from most specific to least specific to avoid false positives
- */
-export function sanitizePath(message: string): string {
-  return message
-    // URL-encoded paths (most specific first) - expanded patterns
-    .replace(/%5[Cc]|%2[Ff]|%3[Aa]|%2[Ee]|%2[Ee]%2[Ee]/gi, "")
-    // Double-encoded variants
-    .replace(/%255[Cc]|%252[Ff]|%253[Aa]|%252[Ee]/gi, "")
-    // UNC paths (\\server\share\file.ext) - enhanced pattern
-    .replace(/\\\\[\\]?[a-zA-Z0-9_\-\.\\\/]+(?:[\\/][a-zA-Z0-9_\-\.\\\/]+)*[\\/][a-zA-Z0-9_\-\.\\\/]+\.[a-zA-Z0-9_\-\.]+/g, "[path]")
-    // Windows paths with drive letters (C:\path\to\file.ext) - enhanced
-    .replace(/[a-zA-Z]:[\\/](?:[a-zA-Z0-9_\-\.\\\/]+[\\/])*[a-zA-Z0-9_\-\.\\\/]+\.[a-zA-Z0-9_\-\.]+/g, "[path]")
-    // Unix absolute paths (/path/to/file.ext) - enhanced
-    .replace(/\/(?:[a-zA-Z0-9_\-\.\\\/]+[\\/])*[a-zA-Z0-9_\-\.\\\/]+\.[a-zA-Z0-9_\-\.]+/g, "[path]")
-    // Relative paths with directory traversal (../path/to/file.ext) - enhanced
-    .replace(/(?:\.\.[\\/])+(?:[a-zA-Z0-9_\-\.\\\/]+[\\/])*[a-zA-Z0-9_\-\.\\\/]+\.[a-zA-Z0-9_\-\.]+/g, "[path]")
-    // Quoted paths with spaces and special characters - enhanced
-    .replace(/"[^"]*[\\/][^"]*\.[a-zA-Z0-9_\-\.]+[^"]*"/g, "[path]")
-    .replace(/'[^']*[\\/][^']*\.[a-zA-Z0-9_\-\.]+[^']*'/g, "[path]")
-    // Extended Unicode and international paths - comprehensive ranges
-    .replace(/[\u00c0-\u017f\u0400-\u04ff\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\u0590-\u05ff\u0600-\u06ff]+[\\/][\u00c0-\u017f\u0400-\u04ff\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\u0590-\u05ff\u0600-\u06ff\w\-\.\\\/]*[\u00c0-\u017f\u0400-\u04ff\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\u0590-\u05ff\u0600-\u06ff\w\-\.\\\/]+\.[a-zA-Z0-9_\-\.]+/g, "[path]")
-    // Mixed separators and obfuscated paths - enhanced
-    .replace(/[\w\-\.\\\/]+[\\\/][\w\-\.\\\/]*[\w\-\.\\\/]+\.[a-zA-Z0-9_\-\.]+/g, "[path]")
-    // Specific sensitive file extensions - more comprehensive
-    .replace(/\b[\w\-\.\\\/]+\.(?:key|pem|crt|p12|env|config|cache|secret|private|credential|token|pass|pwd|auth|cert|pfx|jks|keystore)\b/gi, "[file]")
-    // Handle encoded dots and slashes in file extensions
-    .replace(/\b[\w\-\.\\\/]+\.(?:k%65%79|p%65m|c%72t|p%31%32|e%6Ev|c%6F%6ef%69g|c%61che|s%65cret|pr%69vate|cr%65dential)\b/gi, "[file]")
-    // Clean up multiple consecutive [path] or [file] replacements
-    .replace(/(\[path\])+|(\[file\])+/g, (match) => match.includes('[file]') ? '[file]' : '[path]')
-    // Final cleanup for any remaining path-like patterns
-    .replace(/[a-zA-Z0-9_\-\.\\\/]{3,}[\\/][a-zA-Z0-9_\-\.\\\/]{3,}/g, "[path]")
-}
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -109,7 +72,6 @@ export namespace SessionPrompt {
             resolve(input: MessageV2.WithParts): void
             reject(reason?: any): void
           }[]
-          isCancelling?: boolean
         }
       > = {}
       return data
@@ -124,11 +86,6 @@ export namespace SessionPrompt {
   export function assertNotBusy(sessionID: string) {
     const match = state()[sessionID]
     if (match) throw new Session.BusyError(sessionID)
-  }
-
-  /** @internal Exported for testing */
-  export function getState() {
-    return state()
   }
 
   export const PromptInput = z.object({
@@ -241,37 +198,9 @@ export namespace SessionPrompt {
         const name = match[1]
         if (seen.has(name)) return
         seen.add(name)
-
-        // Validate and sanitize the name to prevent path traversal attacks
-        // Remove null bytes and control characters
-        let sanitizedName = name.replace(/\0/g, '')
-
-        // Remove path traversal sequences
-        sanitizedName = sanitizedName.replace(/\.\.[\\/]/g, '')
-        sanitizedName = sanitizedName.replace(/[\\/]\.[\\/]/g, '')
-        sanitizedName = sanitizedName.replace(/[\\/]\.\.[\\/]/g, '')
-
-        // Remove consecutive slashes/backslashes
-        sanitizedName = sanitizedName.replace(/[\\/]+/g, '/')
-        sanitizedName = sanitizedName.replace(/[\\/]+/g, '/')
-
-        // Remove dangerous path components
-        const pathParts = sanitizedName.split('/')
-        const safeParts = pathParts.filter(part =>
-          part !== '' &&
-          part !== '.' &&
-          part !== '..' &&
-          !part.startsWith('..') &&
-          !part.includes('../') &&
-          !part.includes('..\\')
-        )
-        sanitizedName = safeParts.join('/')
-
         const filepath = name.startsWith("~/")
-          ? path.join(os.homedir(), sanitizedName.slice(2))
-          : Filesystem.validateFilepath(sanitizedName, Instance.worktree).valid
-            ? path.resolve(Instance.worktree, sanitizedName)
-            : path.resolve(Instance.worktree, sanitizedName.replace(/[^a-zA-Z0-9._-]/g, '_'))
+          ? path.join(os.homedir(), name.slice(2))
+          : path.resolve(Instance.worktree, name)
 
         const stats = await fs.stat(filepath).catch(() => undefined)
         if (!stats) {
@@ -306,15 +235,13 @@ export namespace SessionPrompt {
     return parts
   }
 
-  /** @internal Exported for testing */
-  export function start(sessionID: string) {
+  function start(sessionID: string) {
     const s = state()
     if (s[sessionID]) return
     const controller = new AbortController()
     s[sessionID] = {
       abort: controller,
       callbacks: [],
-      isCancelling: false,
     }
     return controller.signal
   }
@@ -334,22 +261,9 @@ export namespace SessionPrompt {
       SessionStatus.set(sessionID, { type: "idle" })
       return
     }
-
-    // Set cancellation flag first to prevent new callbacks
-    match.isCancelling = true
-
-    // Atomic: capture callbacks, clear immediately, then delete state
-    const { abort: abortController, callbacks } = match
-    match.callbacks = []  // Clear immediately to prevent new additions
-    delete s[sessionID]    // Remove from state
-
-    abortController.abort()
+    match.abort.abort()
+    delete s[sessionID]
     SessionStatus.set(sessionID, { type: "idle" })
-
-    // Reject all captured callbacks
-    for (const cb of callbacks) {
-      cb.reject(new Error("Session cancelled"))
-    }
     return
   }
 
@@ -361,44 +275,10 @@ export namespace SessionPrompt {
     const { sessionID, resume_existing } = input
 
     const abort = resume_existing ? resume(sessionID) : start(sessionID)
-
-    // Check for immediate cancellation before proceeding
-    if (abort?.aborted) {
-      throw new Error("Session cancelled")
-    }
-
     if (!abort) {
       return new Promise<MessageV2.WithParts>((resolve, reject) => {
-        // Get session state atomically to prevent race conditions
-        const sessionState = state()[sessionID]
-        if (!sessionState) {
-          reject(new Error("Session not found"))
-          return
-        }
-
-        // Capture properties atomically to prevent race conditions
-        const { callbacks, abort } = sessionState
-
-        // Check if session has been cancelled (callbacks cleared)
-        if (callbacks.length === 0 && abort.signal.aborted) {
-          reject(new Error("Session cancelled"))
-          return
-        }
-
-        // Triple-check session still exists and is the same before adding callback
-        const currentState = state()[sessionID]
-        if (!currentState || currentState !== sessionState) {
-          reject(new Error("Session not found"))
-          return
-        }
-
-        // Final atomic check - ensure abort signal hasn't changed and session isn't cancelling
-        if (currentState.abort.signal.aborted || currentState.isCancelling) {
-          reject(new Error("Session cancelled"))
-          return
-        }
-
-        currentState.callbacks.push({ resolve, reject })
+        const callbacks = state()[sessionID].callbacks
+        callbacks.push({ resolve, reject })
       })
     }
 
@@ -410,22 +290,7 @@ export namespace SessionPrompt {
     let structuredOutput: unknown | undefined
 
     let step = 0
-
-    // Check for cancellation before accessing session storage
-    if (abort.aborted) {
-      throw new Error("Session cancelled")
-    }
-
-    let session
-    try {
-      session = await Session.get(sessionID)
-    } catch (error) {
-      // If session file was deleted due to cancellation, treat as cancelled
-      if (error instanceof Error && (error.message.includes("Resource not found") || error.name === "NotFoundError")) {
-        throw new Error("Session cancelled")
-      }
-      throw error
-    }
+    const session = await Session.get(sessionID)
     while (true) {
       SessionStatus.set(sessionID, { type: "busy" })
       log.info("loop", { step, sessionID })
@@ -580,6 +445,12 @@ export namespace SessionPrompt {
           log.error("subtask execution failed", { error, agent: task.agent, description: task.description })
           return undefined
         })
+        const attachments = result?.attachments?.map((attachment) => ({
+          ...attachment,
+          id: Identifier.ascending("part"),
+          sessionID,
+          messageID: assistantMessage.id,
+        }))
         await Plugin.trigger(
           "tool.execute.after",
           {
@@ -602,7 +473,7 @@ export namespace SessionPrompt {
               title: result.title,
               metadata: result.metadata,
               output: result.output,
-              attachments: result.attachments,
+              attachments,
               time: {
                 ...part.state.time,
                 end: Date.now(),
@@ -755,11 +626,9 @@ export namespace SessionPrompt {
         })
       }
 
-      const sessionMessages = clone(msgs)
-
       // Ephemerally wrap queued user messages with a reminder to stay on track
       if (step > 1 && lastFinished) {
-        for (const msg of sessionMessages) {
+        for (const msg of msgs) {
           if (msg.info.role !== "user" || msg.info.id <= lastFinished.id) continue
           for (const part of msg.parts) {
             if (part.type !== "text" || part.ignored || part.synthetic) continue
@@ -776,7 +645,7 @@ export namespace SessionPrompt {
         }
       }
 
-      await Plugin.trigger("experimental.chat.messages.transform", {}, { messages: sessionMessages })
+      await Plugin.trigger("experimental.chat.messages.transform", {}, { messages: msgs })
 
       // Build system prompt, adding structured output instruction if needed
       const system = [...(await SystemPrompt.environment(model)), ...(await InstructionPrompt.system())]
@@ -792,14 +661,14 @@ export namespace SessionPrompt {
         sessionID,
         system,
         messages: [
-          ...MessageV2.toModelMessages(sessionMessages, model),
+          ...MessageV2.toModelMessages(msgs, model),
           ...(isLastStep
             ? [
-              {
-                role: "assistant" as const,
-                content: MAX_STEPS,
-              },
-            ]
+                {
+                  role: "assistant" as const,
+                  content: MAX_STEPS,
+                },
+              ]
             : []),
         ],
         tools,
@@ -845,15 +714,9 @@ export namespace SessionPrompt {
     SessionCompaction.prune({ sessionID })
     for await (const item of MessageV2.stream(sessionID)) {
       if (item.info.role === "user") continue
-
-      // Only resolve callbacks if session wasn't cancelled
-      // Check both state existence and abort signal to prevent double-handling
-      const sessionState = state()[sessionID]
-      if (sessionState && !sessionState.abort.signal.aborted) {
-        const queued = sessionState.callbacks ?? []
-        for (const q of queued) {
-          q.resolve(item)
-        }
+      const queued = state()[sessionID]?.callbacks ?? []
+      for (const q of queued) {
+        q.resolve(item)
       }
       return item
     }
@@ -938,6 +801,15 @@ export namespace SessionPrompt {
             },
           )
           const result = await item.execute(args, ctx)
+          const output = {
+            ...result,
+            attachments: result.attachments?.map((attachment) => ({
+              ...attachment,
+              id: Identifier.ascending("part"),
+              sessionID: ctx.sessionID,
+              messageID: input.processor.message.id,
+            })),
+          }
           await Plugin.trigger(
             "tool.execute.after",
             {
@@ -946,9 +818,9 @@ export namespace SessionPrompt {
               callID: ctx.callID,
               args,
             },
-            result,
+            output,
           )
-          return result
+          return output
         },
       })
     }
@@ -996,16 +868,13 @@ export namespace SessionPrompt {
         )
 
         const textParts: string[] = []
-        const attachments: MessageV2.FilePart[] = []
+        const attachments: Omit<MessageV2.FilePart, "id" | "sessionID" | "messageID">[] = []
 
         for (const contentItem of result.content) {
           if (contentItem.type === "text") {
             textParts.push(contentItem.text)
           } else if (contentItem.type === "image") {
             attachments.push({
-              id: Identifier.ascending("part"),
-              sessionID: input.session.id,
-              messageID: input.processor.message.id,
               type: "file",
               mime: contentItem.mimeType,
               url: `data:${contentItem.mimeType};base64,${contentItem.data}`,
@@ -1017,9 +886,6 @@ export namespace SessionPrompt {
             }
             if (resource.blob) {
               attachments.push({
-                id: Identifier.ascending("part"),
-                sessionID: input.session.id,
-                messageID: input.processor.message.id,
                 type: "file",
                 mime: resource.mimeType ?? "application/octet-stream",
                 url: `data:${resource.mimeType ?? "application/octet-stream"};base64,${resource.blob}`,
@@ -1040,7 +906,12 @@ export namespace SessionPrompt {
           title: "",
           metadata,
           output: truncated.content,
-          attachments,
+          attachments: attachments.map((attachment) => ({
+            ...attachment,
+            id: Identifier.ascending("part"),
+            sessionID: ctx.sessionID,
+            messageID: input.processor.message.id,
+          })),
           content: result.content, // directly return content to preserve ordering when outputting to model
         }
       }
@@ -1106,17 +977,22 @@ export namespace SessionPrompt {
     }
     using _ = defer(() => InstructionPrompt.clear(info.id))
 
+    type Draft<T> = T extends MessageV2.Part ? Omit<T, "id"> & { id?: string } : never
+    const assign = (part: Draft<MessageV2.Part>): MessageV2.Part => ({
+      ...part,
+      id: part.id ?? Identifier.ascending("part"),
+    })
+
     const parts = await Promise.all(
-      input.parts.map(async (part): Promise<MessageV2.Part[]> => {
+      input.parts.map(async (part): Promise<Draft<MessageV2.Part>[]> => {
         if (part.type === "file") {
           // before checking the protocol we check if this is an mcp resource because it needs special handling
           if (part.source?.type === "resource") {
             const { clientName, uri } = part.source
             log.info("mcp resource", { clientName, uri, mime: part.mime })
 
-            const pieces: MessageV2.Part[] = [
+            const pieces: Draft<MessageV2.Part>[] = [
               {
-                id: Identifier.ascending("part"),
                 messageID: info.id,
                 sessionID: input.sessionID,
                 type: "text",
@@ -1139,7 +1015,6 @@ export namespace SessionPrompt {
               for (const content of contents) {
                 if ("text" in content && content.text) {
                   pieces.push({
-                    id: Identifier.ascending("part"),
                     messageID: info.id,
                     sessionID: input.sessionID,
                     type: "text",
@@ -1150,7 +1025,6 @@ export namespace SessionPrompt {
                   // Handle binary content if needed
                   const mimeType = "mimeType" in content ? content.mimeType : part.mime
                   pieces.push({
-                    id: Identifier.ascending("part"),
                     messageID: info.id,
                     sessionID: input.sessionID,
                     type: "text",
@@ -1162,23 +1036,18 @@ export namespace SessionPrompt {
 
               pieces.push({
                 ...part,
-                id: part.id ?? Identifier.ascending("part"),
                 messageID: info.id,
                 sessionID: input.sessionID,
               })
             } catch (error: unknown) {
-              log.error("failed to read MCP resource", { error, clientName, uri: uri.slice(0, 100) })
-              // Sanitize error message to avoid leaking internal paths or sensitive info
-              const sanitizedMessage = error instanceof Error
-                ? sanitizePath(error.message).slice(0, 200)
-                : "Unknown error"
+              log.error("failed to read MCP resource", { error, clientName, uri })
+              const message = error instanceof Error ? error.message : String(error)
               pieces.push({
-                id: Identifier.ascending("part"),
                 messageID: info.id,
                 sessionID: input.sessionID,
                 type: "text",
                 synthetic: true,
-                text: `Failed to read MCP resource ${part.filename}: ${sanitizedMessage}`,
+                text: `Failed to read MCP resource ${part.filename}: ${message}`,
               })
             }
 
@@ -1190,7 +1059,6 @@ export namespace SessionPrompt {
               if (part.mime === "text/plain") {
                 return [
                   {
-                    id: Identifier.ascending("part"),
                     messageID: info.id,
                     sessionID: input.sessionID,
                     type: "text",
@@ -1198,7 +1066,6 @@ export namespace SessionPrompt {
                     text: `Called the Read tool with the following input: ${JSON.stringify({ filePath: part.filename })}`,
                   },
                   {
-                    id: Identifier.ascending("part"),
                     messageID: info.id,
                     sessionID: input.sessionID,
                     type: "text",
@@ -1207,7 +1074,6 @@ export namespace SessionPrompt {
                   },
                   {
                     ...part,
-                    id: part.id ?? Identifier.ascending("part"),
                     messageID: info.id,
                     sessionID: input.sessionID,
                   },
@@ -1219,11 +1085,9 @@ export namespace SessionPrompt {
               // have to normalize, symbol search returns absolute paths
               // Decode the pathname since URL constructor doesn't automatically decode it
               const filepath = fileURLToPath(part.url)
-              const stat = await Bun.file(filepath)
-                .stat()
-                .catch(() => undefined)
+              const s = Filesystem.stat(filepath)
 
-              if (stat?.isDirectory()) {
+              if (s?.isDirectory()) {
                 part.mime = "application/x-directory"
               }
 
@@ -1264,9 +1128,8 @@ export namespace SessionPrompt {
                 }
                 const args = { filePath: filepath, offset, limit }
 
-                const pieces: MessageV2.Part[] = [
+                const pieces: Draft<MessageV2.Part>[] = [
                   {
-                    id: Identifier.ascending("part"),
                     messageID: info.id,
                     sessionID: input.sessionID,
                     type: "text",
@@ -1285,12 +1148,11 @@ export namespace SessionPrompt {
                       messageID: info.id,
                       extra: { bypassCwdCheck: true, model },
                       messages: [],
-                      metadata: async () => { },
-                      ask: async () => { },
+                      metadata: async () => {},
+                      ask: async () => {},
                     }
                     const result = await t.execute(args, readCtx)
                     pieces.push({
-                      id: Identifier.ascending("part"),
                       messageID: info.id,
                       sessionID: input.sessionID,
                       type: "text",
@@ -1310,7 +1172,6 @@ export namespace SessionPrompt {
                     } else {
                       pieces.push({
                         ...part,
-                        id: part.id ?? Identifier.ascending("part"),
                         messageID: info.id,
                         sessionID: input.sessionID,
                       })
@@ -1326,7 +1187,6 @@ export namespace SessionPrompt {
                       }).toObject(),
                     })
                     pieces.push({
-                      id: Identifier.ascending("part"),
                       messageID: info.id,
                       sessionID: input.sessionID,
                       type: "text",
@@ -1347,13 +1207,12 @@ export namespace SessionPrompt {
                   messageID: info.id,
                   extra: { bypassCwdCheck: true },
                   messages: [],
-                  metadata: async () => { },
-                  ask: async () => { },
+                  metadata: async () => {},
+                  ask: async () => {},
                 }
                 const result = await ReadTool.init().then((t) => t.execute(args, listCtx))
                 return [
                   {
-                    id: Identifier.ascending("part"),
                     messageID: info.id,
                     sessionID: input.sessionID,
                     type: "text",
@@ -1361,7 +1220,6 @@ export namespace SessionPrompt {
                     text: `Called the Read tool with the following input: ${JSON.stringify(args)}`,
                   },
                   {
-                    id: Identifier.ascending("part"),
                     messageID: info.id,
                     sessionID: input.sessionID,
                     type: "text",
@@ -1370,30 +1228,27 @@ export namespace SessionPrompt {
                   },
                   {
                     ...part,
-                    id: part.id ?? Identifier.ascending("part"),
                     messageID: info.id,
                     sessionID: input.sessionID,
                   },
                 ]
               }
 
-              const file = Bun.file(filepath)
               FileTime.read(input.sessionID, filepath)
               return [
                 {
-                  id: Identifier.ascending("part"),
                   messageID: info.id,
                   sessionID: input.sessionID,
                   type: "text",
-                  text: `Called the Read tool with the following input: {\"filePath\":\"${filepath}\"}`,
+                  text: `Called the Read tool with the following input: {"filePath":"${filepath}"}`,
                   synthetic: true,
                 },
                 {
-                  id: part.id ?? Identifier.ascending("part"),
+                  id: part.id,
                   messageID: info.id,
                   sessionID: input.sessionID,
                   type: "file",
-                  url: `data:${part.mime};base64,` + Buffer.from(await file.bytes()).toString("base64"),
+                  url: `data:${part.mime};base64,` + (await Filesystem.readBytes(filepath)).toString("base64"),
                   mime: part.mime,
                   filename: part.filename!,
                   source: part.source,
@@ -1408,13 +1263,11 @@ export namespace SessionPrompt {
           const hint = perm.action === "deny" ? " . Invoked by user; guaranteed to exist." : ""
           return [
             {
-              id: Identifier.ascending("part"),
               ...part,
               messageID: info.id,
               sessionID: input.sessionID,
             },
             {
-              id: Identifier.ascending("part"),
               messageID: info.id,
               sessionID: input.sessionID,
               type: "text",
@@ -1431,14 +1284,13 @@ export namespace SessionPrompt {
 
         return [
           {
-            id: Identifier.ascending("part"),
             ...part,
             messageID: info.id,
             sessionID: input.sessionID,
           },
         ]
       }),
-    ).then((x) => x.flat())
+    ).then((x) => x.flat().map(assign))
 
     await Plugin.trigger(
       "chat.message",
@@ -1501,9 +1353,8 @@ export namespace SessionPrompt {
 
     // Switching from plan mode to build mode
     if (input.agent.name !== "plan" && assistantMessage?.info.agent === "plan") {
-      const sessionSlug = input.session.slug || "default"
-      const plan = Session.plan({ slug: sessionSlug, time: { created: input.session.time.created } })
-      const exists = await Bun.file(plan).exists()
+      const plan = Session.plan(input.session)
+      const exists = await Filesystem.exists(plan)
       if (exists) {
         const part = await Session.updatePart({
           id: Identifier.ascending("part"),
@@ -1521,9 +1372,8 @@ export namespace SessionPrompt {
 
     // Entering plan mode
     if (input.agent.name === "plan" && assistantMessage?.info.agent !== "plan") {
-      const sessionSlug = input.session.slug || "default"
-      const plan = Session.plan({ slug: sessionSlug, time: { created: input.session.time.created } })
-      const exists = await Bun.file(plan).exists()
+      const plan = Session.plan(input.session)
+      const exists = await Filesystem.exists(plan)
       if (!exists) await fs.mkdir(path.dirname(plan), { recursive: true })
       const part = await Session.updatePart({
         id: Identifier.ascending("part"),
@@ -1768,7 +1618,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     const args = matchingInvocation?.args
 
     const cwd = Instance.directory
-    const shellEnv = await Plugin.trigger("shell.env", { cwd }, { env: {} })
+    const shellEnv = await Plugin.trigger(
+      "shell.env",
+      { cwd, sessionID: input.sessionID, callID: part.callID },
+      { env: {} },
+    )
     const proc = spawn(shell, args, {
       cwd,
       detached: process.platform !== "win32",
@@ -1980,19 +1834,19 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     const isSubtask = (agent.mode === "subagent" && command.subtask !== false) || command.subtask === true
     const parts = isSubtask
       ? [
-        {
-          type: "subtask" as const,
-          agent: agent.name,
-          description: command.description ?? "",
-          command: input.command,
-          model: {
-            providerID: taskModel.providerID,
-            modelID: taskModel.modelID,
+          {
+            type: "subtask" as const,
+            agent: agent.name,
+            description: command.description ?? "",
+            command: input.command,
+            model: {
+              providerID: taskModel.providerID,
+              modelID: taskModel.modelID,
+            },
+            // TODO: how can we make task tool accept a more complex input?
+            prompt: templateParts.find((y) => y.type === "text")?.text ?? "",
           },
-          // TODO: how can we make task tool accept a more complex input?
-          prompt: templateParts.find((y) => y.type === "text")?.text ?? "",
-        },
-      ]
+        ]
       : [...templateParts, ...(input.parts ?? [])]
 
     const userAgent = isSubtask ? (input.agent ?? (await Agent.defaultAgent())) : agentName
@@ -2042,12 +1896,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
     // Find first non-synthetic user message
     const firstRealUserIdx = input.history.findIndex(
-      (m) => m.info?.role === "user" && !m.parts?.every((p) => "synthetic" in p && p.synthetic),
+      (m) => m.info.role === "user" && !m.parts.every((p) => "synthetic" in p && p.synthetic),
     )
     if (firstRealUserIdx === -1) return
 
     const isFirst =
-      input.history.filter((m) => m.info?.role === "user" && !m.parts?.every((p) => "synthetic" in p && p.synthetic))
+      input.history.filter((m) => m.info.role === "user" && !m.parts.every((p) => "synthetic" in p && p.synthetic))
         .length === 1
     if (!isFirst) return
 
@@ -2056,17 +1910,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     const contextMessages = input.history.slice(0, firstRealUserIdx + 1)
     const firstRealUser = contextMessages[firstRealUserIdx]
 
-    // Type safety: Ensure firstRealUser.info exists
-    if (!firstRealUser.info) {
-      log.error("First real user message missing info", { sessionID: input.session.id })
-      return
-    }
-
     // For subtask-only messages (from command invocations), extract the prompt directly
     // since toModelMessage converts subtask parts to generic "The following tool was executed by the user"
-    const subtaskParts = firstRealUser.parts?.filter((p) => p.type === "subtask") as MessageV2.SubtaskPart[] || []
-    const hasOnlySubtaskParts = subtaskParts.length > 0 && firstRealUser.parts?.every((p) => p.type === "subtask")
-
+    const subtaskParts = firstRealUser.parts.filter((p) => p.type === "subtask") as MessageV2.SubtaskPart[]
+    const hasOnlySubtaskParts = subtaskParts.length > 0 && firstRealUser.parts.every((p) => p.type === "subtask")
 
     const agent = await Agent.get("title")
     if (!agent) return

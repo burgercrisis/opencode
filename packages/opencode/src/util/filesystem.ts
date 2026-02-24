@@ -1,3 +1,6 @@
+import { chmod, mkdir, readFile, writeFile } from "fs/promises"
+import { createWriteStream, existsSync, statSync } from "fs"
+import { lookup } from "mime-types"
 import { realpathSync } from "fs"
 import path, { 
   dirname as pathDirname, 
@@ -8,11 +11,16 @@ import path, {
   normalize as pathNormalize 
 } from "path"
 import { Flag } from "@/flag/flag"
+import { Readable } from "stream"
+import { pipeline } from "stream/promises"
+import { Glob } from "./glob"
 
 import { normalize as _normalize } from "@opencode-ai/util/path"
 
 export namespace Filesystem {
   export const normalize = _normalize
+  
+  // Bun-optimized exists check
   export const exists = (p: string) =>
     Bun.file(p)
       .stat()
@@ -24,6 +32,88 @@ export namespace Filesystem {
       .stat()
       .then((s) => s.isDirectory())
       .catch(() => false)
+
+  // Sync version for metadata checks
+  export function stat(p: string): ReturnType<typeof statSync> | undefined {
+    return statSync(p, { throwIfNoEntry: false }) ?? undefined
+  }
+
+  export async function size(p: string): Promise<number> {
+    const s = stat(p)?.size ?? 0
+    return typeof s === "bigint" ? Number(s) : s
+  }
+
+  export async function readText(p: string): Promise<string> {
+    return Bun.file(p).text()
+  }
+
+  export async function readJson<T = any>(p: string): Promise<T> {
+    return Bun.file(p).json()
+  }
+
+  export async function readBytes(p: string): Promise<Buffer> {
+    return readFile(p)
+  }
+
+  export async function readArrayBuffer(p: string): Promise<ArrayBuffer> {
+    const buf = await readFile(p)
+    return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer
+  }
+
+  function isEnoent(e: unknown): e is { code: "ENOENT" } {
+    return typeof e === "object" && e !== null && "code" in e && (e as { code: string }).code === "ENOENT"
+  }
+
+  export async function write(p: string, content: string | Buffer | Uint8Array, mode?: number): Promise<void> {
+    try {
+      // Ensure parent directory exists
+      const dir = dirname(p)
+      if (!existsSync(dir)) {
+        await mkdir(dir, { recursive: true })
+      }
+      await Bun.write(p, content)
+      if (mode) {
+        await chmod(p, mode)
+      }
+    } catch (e) {
+      if (isEnoent(e)) {
+        await mkdir(dirname(p), { recursive: true })
+        await Bun.write(p, content)
+        if (mode) {
+          await chmod(p, mode)
+        }
+        return
+      }
+      throw e
+    }
+  }
+
+  export async function writeJson(p: string, data: unknown, mode?: number): Promise<void> {
+    return write(p, JSON.stringify(data, null, 2), mode)
+  }
+
+  export async function writeStream(
+    p: string,
+    stream: ReadableStream<Uint8Array> | Readable,
+    mode?: number,
+  ): Promise<void> {
+    const dir = dirname(p)
+    if (!existsSync(dir)) {
+      await mkdir(dir, { recursive: true })
+    }
+
+    const nodeStream = stream instanceof ReadableStream ? Readable.fromWeb(stream as any) : stream
+    const writeStream = createWriteStream(p)
+    await pipeline(nodeStream, writeStream)
+
+    if (mode) {
+      await chmod(p, mode)
+    }
+  }
+
+  export function mimeType(p: string): string {
+    return lookup(p) || "application/octet-stream"
+  }
 
   /**
    * On Windows, normalize a path to its canonical casing using the filesystem.
@@ -166,7 +256,7 @@ export namespace Filesystem {
     const reservedNames = ['CON', 'PRN', 'AUX', 'NUL', 'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9', 'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9']
     const baseName = filename.split(/[\\/]/).pop() || ''
     const baseNameWithoutExt = baseName.split('.')[0]
-    const baseNameUpper = baseNameWithoutExt.toUpperCase()
+    const baseNameUpper = baseNameWithoutExt?.toUpperCase() ?? ''
     if (reservedNames.includes(baseNameUpper)) return false
     
     // Check for trailing spaces or periods on Windows (not allowed)
@@ -204,7 +294,7 @@ export namespace Filesystem {
         if (nulls + 1 > 2) return true
         return check(i + 1, nulls + 1)
       }
-      if (bytes[i] < 32 && bytes[i] !== 9 && bytes[i] !== 10 && bytes[i] !== 13) return true
+      if (bytes[i] !== undefined && bytes[i] < 32 && bytes[i] !== 9 && bytes[i] !== 10 && bytes[i] !== 13) return true
       return check(i + 1, nulls)
     }
     
@@ -285,14 +375,13 @@ export namespace Filesystem {
           cwd: curr,
           absolute: true,
           onlyFiles: true,
-          followSymlinks: true,
           dot: true,
         }),
       )
       const nextAcc = [...acc, ...matches]
       if (stop) {
-      if (normalize(stop) === normalize(curr)) return nextAcc
-    }
+        if (normalize(stop) === normalize(curr)) return nextAcc
+      }
       const next = dirname(curr)
       if (normalize(next) === normalize(curr)) return nextAcc
       return scan(next, nextAcc)

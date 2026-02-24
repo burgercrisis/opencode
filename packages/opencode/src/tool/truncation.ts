@@ -1,22 +1,22 @@
-import fs from "node:fs/promises"
+import fs from "fs/promises"
 import path from "path"
 import { Global } from "../global"
 import { Identifier } from "../id/id"
 import { PermissionNext } from "../permission/next"
 import type { Agent } from "../agent/agent"
 import { Scheduler } from "../scheduler"
-import { Log } from "../util/log"
-import { TRUNCATE } from "../constants"
+import { Filesystem } from "../util/filesystem"
+import { Glob } from "../util/glob"
 
 export namespace Truncate {
-  export const MAX_LINES = TRUNCATE.MAX_LINES
-  export const MAX_BYTES = TRUNCATE.MAX_BYTES
+  export const MAX_LINES = 2000
+  export const MAX_BYTES = 50 * 1024
   export const DIR = path.join(Global.Path.data, "tool-output")
   export const GLOB = path.join(DIR, "*")
-  const RETENTION_MS = TRUNCATE.RETENTION_MS
+  const RETENTION_MS = 7 * 24 * 60 * 60 * 1000 // 7 days
   const HOUR_MS = 60 * 60 * 1000
 
-  export type Result = { content: string; truncated: false } | { content: string; truncated: true; outputPath?: string }
+  export type Result = { content: string; truncated: false } | { content: string; truncated: true; outputPath: string }
 
   export interface Options {
     maxLines?: number
@@ -35,50 +35,18 @@ export namespace Truncate {
 
   export async function cleanup() {
     const cutoff = Identifier.timestamp(Identifier.create("tool", false, Date.now() - RETENTION_MS))
-    const glob = new Bun.Glob("tool_*")
-
-    try {
-      // Ensure directory exists before scanning
-      await fs.mkdir(DIR, { recursive: true }).catch(() => { })
-
-      const entries = await Array.fromAsync(glob.scan({ cwd: DIR, onlyFiles: true }))
-
-      if (entries.length === 0) {
-        Log.Default.debug("No truncation files to clean up", { DIR })
-        return
-      }
-
-      // Process deletions in parallel with error handling for each
-      await Promise.allSettled(
-        entries.map(async (entry) => {
-          try {
-            if (Identifier.timestamp(entry) < cutoff) {
-              await fs.unlink(path.join(DIR, entry))
-              Log.Default.debug("Cleaned up old truncation file", { entry })
-            }
-          } catch (unlinkError) {
-            Log.Default.warn("Failed to delete old truncation file", { entry, error: unlinkError })
-          }
-        })
-      )
-
-      Log.Default.info("Truncation cleanup completed", {
-        totalFiles: entries.length,
-        directory: DIR
-      })
-    } catch (cleanupError) {
-      Log.Default.error("Truncation cleanup failed", {
-        error: cleanupError,
-        directory: DIR,
-        action: "Manual cleanup may be required"
-      })
-      // Re-throw to alert monitoring systems and prevent silent accumulation
-      throw cleanupError
+    const entries = await Glob.scan("tool_*", { cwd: DIR, include: "file" }).catch(() => [] as string[])
+    for (const entry of entries) {
+      if (Identifier.timestamp(entry) >= cutoff) continue
+      await fs.unlink(path.join(DIR, entry)).catch(() => {})
     }
   }
 
-  const hasTaskTool = (agent?: Agent.Info): boolean =>
-    agent?.permission ? PermissionNext.evaluate("task", "*", agent.permission).action !== "deny" : false
+  function hasTaskTool(agent?: Agent.Info): boolean {
+    if (!agent?.permission) return false
+    const rule = PermissionNext.evaluate("task", "*", agent.permission)
+    return rule.action !== "deny"
+  }
 
   export async function output(text: string, options: Options = {}, agent?: Agent.Info): Promise<Result> {
     const maxLines = options.maxLines ?? MAX_LINES
@@ -91,79 +59,49 @@ export namespace Truncate {
       return { content: text, truncated: false }
     }
 
-    // Iterative processing to avoid recursion limits and stack overflow
-    const processIterative = (
-      items: string[],
-      direction: "head" | "tail",
-    ): { out: string[]; bytes: number; hitBytes: boolean } => {
-      const out: string[] = []
-      let bytes = 0
-      let hitBytes = false
+    const out: string[] = []
+    let i = 0
+    let bytes = 0
+    let hitBytes = false
 
-      const processItems = direction === "head" ? items : [...items].reverse()
-
-      for (const item of processItems) {
-        if (out.length >= maxLines) break
-
-        const size = Buffer.byteLength(item, "utf-8") + (out.length > 0 ? 1 : 0)
+    if (direction === "head") {
+      for (i = 0; i < lines.length && i < maxLines; i++) {
+        const size = Buffer.byteLength(lines[i], "utf-8") + (i > 0 ? 1 : 0)
         if (bytes + size > maxBytes) {
           hitBytes = true
           break
         }
-
-        if (direction === "head") {
-          out.push(item)
-        } else {
-          out.unshift(item)
-        }
+        out.push(lines[i])
         bytes += size
       }
-
-      return { out, bytes, hitBytes }
-    }
-
-    const { out, bytes, hitBytes } = processIterative(lines, direction)
-    const id = Identifier.ascending("tool")
-    const filepath = path.join(DIR, id)
-    const normalizedText = text.replace(/\r\n/g, '\n')
-
-    // Ensure directory exists before writing
-    try {
-      await fs.mkdir(DIR, { recursive: true })
-    } catch (mkdirError) {
-      Log.Default.warn("Failed to create truncation directory", { DIR, error: mkdirError })
-    }
-
-    // Handle potential write errors (disk full, permissions, etc.)
-    try {
-      await fs.writeFile(filepath, normalizedText)
-    } catch (writeError) {
-      // Return truncated content without file reference if write fails
-      const removed = hitBytes ? totalBytes - bytes : lines.length - out.length
-      const unit = hitBytes ? "bytes" : "lines"
-      const preview = out.join("\n")
-      return {
-        content: direction === "head"
-          ? `${preview}\n\n...${removed} ${unit} truncated (file write failed)...\n\n${preview}`
-          : `...${removed} ${unit} truncated (file write failed)...\n\n${preview}`,
-        truncated: true,
-        outputPath: undefined,
+    } else {
+      for (i = lines.length - 1; i >= 0 && out.length < maxLines; i--) {
+        const size = Buffer.byteLength(lines[i], "utf-8") + (out.length > 0 ? 1 : 0)
+        if (bytes + size > maxBytes) {
+          hitBytes = true
+          break
+        }
+        out.unshift(lines[i])
+        bytes += size
       }
     }
 
     const removed = hitBytes ? totalBytes - bytes : lines.length - out.length
     const unit = hitBytes ? "bytes" : "lines"
     const preview = out.join("\n")
+
+    const id = Identifier.ascending("tool")
+    const filepath = path.join(DIR, id)
+    await Filesystem.write(filepath, text)
+
     const hint = hasTaskTool(agent)
       ? `The tool call succeeded but the output was truncated. Full output saved to: ${filepath}\nUse the Task tool to have explore agent process this file with Grep and Read (with offset/limit). Do NOT read the full file yourself - delegate to save context.`
       : `The tool call succeeded but the output was truncated. Full output saved to: ${filepath}\nUse Grep to search the full content or Read with offset/limit to view specific sections.`
-
-    return {
-      content: direction === "head"
+    const message =
+      direction === "head"
         ? `${preview}\n\n...${removed} ${unit} truncated...\n\n${hint}`
-        : `...${removed} ${unit} truncated...\n\n${hint}\n\n${preview}`,
-      truncated: true,
-      outputPath: filepath,
-    }
+        : `...${removed} ${unit} truncated...\n\n${hint}\n\n${preview}`
+
+    return { content: message, truncated: true, outputPath: filepath }
   }
 }

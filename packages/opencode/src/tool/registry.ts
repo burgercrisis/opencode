@@ -27,41 +27,36 @@ import { LspTool } from "./lsp"
 import { Truncate } from "./truncation"
 import { PlanExitTool, PlanEnterTool } from "./plan"
 import { ApplyPatchTool } from "./apply_patch"
+import { Glob } from "../util/glob"
 
 export namespace ToolRegistry {
   const log = Log.create({ service: "tool.registry" })
 
   export const state = Instance.state(async () => {
-    const glob = new Bun.Glob("{tool,tools}/*.{js,ts}")
-    const directories = await Config.directories()
+    const custom = [] as Tool.Info[]
 
-    const customToolsFromDirs: Tool.Info[] = []
-    const matches = (
-      await Promise.all(
-        directories.map((dir) =>
-          Array.fromAsync(glob.scan({ cwd: dir, absolute: true, followSymlinks: true, dot: true })),
-        ),
-      )
-    ).flat()
-
-    if (matches.length > 0) {
-      await Config.waitForDependencies()
-      for (const match of matches) {
-        const namespace = path.basename(match, path.extname(match))
-        const mod = await import(match)
-        for (const [id, def] of Object.entries<ToolDefinition>(mod)) {
-          customToolsFromDirs.push(fromPlugin(id === "default" ? namespace : `${namespace}_${id}`, def))
-        }
+    const matches = await Config.directories().then((dirs) =>
+      dirs.flatMap((dir) =>
+        Glob.scanSync("{tool,tools}/*.{js,ts}", { cwd: dir, absolute: true, dot: true, symlink: true }),
+      ),
+    )
+    if (matches.length) await Config.waitForDependencies()
+    for (const match of matches) {
+      const namespace = path.basename(match, path.extname(match))
+      const mod = await import(match)
+      for (const [id, def] of Object.entries<ToolDefinition>(mod)) {
+        custom.push(fromPlugin(id === "default" ? namespace : `${namespace}_${id}`, def))
       }
     }
 
     const plugins = await Plugin.list()
-    const customToolsFromPlugins = plugins.reduce((acc, plugin) => {
-      const pluginTools = Object.entries(plugin.tool ?? {}).map(([id, def]) => fromPlugin(id, def as ToolDefinition))
-      return acc.concat(pluginTools)
-    }, [] as Tool.Info[])
+    for (const plugin of plugins) {
+      for (const [id, def] of Object.entries(plugin.tool ?? {})) {
+        custom.push(fromPlugin(id, def))
+      }
+    }
 
-    return { custom: [...customToolsFromDirs, ...customToolsFromPlugins] }
+    return { custom }
   })
 
   function fromPlugin(id: string, def: ToolDefinition): Tool.Info {
@@ -89,21 +84,23 @@ export namespace ToolRegistry {
   }
 
   export async function register(tool: Tool.Info) {
-    const s = await state()
-    // Mutate state container directly since state() returns a mutable container
-    // in the Instance.state pattern, but we use declarative methods for the update.
-    s.custom = s.custom.some((t) => t.id === tool.id)
-      ? s.custom.map((t) => (t.id === tool.id ? tool : t))
-      : [...s.custom, tool]
+    const { custom } = await state()
+    const idx = custom.findIndex((t) => t.id === tool.id)
+    if (idx >= 0) {
+      custom.splice(idx, 1, tool)
+      return
+    }
+    custom.push(tool)
   }
 
-  export async function all(): Promise<Tool.Info[]> {
+  async function all(): Promise<Tool.Info[]> {
     const custom = await state().then((x) => x.custom)
     const config = await Config.get()
+    const question = ["app", "cli", "desktop"].includes(Flag.OPENCODE_CLIENT) || Flag.OPENCODE_ENABLE_QUESTION_TOOL
 
     return [
       InvalidTool,
-      ...(["app", "cli", "desktop"].includes(Flag.OPENCODE_CLIENT) ? [QuestionTool] : []),
+      ...(question ? [QuestionTool] : []),
       BashTool,
       ReadTool,
       GlobTool,
@@ -120,9 +117,7 @@ export namespace ToolRegistry {
       ApplyPatchTool,
       ...(Flag.OPENCODE_EXPERIMENTAL_LSP_TOOL ? [LspTool] : []),
       ...(config.experimental?.batch_tool === true ? [BatchTool] : []),
-      ...(Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE && Flag.OPENCODE_CLIENT === "cli"
-        ? [PlanExitTool, PlanEnterTool]
-        : []),
+      ...(Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE && Flag.OPENCODE_CLIENT === "cli" ? [PlanExitTool, PlanEnterTool] : []),
       ...custom,
     ]
   }
@@ -138,21 +133,22 @@ export namespace ToolRegistry {
     },
     agent?: Agent.Info,
   ) {
-    const allTools = await all()
-
-    return Promise.all(
-      allTools
+    const tools = await all()
+    const result = await Promise.all(
+      tools
         .filter((t) => {
-          const isSearch = t.id === "codesearch" || t.id === "websearch"
-          const isPatch = t.id === "patch"
-          const isApplyPatch = t.id === "apply_patch"
-          const isEditOrWrite = t.id === "edit" || t.id === "write"
+          // Enable websearch/codesearch for zen users OR via enable flag
+          if (t.id === "codesearch" || t.id === "websearch") {
+            return model.providerID === "opencode" || Flag.OPENCODE_ENABLE_EXA
+          }
 
-          return (
-            isSearch ||
-            isApplyPatch ||
-            (isEditOrWrite || isPatch ? false : true)
-          )
+          // use apply tool in same format as codex
+          const usePatch =
+            model.modelID.includes("gpt-") && !model.modelID.includes("oss") && !model.modelID.includes("gpt-4")
+          if (t.id === "apply_patch") return usePatch
+          if (t.id === "edit" || t.id === "write") return !usePatch
+
+          return true
         })
         .map(async (t) => {
           using _ = log.time(t.id)
@@ -170,5 +166,6 @@ export namespace ToolRegistry {
           }
         }),
     )
+    return result
   }
 }

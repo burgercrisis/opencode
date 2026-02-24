@@ -1,23 +1,23 @@
-﻿import z from "zod"
+import z from "zod"
 import { Tool } from "./tool"
 import TurndownService from "turndown"
 import DESCRIPTION from "./webfetch.txt"
 import { abortAfterAny } from "../util/abort"
-import { Identifier } from "../id/id"
-import { TOOL } from "../constants"
 
-const parameters = z.object({
-  url: z.string().describe("The URL to fetch content from"),
-  format: z
-    .enum(["text", "markdown", "html"])
-    .default("markdown")
-    .describe("The format to return the content in (text, markdown, or html). Defaults to markdown."),
-  timeout: z.number().describe("Optional timeout in seconds (max 120)").optional(),
-})
+const MAX_RESPONSE_SIZE = 5 * 1024 * 1024 // 5MB
+const DEFAULT_TIMEOUT = 30 * 1000 // 30 seconds
+const MAX_TIMEOUT = 120 * 1000 // 2 minutes
 
-export const WebFetchTool = Tool.define<typeof parameters, {}>("webfetch", {
+export const WebFetchTool = Tool.define("webfetch", {
   description: DESCRIPTION,
-  parameters,
+  parameters: z.object({
+    url: z.string().describe("The URL to fetch content from"),
+    format: z
+      .enum(["text", "markdown", "html"])
+      .default("markdown")
+      .describe("The format to return the content in (text, markdown, or html). Defaults to markdown."),
+    timeout: z.number().describe("Optional timeout in seconds (max 120)").optional(),
+  }),
   async execute(params, ctx) {
     // Validate URL
     if (!params.url.startsWith("http://") && !params.url.startsWith("https://")) {
@@ -35,23 +35,33 @@ export const WebFetchTool = Tool.define<typeof parameters, {}>("webfetch", {
       },
     })
 
-    const timeout = Math.min((params.timeout ?? TOOL.WEBFETCH_DEFAULT_TIMEOUT / 1000) * 1000, TOOL.WEBFETCH_MAX_TIMEOUT)
+    const timeout = Math.min((params.timeout ?? DEFAULT_TIMEOUT / 1000) * 1000, MAX_TIMEOUT)
+
     const { signal, clearTimeout } = abortAfterAny(timeout, ctx.abort)
 
     // Build Accept header based on requested format with q parameters for fallbacks
-    const acceptHeaders: Record<string, string> = {
-      markdown: "text/markdown;q=1.0, text/x-markdown;q=0.9, text/plain;q=0.8, text/html;q=0.7, */*;q=0.1",
-      text: "text/plain;q=1.0, text/markdown;q=0.9, text/html;q=0.8, */*;q=0.1",
-      html: "text/html;q=1.0, application/xhtml+xml;q=0.9, text/plain;q=0.8, text/markdown;q=0.7, */*;q=0.1",
-      default: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+    let acceptHeader = "*/*"
+    switch (params.format) {
+      case "markdown":
+        acceptHeader = "text/markdown;q=1.0, text/x-markdown;q=0.9, text/plain;q=0.8, text/html;q=0.7, */*;q=0.1"
+        break
+      case "text":
+        acceptHeader = "text/plain;q=1.0, text/markdown;q=0.9, text/html;q=0.8, */*;q=0.1"
+        break
+      case "html":
+        acceptHeader = "text/html;q=1.0, application/xhtml+xml;q=0.9, text/plain;q=0.8, text/markdown;q=0.7, */*;q=0.1"
+        break
+      default:
+        acceptHeader =
+          "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
     }
-    const acceptHeader = acceptHeaders[params.format] || acceptHeaders.default
     const headers = {
       "User-Agent":
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
       Accept: acceptHeader,
       "Accept-Language": "en-US,en;q=0.9",
     }
+
     const initial = await fetch(params.url, { signal, headers })
 
     // Retry with honest UA if blocked by Cloudflare bot detection (TLS fingerprint mismatch)
@@ -68,12 +78,12 @@ export const WebFetchTool = Tool.define<typeof parameters, {}>("webfetch", {
 
     // Check content length
     const contentLength = response.headers.get("content-length")
-    if (contentLength && parseInt(contentLength) > TOOL.MAX_RESPONSE_SIZE) {
+    if (contentLength && parseInt(contentLength) > MAX_RESPONSE_SIZE) {
       throw new Error("Response too large (exceeds 5MB limit)")
     }
 
     const arrayBuffer = await response.arrayBuffer()
-    if (arrayBuffer.byteLength > TOOL.MAX_RESPONSE_SIZE) {
+    if (arrayBuffer.byteLength > MAX_RESPONSE_SIZE) {
       throw new Error("Response too large (exceeds 5MB limit)")
     }
 
@@ -92,9 +102,6 @@ export const WebFetchTool = Tool.define<typeof parameters, {}>("webfetch", {
         metadata: {},
         attachments: [
           {
-            id: Identifier.ascending("part"),
-            sessionID: ctx.sessionID,
-            messageID: ctx.messageID,
             type: "file",
             mime,
             url: `data:${mime};base64,${base64Content}`,
@@ -106,51 +113,84 @@ export const WebFetchTool = Tool.define<typeof parameters, {}>("webfetch", {
     const content = new TextDecoder().decode(arrayBuffer)
 
     // Handle content based on requested format and actual content type
-    return params.format === "markdown"
-      ? {
-        output: contentType.includes("text/html") ? convertHTMLToMarkdown(content) : content,
-        title,
-        metadata: {},
-      }
-      : params.format === "text"
-        ? {
-          output: contentType.includes("text/html") ? await extractTextFromHTML(content) : content,
-          title,
-          metadata: {},
+    switch (params.format) {
+      case "markdown":
+        if (contentType.includes("text/html")) {
+          const markdown = convertHTMLToMarkdown(content)
+          return {
+            output: markdown,
+            title,
+            metadata: {},
+          }
         }
-        : {
+        return {
           output: content,
           title,
           metadata: {},
         }
+
+      case "text":
+        if (contentType.includes("text/html")) {
+          const text = await extractTextFromHTML(content)
+          return {
+            output: text,
+            title,
+            metadata: {},
+          }
+        }
+        return {
+          output: content,
+          title,
+          metadata: {},
+        }
+
+      case "html":
+        return {
+          output: content,
+          title,
+          metadata: {},
+        }
+
+      default:
+        return {
+          output: content,
+          title,
+          metadata: {},
+        }
+    }
   },
 })
 
 async function extractTextFromHTML(html: string) {
-  const chunks: string[] = []
-  const tags = ["script", "style", "noscript", "iframe", "object", "embed"]
-  const stack: string[] = []
+  let text = ""
+  let skipContent = false
 
   const rewriter = new HTMLRewriter()
-    .on(tags.join(", "), {
-      element(element) {
-        stack.push(element.tagName)
-        element.onEndTag(() => {
-          stack.pop()
-        })
+    .on("script, style, noscript, iframe, object, embed", {
+      element() {
+        skipContent = true
+      },
+      text() {
+        // Skip text content inside these elements
       },
     })
     .on("*", {
+      element(element) {
+        // Reset skip flag when entering other elements
+        if (!["script", "style", "noscript", "iframe", "object", "embed"].includes(element.tagName)) {
+          skipContent = false
+        }
+      },
       text(input) {
-        if (stack.length === 0) {
-          chunks.push(input.text)
+        if (!skipContent) {
+          text += input.text
         }
       },
     })
     .transform(new Response(html))
 
   await rewriter.text()
-  return chunks.join("").trim()
+  return text.trim()
 }
 
 function convertHTMLToMarkdown(html: string): string {

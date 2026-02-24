@@ -1,7 +1,7 @@
 import path from "path"
-import fsp from "fs/promises"
 import { Global } from "../global"
 import z from "zod"
+import { Filesystem } from "../util/filesystem"
 
 export const OAUTH_DUMMY_KEY = "opencode-oauth-dummy-key"
 
@@ -35,9 +35,7 @@ export namespace Auth {
   export const Info = z.discriminatedUnion("type", [Oauth, Api, WellKnown]).meta({ ref: "Auth" })
   export type Info = z.infer<typeof Info>
 
-  function filepath() {
-    return path.join(Global.Path.data, "auth.json")
-  }
+  const filepath = path.join(Global.Path.data, "auth.json")
 
   export async function get(providerID: string) {
     const auth = await all()
@@ -45,10 +43,7 @@ export namespace Auth {
   }
 
   export async function all(): Promise<Record<string, Info>> {
-    const data = await fsp
-      .readFile(filepath(), "utf8")
-      .then((t) => JSON.parse(t))
-      .catch(() => ({}) as Record<string, unknown>)
+    const data = await Filesystem.readJson<Record<string, unknown>>(filepath).catch(() => ({}))
     return Object.entries(data).reduce(
       (acc, [key, value]) => {
         const parsed = Info.safeParse(value)
@@ -62,14 +57,12 @@ export namespace Auth {
 
   export async function set(key: string, info: Info) {
     const data = await all()
-    await fsp.writeFile(filepath(), JSON.stringify({ ...data, [key]: info }, null, 2), {
-      mode: 0o600,
-    })
+    await Filesystem.writeJson(filepath, { ...data, [key]: info }, 0o600)
   }
 
   export async function remove(key: string) {
     const data = await all()
     delete data[key]
-    await fsp.writeFile(filepath(), JSON.stringify(data, null, 2), { mode: 0o600 })
+    await Filesystem.writeJson(filepath, data, 0o600)
   }
 }

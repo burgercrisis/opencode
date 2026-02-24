@@ -52,29 +52,25 @@ export namespace Agent {
     const cfg = await Config.get()
 
     const skillDirs = await Skill.dirs()
-    const defaults = PermissionNext.merge(
-      PermissionNext.fromConfig({
+    const whitelistedDirs = [Truncate.GLOB, ...skillDirs.map((dir) => path.join(dir, "*"))]
+    const defaults = PermissionNext.fromConfig({
+      "*": "allow",
+      doom_loop: "ask",
+      external_directory: {
+        "*": "ask",
+        ...Object.fromEntries(whitelistedDirs.map((dir) => [dir, "allow"])),
+      },
+      question: "deny",
+      plan_enter: "deny",
+      plan_exit: "deny",
+      // mirrors github.com/github/gitignore Node.gitignore pattern for .env files
+      read: {
         "*": "allow",
-        doom_loop: "ask",
-        external_directory: {
-          "*": "ask",
-          [Truncate.GLOB]: "allow",
-          ...Object.fromEntries(skillDirs.map((dir) => [path.join(dir, "*"), "allow"])),
-        },
-        question: "deny",
-        plan_enter: "deny",
-        plan_exit: "deny",
-        // mirrors github.com/github/gitignore Node.gitignore pattern for .env files
-        read: "allow",
-      }),
-      PermissionNext.fromConfig({
-        read: {
-          "*.env": "ask",
-          "*.env.*": "ask",
-          "*.env.example": "allow",
-        },
-      }),
-    )
+        "*.env": "ask",
+        "*.env.*": "ask",
+        "*.env.example": "allow",
+      },
+    })
     const user = PermissionNext.fromConfig(cfg.permission ?? {})
 
     const result: Record<string, Info> = {
@@ -146,7 +142,8 @@ export namespace Agent {
             codesearch: "allow",
             read: "allow",
             external_directory: {
-              [Truncate.GLOB]: "allow",
+              "*": "ask",
+              ...Object.fromEntries(whitelistedDirs.map((dir) => [dir, "allow"])),
             },
           }),
           user,
@@ -205,7 +202,7 @@ export namespace Agent {
       },
     }
 
-    for (const [key, value] of Object.entries((cfg.agent ?? {}) as Record<string, any>)) {
+    for (const [key, value] of Object.entries(cfg.agent ?? {})) {
       if (value.disable) {
         delete result[key]
         continue

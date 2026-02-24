@@ -1,4 +1,3 @@
-import fsp from "fs/promises"
 import { Global } from "../global"
 import { Log } from "../util/log"
 import path from "path"
@@ -6,6 +5,7 @@ import z from "zod"
 import { Installation } from "../installation"
 import { Flag } from "../flag/flag"
 import { lazy } from "@/util/lazy"
+import { Filesystem } from "../util/filesystem"
 
 // Try to import bundled snapshot (generated at build time)
 // Falls back to undefined in dev mode when snapshot doesn't exist
@@ -13,9 +13,7 @@ import { lazy } from "@/util/lazy"
 
 export namespace ModelsDev {
   const log = Log.create({ service: "models.dev" })
-  function filepath() {
-    return path.join(Global.Path.cache, "models.json")
-  }
+  const filepath = path.join(Global.Path.cache, "models.json")
 
   export const Model = z.object({
     id: z.string(),
@@ -88,11 +86,7 @@ export namespace ModelsDev {
   }
 
   export const Data = lazy(async () => {
-    const path = Flag.OPENCODE_MODELS_PATH ?? filepath()
-    const result = await fsp
-      .readFile(path, "utf8")
-      .then((t) => JSON.parse(t))
-      .catch(() => {})
+    const result = await Filesystem.readJson(Flag.OPENCODE_MODELS_PATH ?? filepath).catch(() => {})
     if (result) return result
     // @ts-ignore
     const snapshot = await import("./models-snapshot")
@@ -110,10 +104,6 @@ export namespace ModelsDev {
   }
 
   export async function refresh() {
-    const file = Bun.file(filepath())
-    log.info("refreshing", {
-      file,
-    })
     const result = await fetch(`${url()}/api.json`, {
       headers: {
         "User-Agent": Installation.USER_AGENT,
@@ -125,13 +115,13 @@ export namespace ModelsDev {
       })
     })
     if (result && result.ok) {
-      await Bun.write(file, await result.text())
+      await Filesystem.write(filepath, await result.text())
       ModelsDev.Data.reset()
     }
   }
 }
 
-if (!Flag.OPENCODE_DISABLE_MODELS_FETCH && process.env.NODE_ENV !== "test") {
+if (!Flag.OPENCODE_DISABLE_MODELS_FETCH && !process.argv.includes("--get-yargs-completions")) {
   ModelsDev.refresh()
   setInterval(
     async () => {

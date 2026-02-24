@@ -1,54 +1,48 @@
 import z from "zod"
 import { Tool } from "./tool"
+import { Filesystem } from "../util/filesystem"
 import { Ripgrep } from "../file/ripgrep"
 
 import DESCRIPTION from "./grep.txt"
 import { Instance } from "../project/instance"
 import path from "path"
 import { assertExternalDirectory } from "./external-directory"
-import { Filesystem } from "../util/filesystem"
-import { TOOL } from "../constants"
 
-const parameters = z.object({
-  pattern: z.string().describe("The regex pattern to search for in file contents"),
-  path: z.string().optional().describe("The directory to search in. Defaults to the current working directory."),
-  include: z.string().optional().describe('File pattern to include in the search (e.g. "*.js", "*.{ts,tsx}")'),
-})
+const MAX_LINE_LENGTH = 2000
 
-export const GrepTool = Tool.define<typeof parameters, { matches: number; truncated: boolean }>("grep", {
+export const GrepTool = Tool.define("grep", {
   description: DESCRIPTION,
-  parameters,
+  parameters: z.object({
+    pattern: z.string().describe("The regex pattern to search for in file contents"),
+    path: z.string().optional().describe("The directory to search in. Defaults to the current working directory."),
+    include: z.string().optional().describe('File pattern to include in the search (e.g. "*.js", "*.{ts,tsx}")'),
+  }),
   async execute(params, ctx) {
-    const pattern = params.pattern || (() => { throw new Error("pattern is required") })()
+    if (!params.pattern) {
+      throw new Error("pattern is required")
+    }
 
     await ctx.ask({
       permission: "grep",
-      patterns: [pattern],
+      patterns: [params.pattern],
       always: ["*"],
       metadata: {
-        pattern,
+        pattern: params.pattern,
         path: params.path,
         include: params.include,
       },
     })
 
-    const searchPath = params.path
-      ? (path.isAbsolute(params.path) ? Filesystem.nativePath(params.path) : Filesystem.resolvePath(Instance.directory, params.path))
-      : Instance.directory
+    let searchPath = params.path ?? Instance.directory
+    searchPath = path.isAbsolute(searchPath) ? searchPath : path.resolve(Instance.directory, searchPath)
     await assertExternalDirectory(ctx, searchPath, { kind: "directory" })
 
     const rgPath = await Ripgrep.filepath()
-    const args = [
-      "-nH",
-      "--hidden",
-      "--follow",
-      "--no-messages",
-      "--field-match-separator=|",
-      "--regexp",
-      pattern,
-      ...(params.include ? ["--glob", params.include] : []),
-      searchPath,
-    ]
+    const args = ["-nH", "--hidden", "--no-messages", "--field-match-separator=|", "--regexp", params.pattern]
+    if (params.include) {
+      args.push("--glob", params.include)
+    }
+    args.push(searchPath)
 
     const proc = Bun.spawn([rgPath, ...args], {
       stdout: "pipe",
@@ -56,108 +50,101 @@ export const GrepTool = Tool.define<typeof parameters, { matches: number; trunca
       signal: ctx.abort,
     })
 
-    const reader = proc.stdout.getReader()
-    const decoder = new TextDecoder()
-
-    interface Match {
-      path: string
-      lineNum: number
-      lineText: string
-      modTime?: number
-    }
-
-    const read = async (acc: Match[], buffer: string): Promise<{ matches: Match[]; truncated: boolean }> => {
-      const { done, value } = await reader.read()
-
-      const processDone = () => {
-        const remaining = buffer.split("|")
-        const match = remaining.length >= 3 ? {
-          path: remaining[0],
-          lineNum: parseInt(remaining[1], 10),
-          lineText: remaining.slice(2).join("|"),
-        } : null
-        return {
-          matches: match ? [...acc, match].slice(0, TOOL.MATCH_LIMIT) : acc,
-          truncated: acc.length >= TOOL.MATCH_LIMIT || (match !== null && acc.length + 1 > TOOL.MATCH_LIMIT),
-        }
-      }
-
-      if (done) return processDone()
-
-      const content = buffer + decoder.decode(value, { stream: true })
-      const lines = content.split(/\r?\n/)
-      const last = lines.pop() || ""
-
-      const newMatches = lines
-        .filter(Boolean)
-        .map((line) => {
-          const [filePath, lineNumStr, ...lineTextParts] = line.split("|")
-          return filePath && lineNumStr && lineTextParts.length > 0
-            ? {
-              path: filePath,
-              lineNum: parseInt(lineNumStr, 10),
-              lineText: lineTextParts.join("|"),
-            }
-            : null
-        })
-        .filter((m): m is Match => m !== null)
-
-      const total = [...acc, ...newMatches]
-      if (total.length >= TOOL.MATCH_LIMIT) {
-        proc.kill()
-        return { matches: total.slice(0, TOOL.MATCH_LIMIT), truncated: true }
-      }
-      return read(total, last)
-    }
-
-    const { matches: rawMatches, truncated } = await read([], "")
+    const output = await new Response(proc.stdout).text()
     const errorOutput = await new Response(proc.stderr).text()
     const exitCode = await proc.exited
 
-    return ((exitCode === 1 && rawMatches.length === 0) || rawMatches.length === 0)
-      ? {
-        title: pattern,
+    // Exit codes: 0 = matches found, 1 = no matches, 2 = errors (but may still have matches)
+    // With --no-messages, we suppress error output but still get exit code 2 for broken symlinks etc.
+    // Only fail if exit code is 2 AND no output was produced
+    if (exitCode === 1 || (exitCode === 2 && !output.trim())) {
+      return {
+        title: params.pattern,
         metadata: { matches: 0, truncated: false },
-        output: "No matches found",
+        output: "No files found",
       }
-      : (exitCode !== 0 && exitCode !== 1 && exitCode !== 2 && !truncated)
-        ? (() => { throw new Error(`ripgrep failed: ${errorOutput}`) })()
-        : (async () => {
-          const hasErrors = exitCode === 2
-          const uniqueFiles = [...new Set(rawMatches.map((m) => m.path))]
+    }
 
-          const fileStats = await uniqueFiles.reduce(async (accPromise, filePath) => {
-            const acc = await accPromise
-            const stats = await Bun.file(filePath).stat().catch(() => null)
-            return acc.set(filePath, stats?.mtime.getTime() ?? 0)
-          }, Promise.resolve(new Map<string, number>()))
+    if (exitCode !== 0 && exitCode !== 2) {
+      throw new Error(`ripgrep failed: ${errorOutput}`)
+    }
 
-          const matches = rawMatches
-            .map((m) => ({ ...m, modTime: fileStats.get(m.path) ?? 0 }))
-            .sort((a, b) => b.modTime - a.modTime)
+    const hasErrors = exitCode === 2
 
-          const formattedMatches = matches.reduce((acc, match, i) => {
-            const prev = matches[i - 1]
-            const fileHeader = !prev || prev.path !== match.path ? [`${acc.length > 0 ? "\n" : ""}${match.path}:`] : []
-            const truncatedLineText = match.lineText.length > TOOL.MAX_LINE_LENGTH
-              ? match.lineText.substring(0, TOOL.MAX_LINE_LENGTH) + "..."
-              : match.lineText
-            return acc.concat(fileHeader, `  Line ${match.lineNum}: ${truncatedLineText}`)
-          }, [] as string[])
+    // Handle both Unix (\n) and Windows (\r\n) line endings
+    const lines = output.trim().split(/\r?\n/)
+    const matches = []
 
-          return {
-            title: pattern,
-            metadata: {
-              matches: matches.length,
-              truncated,
-            },
-            output: [
-              `Found ${matches.length} matches`,
-              ...formattedMatches,
-              ...(truncated ? ["", "(Results are truncated. Consider using a more specific path or pattern.)"] : []),
-              ...(hasErrors ? ["", "(Some paths were inaccessible and skipped)"] : []),
-            ].join("\n"),
-          }
-        })()
+    for (const line of lines) {
+      if (!line) continue
+
+      const [filePath, lineNumStr, ...lineTextParts] = line.split("|")
+      if (!filePath || !lineNumStr || lineTextParts.length === 0) continue
+
+      const lineNum = parseInt(lineNumStr, 10)
+      const lineText = lineTextParts.join("|")
+
+      const stats = Filesystem.stat(filePath)
+      if (!stats) continue
+
+      matches.push({
+        path: filePath,
+        modTime: stats.mtime.getTime(),
+        lineNum,
+        lineText,
+      })
+    }
+
+    matches.sort((a, b) => b.modTime - a.modTime)
+
+    const limit = 100
+    const truncated = matches.length > limit
+    const finalMatches = truncated ? matches.slice(0, limit) : matches
+
+    if (finalMatches.length === 0) {
+      return {
+        title: params.pattern,
+        metadata: { matches: 0, truncated: false },
+        output: "No files found",
+      }
+    }
+
+    const totalMatches = matches.length
+    const outputLines = [`Found ${totalMatches} matches${truncated ? ` (showing first ${limit})` : ""}`]
+
+    let currentFile = ""
+    for (const match of finalMatches) {
+      if (currentFile !== match.path) {
+        if (currentFile !== "") {
+          outputLines.push("")
+        }
+        currentFile = match.path
+        outputLines.push(`${match.path}:`)
+      }
+      const truncatedLineText =
+        match.lineText.length > MAX_LINE_LENGTH ? match.lineText.substring(0, MAX_LINE_LENGTH) + "..." : match.lineText
+      outputLines.push(`  Line ${match.lineNum}: ${truncatedLineText}`)
+    }
+
+    if (truncated) {
+      outputLines.push("")
+      outputLines.push(
+        `(Results truncated: showing ${limit} of ${totalMatches} matches (${totalMatches - limit} hidden). Consider using a more specific path or pattern.)`,
+      )
+    }
+
+    if (hasErrors) {
+      outputLines.push("")
+      outputLines.push("(Some paths were inaccessible and skipped)")
+    }
+
+    return {
+      title: params.pattern,
+      metadata: {
+        matches: totalMatches,
+        truncated,
+      },
+      output: outputLines.join("\n"),
+    }
   },
 })
