@@ -35,12 +35,11 @@ logs/
 
 tsconfig.tsbuildinfo
 
-.runtime/mcp-coordination-hub.sqlite
-.runtime/mcp-coordination-hub.sqlite-shm
-.runtime/mcp-coordination-hub.sqlite-wal
 
 packages/opencode/run_and_log_failures.cjs
 packages/opencode/run_preliminary_tests.cjs
 
 devplans/merge-these.md
 
+.kilocode/
+.runtime/
