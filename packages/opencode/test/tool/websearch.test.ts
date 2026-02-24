@@ -1,20 +1,15 @@
 import { describe, it, expect, mock, beforeEach, afterEach, vi, spyOn } from "bun:test"
 import { WebSearchTool } from "../../src/tool/websearch"
-import { Truncate } from "../../src/tool/truncation"
 
 describe("WebSearchTool", () => {
   let ctx: any
-  let truncateSpy: any
 
+  // Mock fetch for all tests - this is appropriate for external API calls
   beforeEach(() => {
     ctx = {
       ask: mock().mockResolvedValue(undefined),
       abort: new AbortController().signal,
     }
-    truncateSpy = vi.spyOn(Truncate, "output").mockImplementation(async (content) => ({
-      content,
-      truncated: false
-    }))
   })
 
   afterEach(() => {
@@ -154,12 +149,40 @@ describe("WebSearchTool", () => {
       contextMaxCharacters: 5000
     }, ctx)
 
-    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body))
+    const body = JSON.parse(String(fetchSpy.mock.calls[0]![1]?.body))
     expect(body.params.arguments.numResults).toBe(5)
     expect(body.params.arguments.livecrawl).toBe("preferred")
     expect(body.params.arguments.type).toBe("deep")
     expect(body.params.arguments.contextMaxCharacters).toBe(5000)
 
+    fetchSpy.mockRestore()
+  })
+
+  it("handles large content with real truncation", async () => {
+    const tool = await WebSearchTool.init()
+    // Create content larger than default truncation limit
+    const largeContent = "x".repeat(100000)
+    const mockResponse = {
+      ok: true,
+      status: 200,
+      text: mock().mockResolvedValue("data: " + JSON.stringify({
+        jsonrpc: "2.0",
+        result: {
+          content: [{
+            type: "text",
+            text: largeContent
+          }]
+        }
+      }) + "\n")
+    }
+
+    const fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(mockResponse as any)
+
+    const result = await tool.execute({ query: "test query" }, ctx)
+
+    // The real truncation should handle large content
+    expect(result.output.length).toBeLessThan(largeContent.length)
+    
     fetchSpy.mockRestore()
   })
 })

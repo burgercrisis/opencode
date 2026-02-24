@@ -2,19 +2,12 @@ import { expect, it, describe, mock, beforeEach, afterEach, vi } from "bun:test"
 import { SkillTool } from "../../src/tool/skill"
 import { Skill } from "../../src/skill"
 import { PermissionNext } from "../../src/permission/next"
-import { Ripgrep } from "../../src/file/ripgrep"
-import path from "path"
 import { Instance } from "../../src/project/instance"
 import { tmpdir } from "../fixture/fixture"
+import path from "path"
+import { pathToFileURL } from "url"
 
 describe("SkillTool", () => {
-  let mocks: {
-    skillAll: any
-    skillGet: any
-    permissionEvaluate: any
-    ripgrepFiles: any
-  }
-
   const ctx = {
     agent: {
       permission: [],
@@ -26,34 +19,6 @@ describe("SkillTool", () => {
   beforeEach(() => {
     vi.resetAllMocks()
     ;(ctx.ask as any).mockClear()
-    
-    mocks = {
-      skillAll: vi.spyOn(Skill, "all"),
-      skillGet: vi.spyOn(Skill, "get"),
-      permissionEvaluate: vi.spyOn(PermissionNext, "evaluate"),
-      ripgrepFiles: vi.spyOn(Ripgrep, "files"),
-    }
-
-    mocks.skillAll.mockResolvedValue([
-      {
-        name: "test-skill",
-        description: "A test skill",
-        location: "/path/to/skill/SKILL.md",
-        content: "Skill content",
-      },
-    ] as any)
-    mocks.skillGet.mockResolvedValue({
-      name: "test-skill",
-      description: "A test skill",
-      location: "/path/to/skill/SKILL.md",
-      content: "Skill content",
-    } as any)
-    mocks.permissionEvaluate.mockReturnValue({ action: "allow" } as any)
-    mocks.ripgrepFiles.mockImplementation(async function* () {
-      yield "file1.txt"
-      yield "file2.txt"
-      yield "SKILL.md" // Should be skipped
-    } as any)
   })
 
   afterEach(() => {
@@ -62,13 +27,21 @@ describe("SkillTool", () => {
 
   it("initializes with available skills", async () => {
     await using tmp = await tmpdir()
+    // Create a real skill file
+    const skillDir = path.join(tmp.path, ".opencode", "skill", "test-skill")
+    await Bun.write(path.join(skillDir, "SKILL.md"), `---
+name: test-skill
+description: A test skill
+---
+Skill content`)
+
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
         const tool = await SkillTool.init(ctx as any)
         expect(tool.description).toContain("test-skill")
         expect(tool.description).toContain("A test skill")
-        expect(tool.description).toContain("file:///path/to/skill/SKILL.md")
+        expect(tool.description).toContain(encodeURIComponent("SKILL.md"))
       },
     })
   })
@@ -78,7 +51,6 @@ describe("SkillTool", () => {
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        mocks.skillAll.mockResolvedValue([])
         const tool = await SkillTool.init(ctx as any)
         expect(tool.description).toContain("No skills are currently available")
       },
@@ -87,17 +59,30 @@ describe("SkillTool", () => {
 
   it("filters skills based on permissions", async () => {
     await using tmp = await tmpdir()
+    
+    // Create skill files
+    const skillDirA = path.join(tmp.path, ".opencode", "skill", "allowed-skill")
+    await Bun.write(path.join(skillDirA, "SKILL.md"), `---
+name: allowed-skill
+description: Allowed skill
+---
+Content`)
+    
+    const skillDirB = path.join(tmp.path, ".opencode", "skill", "denied-skill")
+    await Bun.write(path.join(skillDirB, "SKILL.md"), `---
+name: denied-skill
+description: Denied skill
+---
+Content`)
+
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        mocks.permissionEvaluate.mockImplementation(((type: string, name: string) => {
+        // Mock permission to deny denied-skill
+        vi.spyOn(PermissionNext, "evaluate").mockImplementation(((type: string, name: string) => {
           if (name === "denied-skill") return { action: "deny" }
           return { action: "allow" }
         }) as any)
-        mocks.skillAll.mockResolvedValue([
-          { name: "allowed-skill", description: "Allowed", location: "/a/SKILL.md" },
-          { name: "denied-skill", description: "Denied", location: "/b/SKILL.md" },
-        ] as any)
 
         const tool = await SkillTool.init(ctx as any)
         expect(tool.description).toContain("allowed-skill")
@@ -108,6 +93,17 @@ describe("SkillTool", () => {
 
   it("executes and loads a skill", async () => {
     await using tmp = await tmpdir()
+    
+    // Create a skill with files
+    const skillDir = path.join(tmp.path, ".opencode", "skill", "test-skill")
+    await Bun.write(path.join(skillDir, "SKILL.md"), `---
+name: test-skill
+description: A test skill
+---
+Skill content`)
+    await Bun.write(path.join(skillDir, "file1.txt"), "File 1 content")
+    await Bun.write(path.join(skillDir, "file2.txt"), "File 2 content")
+
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
@@ -135,14 +131,19 @@ describe("SkillTool", () => {
 
   it("throws error if skill not found", async () => {
     await using tmp = await tmpdir()
+    
+    // Create a different skill
+    const skillDir = path.join(tmp.path, ".opencode", "skill", "other-skill")
+    await Bun.write(path.join(skillDir, "SKILL.md"), `---
+name: other-skill
+description: Another skill
+---
+Content`)
+
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
         const tool = await SkillTool.init(ctx as any)
-        mocks.skillGet.mockResolvedValue(null)
-        mocks.skillAll.mockResolvedValue([
-          { name: "other-skill" },
-        ] as any)
 
         expect(tool.execute({ name: "missing-skill" }, ctx as any)).rejects.toThrow(
           'Skill "missing-skill" not found. Available skills: other-skill'
@@ -153,15 +154,23 @@ describe("SkillTool", () => {
 
   it("respects the sampling limit for skill files", async () => {
     await using tmp = await tmpdir()
+    
+    // Create a skill with many files
+    const skillDir = path.join(tmp.path, ".opencode", "skill", "test-skill")
+    await Bun.write(path.join(skillDir, "SKILL.md"), `---
+name: test-skill
+description: A test skill
+---
+Skill content`)
+    
+    // Create 15 files (limit is 10)
+    for (let i = 0; i < 15; i++) {
+      await Bun.write(path.join(skillDir, `file${i}.txt`), `File ${i} content`)
+    }
+
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        mocks.ripgrepFiles.mockImplementation(async function* () {
-          for (let i = 0; i < 15; i++) {
-            yield `file${i}.txt`
-          }
-        } as any)
-
         const tool = await SkillTool.init(ctx as any)
         const result = await tool.execute({ name: "test-skill" }, ctx as any)
 

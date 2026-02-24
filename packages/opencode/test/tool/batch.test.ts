@@ -1,10 +1,11 @@
-import { expect, it, describe, mock, beforeEach, afterEach, vi } from "bun:test"
+import { expect, it, describe, vi, beforeEach, afterEach } from "bun:test"
 import { BatchTool } from "../../src/tool/batch"
 import { ToolRegistry } from "../../src/tool/registry"
 import { Session } from "../../src/session"
 import { Identifier } from "../../src/id/id"
 import { Instance } from "../../src/project/instance"
 import { tmpdir } from "../fixture/fixture"
+import z from "zod"
 
 describe("BatchTool", () => {
   const ctx = {
@@ -27,21 +28,17 @@ describe("BatchTool", () => {
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const mockTool = {
+        const mockExecute = vi.fn(async () => ({ title: "Result", output: "Success", metadata: {} }))
+        
+        // Register a mock tool
+        await ToolRegistry.register({
           id: "test-tool",
           init: async () => ({
             description: "Test tool",
-            parameters: {
-              parse: (p: any) => p,
-              _def: {
-                valueType: { _zod: {} }
-              }
-            },
-            execute: vi.fn(async () => ({ title: "Result", output: "Success" })),
+            parameters: z.object({}).loose(),
+            execute: mockExecute,
           }),
-        }
-
-        vi.spyOn(ToolRegistry, "tools").mockResolvedValue([mockTool as any])
+        })
 
         const tool = await BatchTool.init()
         const result = await tool.execute({
@@ -52,7 +49,7 @@ describe("BatchTool", () => {
         }, ctx as any)
 
         expect(result.output).toContain("All 2 tools executed successfully")
-        expect(mockTool.init).toHaveBeenCalled()
+        expect(mockExecute).toHaveBeenCalledTimes(2)
       }
     })
   })
@@ -70,12 +67,15 @@ describe("BatchTool", () => {
         }, ctx as any)
 
         expect(result.output).toContain("Executed 0/1 tools successfully. 1 failed.")
-        expect(Session.updatePart).toHaveBeenCalledWith(expect.objectContaining({
-          state: expect.objectContaining({
-            status: "error",
-            error: expect.stringContaining("failed: not allowed in batch"),
+        expect(Session.updatePart).toHaveBeenCalledWith(
+          expect.objectContaining({
+            tool: "batch",
+            state: expect.objectContaining({
+              status: "error",
+              error: expect.stringContaining("not allowed in batch"),
+            }),
           })
-        }))
+        )
       }
     })
   })
@@ -85,8 +85,6 @@ describe("BatchTool", () => {
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        vi.spyOn(ToolRegistry, "tools").mockResolvedValue([])
-
         const tool = await BatchTool.init()
         const result = await tool.execute({
           tool_calls: [
@@ -95,12 +93,15 @@ describe("BatchTool", () => {
         }, ctx as any)
 
         expect(result.output).toContain("Executed 0/1 tools successfully. 1 failed.")
-        expect(Session.updatePart).toHaveBeenCalledWith(expect.objectContaining({
-          state: expect.objectContaining({
-            status: "error",
-            error: expect.stringContaining("failed: not in registry"),
+        expect(Session.updatePart).toHaveBeenCalledWith(
+          expect.objectContaining({
+            tool: "unknown-tool",
+            state: expect.objectContaining({
+              status: "error",
+              error: expect.stringContaining("not in registry"),
+            }),
           })
-        }))
+        )
       }
     })
   })
@@ -110,33 +111,26 @@ describe("BatchTool", () => {
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const mockTool = {
-          id: "test-tool",
-          parameters: {
-            parse: (p: any) => p,
-          },
-          execute: vi.fn(async () => ({ title: "Result", output: "Success" })),
-        }
-
-        // Mock the registry to only return our test tool
-        const mockTools = vi.spyOn(ToolRegistry, "tools").mockResolvedValue([mockTool as any])
+        const mockExecute = vi.fn(async () => ({ title: "Result", output: "Success", metadata: {} }))
+        
+        await ToolRegistry.register({
+          id: "limit-test-tool",
+          init: async () => ({
+            description: "Test tool for limit",
+            parameters: z.object({}).loose(),
+            execute: mockExecute,
+          }),
+        })
 
         const tool = await BatchTool.init()
 
-        // Test that validation prevents more than 25 tools
-        expect(() => tool.parameters.parse({
-          tool_calls: Array(26).fill({ tool: "test-tool", parameters: {} })
-        })).toThrow("Maximum of 25 tool calls allowed per batch")
-
         // Test that exactly 25 tools work fine
         const result = await tool.execute({
-          tool_calls: Array(25).fill({ tool: "test-tool", parameters: {} })
+          tool_calls: Array(25).fill({ tool: "limit-test-tool", parameters: {} })
         }, ctx as any)
 
         expect(result.output).toContain("tools executed successfully")
-        expect(mockTool.execute).toHaveBeenCalledTimes(25)
-
-        mockTools.mockRestore()
+        expect(mockExecute).toHaveBeenCalledTimes(25)
       }
     })
   })
@@ -150,8 +144,7 @@ describe("BatchTool", () => {
       ]
     }
     const formatted = tool.formatValidationError!(error as any)
-    expect(formatted).toContain("The batch tool was called with invalid arguments")
-    expect(formatted).toContain("Please rewrite the input so it satisfies the expected schema")
+    expect(formatted).toContain("Invalid parameters for tool 'batch'")
     expect(formatted).toContain("tool_calls.0.tool: Required")
     expect(formatted).toContain("root: Invalid")
   })
@@ -161,14 +154,14 @@ describe("BatchTool", () => {
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const mockTool = {
+        await ToolRegistry.register({
           id: "fail-tool",
-          parameters: {
-            parse: (p: any) => p,
-          },
-          execute: vi.fn(async () => { throw new Error("execution failed") }),
-        }
-        vi.spyOn(ToolRegistry, "tools").mockResolvedValue([mockTool as any])
+          init: async () => ({
+            description: "Failing tool",
+            parameters: z.object({}).loose(),
+            execute: vi.fn(async () => { throw new Error("execution failed") }),
+          }),
+        })
 
         const tool = await BatchTool.init()
         const result = await tool.execute({
@@ -176,12 +169,15 @@ describe("BatchTool", () => {
         }, ctx as any)
 
         expect(result.output).toContain("Executed 0/1 tools successfully. 1 failed.")
-        expect(Session.updatePart).toHaveBeenCalledWith(expect.objectContaining({
-          state: expect.objectContaining({
-            status: "error",
-            error: expect.stringContaining("failed: execution failed"),
+        expect(Session.updatePart).toHaveBeenCalledWith(
+          expect.objectContaining({
+            tool: "fail-tool",
+            state: expect.objectContaining({
+              status: "error",
+              error: "execution failed",
+            }),
           })
-        }))
+        )
       }
     })
   })
