@@ -1,18 +1,11 @@
-import { describe, expect, it, mock, vi, beforeEach, afterEach } from "bun:test"
+import { describe, expect, it, mock } from "bun:test"
 import { assertExternalDirectory } from "../../src/tool/external-directory"
 import { Filesystem } from "../../src/util/filesystem"
 import { Instance } from "../../src/project/instance"
+import { tmpdir } from "../fixture/fixture"
+import * as path from "path"
 
 describe("assertExternalDirectory", () => {
-  let containsPathSpy: any
-
-  beforeEach(() => {
-    containsPathSpy = vi.spyOn(Instance, "containsPath").mockImplementation((path: string) => path.includes("in-project"))
-  })
-
-  afterEach(() => {
-    vi.restoreAllMocks()
-  })
   it("returns undefined if target is missing", async () => {
     const result = await assertExternalDirectory({} as any)
     expect(result).toBeUndefined()
@@ -24,49 +17,71 @@ describe("assertExternalDirectory", () => {
   })
 
   it("returns undefined if path is inside project", async () => {
-    const target = "/in-project/file.txt"
-    const result = await assertExternalDirectory({} as any, target)
-    expect(result).toBeUndefined()
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const target = path.join(tmp.path, "file.txt")
+        const result = await assertExternalDirectory({} as any, target)
+        expect(result).toBeUndefined()
+      },
+    })
   })
 
   it("asks for permission if path is outside project (file kind)", async () => {
-    const askSpy = mock().mockResolvedValue(undefined)
-    const ctx = { ask: askSpy } as any
-    const target = "/outside/file.txt"
-    const nativeTarget = Filesystem.nativePath(target)
-    const parentDir = Filesystem.dirname(nativeTarget)
-    const glob = Filesystem.join(parentDir, "*")
+    await using tmp = await tmpdir({ git: true })
+    await using outerTmp = await tmpdir()
 
-    await assertExternalDirectory(ctx, target)
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const askSpy = mock().mockResolvedValue(undefined)
+        const ctx = { ask: askSpy } as any
+        const target = path.join(outerTmp.path, "file.txt")
+        const nativeTarget = Filesystem.nativePath(target)
+        const parentDir = Filesystem.dirname(nativeTarget)
+        const glob = Filesystem.join(parentDir, "*")
 
-    expect(askSpy).toHaveBeenCalledWith({
-      permission: "external_directory",
-      patterns: [glob],
-      always: [glob],
-      metadata: {
-        filepath: nativeTarget,
-        parentDir,
-      }
+        await assertExternalDirectory(ctx, target)
+
+        expect(askSpy).toHaveBeenCalledWith({
+          permission: "external_directory",
+          patterns: [glob],
+          always: [glob],
+          metadata: {
+            filepath: nativeTarget,
+            parentDir,
+          }
+        })
+      },
     })
   })
 
   it("asks for permission if path is outside project (directory kind)", async () => {
-    const askSpy = mock().mockResolvedValue(undefined)
-    const ctx = { ask: askSpy } as any
-    const target = "/outside/dir"
-    const nativeTarget = Filesystem.nativePath(target)
-    const glob = Filesystem.join(nativeTarget, "*")
+    await using tmp = await tmpdir({ git: true })
+    await using outerTmp = await tmpdir()
 
-    await assertExternalDirectory(ctx, target, { kind: "directory" })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const askSpy = mock().mockResolvedValue(undefined)
+        const ctx = { ask: askSpy } as any
+        const target = outerTmp.path
+        const nativeTarget = Filesystem.nativePath(target)
+        const glob = Filesystem.join(nativeTarget, "*")
 
-    expect(askSpy).toHaveBeenCalledWith({
-      permission: "external_directory",
-      patterns: [glob],
-      always: [glob],
-      metadata: {
-        filepath: nativeTarget,
-        parentDir: nativeTarget,
-      }
+        await assertExternalDirectory(ctx, target, { kind: "directory" })
+
+        expect(askSpy).toHaveBeenCalledWith({
+          permission: "external_directory",
+          patterns: [glob],
+          always: [glob],
+          metadata: {
+            filepath: nativeTarget,
+            parentDir: nativeTarget,
+          }
+        })
+      },
     })
   })
 })

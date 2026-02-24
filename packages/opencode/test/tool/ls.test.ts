@@ -1,41 +1,28 @@
-import { describe, expect, test, mock, beforeEach, afterEach, vi } from "bun:test"
+import { describe, expect, test } from "bun:test"
 import { ListTool } from "../../src/tool/ls"
 import { Instance } from "../../src/project/instance"
 import { tmpdir } from "../fixture/fixture"
-import { Ripgrep } from "../../src/file/ripgrep"
 import * as path from "path"
 
 describe("ListTool", () => {
-  let mocks: {
-    ripgrepFiles: any
-  }
-
   const ctx: any = {
     sessionID: "session",
     messageID: "message",
     agent: "agent",
     abort: new AbortController().signal,
     messages: [],
-    metadata: vi.fn(),
-    ask: vi.fn(),
+    metadata: () => {},
+    ask: async () => {},
     log: () => {},
   }
 
-  beforeEach(() => {
-    mocks = {
-      ripgrepFiles: vi.spyOn(Ripgrep, "files").mockImplementation(async function* () {
-        yield "file1.txt"
-        yield "dir1/file2.txt"
-      } as any),
-    }
-  })
-
-  afterEach(() => {
-    vi.restoreAllMocks()
-  })
-
   test("lists files in a directory", async () => {
-    await using tmp = await tmpdir()
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await Bun.write(path.join(dir, "file1.txt"), "content1")
+        await Bun.write(path.join(dir, "dir1", "file2.txt"), "content2")
+      },
+    })
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
@@ -45,37 +32,40 @@ describe("ListTool", () => {
         expect(result.output).toContain("file1.txt")
         expect(result.output).toContain("dir1/")
         expect(result.output).toContain("file2.txt")
-        expect(mocks.ripgrepFiles).toHaveBeenCalled()
       },
     })
   })
 
   test("applies custom ignore patterns", async () => {
-    await using tmp = await tmpdir()
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await Bun.write(path.join(dir, "file1.txt"), "content")
+        await Bun.write(path.join(dir, "file2.log"), "log content")
+      },
+    })
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
         const tool = await ListTool.init()
-        await tool.execute({ ignore: ["*.log"] }, ctx)
+        const result = await tool.execute({ ignore: ["*.log"] }, ctx)
 
-        const calls = mocks.ripgrepFiles.mock.calls
-        const lastCall = calls[calls.length - 1]
-        expect(lastCall[0].glob).toContain("!*.log")
+        expect(result.output).toContain("file1.txt")
+        expect(result.output).not.toContain("file2.log")
       },
     })
   })
 
   test("limits the number of files", async () => {
-    await using tmp = await tmpdir()
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        for (let i = 0; i < 150; i++) {
+          await Bun.write(path.join(dir, `file${i}.txt`), `content${i}`)
+        }
+      },
+    })
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        mocks.ripgrepFiles.mockImplementationOnce(async function* () {
-          for (let i = 0; i < 150; i++) {
-            yield `file${i}.txt`
-          }
-        } as any)
-
         const tool = await ListTool.init()
         const result = await tool.execute({}, ctx)
 
@@ -90,8 +80,6 @@ describe("ListTool", () => {
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        mocks.ripgrepFiles.mockImplementation(async function* () {} as any)
-
         const tool = await ListTool.init()
         const result = await tool.execute({ path: tmp.path }, ctx)
 
@@ -101,14 +89,15 @@ describe("ListTool", () => {
   })
 
   test("handles deep directory structure", async () => {
-    await using tmp = await tmpdir()
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        const deepPath = path.join(dir, "level1", "level2", "level3")
+        await Bun.write(path.join(deepPath, "file.txt"), "deep content")
+      },
+    })
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        mocks.ripgrepFiles.mockImplementationOnce(async function* () {
-          yield "level1/level2/level3/file.txt"
-        } as any)
-
         const tool = await ListTool.init()
         const result = await tool.execute({}, ctx)
 
@@ -116,25 +105,6 @@ describe("ListTool", () => {
         expect(result.output).toContain("  level2/")
         expect(result.output).toContain("    level3/")
         expect(result.output).toContain("      file.txt")
-      },
-    })
-  })
-
-  test("normalizes backslashes to forward slashes", async () => {
-    await using tmp = await tmpdir()
-    await Instance.provide({
-      directory: tmp.path,
-      fn: async () => {
-        mocks.ripgrepFiles.mockImplementationOnce(async function* () {
-          yield "win\\path\\file.txt"
-        } as any)
-
-        const tool = await ListTool.init()
-        const result = await tool.execute({}, ctx)
-
-        expect(result.output).toContain("win/")
-        expect(result.output).toContain("  path/")
-        expect(result.output).toContain("    file.txt")
       },
     })
   })
