@@ -6,36 +6,22 @@ import { Shell } from "../../src/shell/shell"
 import { Config } from "../../src/config/config"
 import { Plugin } from "../../src/plugin"
 import * as path from "path"
+import * as childProcess from "child_process"
 
 describe("BashTool Fallback Parsing", () => {
   let mocks: {
     pluginTrigger: any
     configGet: any
-    shellGetSpawnConfig: any
-    shellIsPowerShellCommand: any
-    shellIsCmdCommand: any
-    shellIsCmdBuiltin: any
-    shellNormalizeExitCode: any
     shellKillTree: any
-    bunSpawn: any
+    childProcessSpawn: any
   }
 
   beforeEach(() => {
     mocks = {
       pluginTrigger: vi.spyOn(Plugin, "trigger").mockResolvedValue({ env: {} }),
       configGet: vi.spyOn(Config, "get").mockResolvedValue({ shell: process.platform === "win32" ? "powershell" : "bash" } as any),
-      shellGetSpawnConfig: vi.spyOn(Shell, "getSpawnConfig").mockReturnValue({
-        executable: "powershell",
-        args: ["-Command"],
-        env: {},
-        useShellFlag: false,
-      } as any),
-      shellIsPowerShellCommand: vi.spyOn(Shell, "isPowerShellCommand").mockReturnValue(true),
-      shellIsCmdCommand: vi.spyOn(Shell, "isCmdCommand").mockReturnValue(false),
-      shellIsCmdBuiltin: vi.spyOn(Shell, "isCmdBuiltin").mockReturnValue(false),
-      shellNormalizeExitCode: vi.spyOn(Shell, "normalizeExitCode").mockImplementation((code) => code ?? 0),
       shellKillTree: vi.spyOn(Shell, "killTree").mockResolvedValue(undefined),
-      bunSpawn: vi.spyOn(Bun, "spawn"),
+      childProcessSpawn: vi.spyOn(childProcess, "spawn"),
     }
   })
 
@@ -52,17 +38,41 @@ describe("BashTool Fallback Parsing", () => {
   }
 
   const mockSpawn = (output: string) => {
-    return vi.fn().mockReturnValue({
-      stdout: new ReadableStream({
-        start(controller) {
-          controller.enqueue(new TextEncoder().encode(output))
-          controller.close()
-        },
+    const mockProc = {
+      stdout: {
+        on: vi.fn((event: string, cb: (chunk: Buffer) => void) => {
+          if (event === "data") {
+            setTimeout(() => cb(Buffer.from(output)), 0)
+          }
+        }),
+        destroy: vi.fn(),
+      },
+      stderr: {
+        on: vi.fn((event: string, cb: (chunk: Buffer) => void) => {
+          if (event === "data") {
+            // No stderr output
+          }
+        }),
+        destroy: vi.fn(),
+      },
+      on: vi.fn((event: string, cb: (code: number) => void) => {
+        if (event === "close") {
+          setTimeout(() => cb(0), 10)
+        }
       }),
-      stderr: new ReadableStream({ start(c) { c.close() } }),
-      exited: Promise.resolve(0),
-      kill: () => Promise.resolve(),
-    } as any)
+      once: vi.fn((event: string, cb: (...args: any[]) => void) => {
+        if (event === "exit") {
+          setTimeout(() => cb(), 10)
+        }
+        if (event === "error") {
+          // No error by default
+        }
+      }),
+      kill: vi.fn(),
+      unref: vi.fn(),
+      exitCode: 0,
+    }
+    return vi.fn().mockReturnValue(mockProc as any)
   }
 
   test("should handle complex commands without crashing", async () => {
@@ -73,7 +83,7 @@ describe("BashTool Fallback Parsing", () => {
         // Create a complex command that might cause parsing issues
         const complexCommand = 'find . -name "*.ts" -exec grep "TODO" {} \\; | xargs -I {} cp {} /tmp/backup/'
 
-        mocks.bunSpawn.mockImplementation(mockSpawn("success"))
+        mocks.childProcessSpawn.mockImplementation(mockSpawn("success"))
 
         const tool = await BashTool.init()
 
@@ -90,7 +100,7 @@ describe("BashTool Fallback Parsing", () => {
         expect(result.output).toBe("success")
 
         // Verify that the command was executed
-        expect(mocks.bunSpawn).toHaveBeenCalled()
+        expect(mocks.childProcessSpawn).toHaveBeenCalled()
       }
     })
   })
@@ -103,7 +113,7 @@ describe("BashTool Fallback Parsing", () => {
         // Create a command with complex quoting
         const quotedCommand = 'cp "file with spaces.txt" \'another file.txt\' `file with nested quotes.txt`'
 
-        mocks.bunSpawn.mockImplementation(mockSpawn("success"))
+        mocks.childProcessSpawn.mockImplementation(mockSpawn("success"))
 
         const tool = await BashTool.init()
 
@@ -129,7 +139,7 @@ describe("BashTool Fallback Parsing", () => {
         // Create a command with chaining operators
         const chainedCommand = 'mkdir test && cd test && touch file.txt || echo "failed"'
 
-        mocks.bunSpawn.mockImplementation(mockSpawn("success"))
+        mocks.childProcessSpawn.mockImplementation(mockSpawn("success"))
 
         const tool = await BashTool.init()
 
@@ -155,7 +165,7 @@ describe("BashTool Fallback Parsing", () => {
         // Simple command that should work with tree-sitter
         const simpleCommand = 'echo "hello world"'
 
-        mocks.bunSpawn.mockImplementation(mockSpawn("hello world"))
+        mocks.childProcessSpawn.mockImplementation(mockSpawn("hello world"))
 
         const tool = await BashTool.init()
 
