@@ -24,6 +24,10 @@ export namespace Global {
     config,
     state,
   }
+
+  export function resetForTest() {
+    // No-op for now - paths are static but this function is required by test/preload.ts
+  }
 }
 
 await Promise.all([

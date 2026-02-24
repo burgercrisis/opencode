@@ -179,4 +179,17 @@ export namespace Log {
 
     return result
   }
+
+  /**
+   * Reset state for test isolation
+   */
+  export function resetForTest() {
+    level = "INFO"
+    logpath = ""
+    loggers.clear()
+    write = (msg: any) => {
+      process.stderr.write(msg)
+      return msg.length
+    }
+  }
 }
