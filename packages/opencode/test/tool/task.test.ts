@@ -66,6 +66,7 @@ describe("TaskTool", () => {
         expect(result.title).toBe("Test task")
         expect(result.output).toContain("Task result")
         expect(result.output).toContain("task_id: new-session")
+        expect(result.metadata.sessionId).toBe("new-session")
       }
     })
   })

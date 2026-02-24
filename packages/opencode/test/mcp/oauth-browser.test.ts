@@ -108,8 +108,7 @@ let tmpdir: any
 
 describe("MCP OAuth Browser", () => {
   beforeAll(async () => {
-    const { Global } = await import("../../src/global/index")
-    await Global.initialize()
+    // Global is auto-initialized via preload.ts
     const { Config } = await import("../../src/config/config")
     Config.global.reset()
     
