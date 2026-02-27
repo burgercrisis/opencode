@@ -18,7 +18,7 @@ interface PkceCodes {
   challenge: string
 }
 
-async function generatePKCE(): Promise<PkceCodes> {
+export async function generatePKCE(): Promise<PkceCodes> {
   const verifier = generateRandomString(43)
   const encoder = new TextEncoder()
   const data = encoder.encode(verifier)
@@ -27,7 +27,7 @@ async function generatePKCE(): Promise<PkceCodes> {
   return { verifier, challenge }
 }
 
-function generateRandomString(length: number): string {
+export function generateRandomString(length: number): string {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
   const bytes = crypto.getRandomValues(new Uint8Array(length))
   return Array.from(bytes)
@@ -35,13 +35,13 @@ function generateRandomString(length: number): string {
     .join("")
 }
 
-function base64UrlEncode(buffer: ArrayBuffer): string {
+export function base64UrlEncode(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer)
   const binary = String.fromCharCode(...bytes)
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
 }
 
-function generateState(): string {
+export function generateState(): string {
   return base64UrlEncode(crypto.getRandomValues(new Uint8Array(32)).buffer)
 }
 
@@ -85,7 +85,7 @@ export function extractAccountId(tokens: TokenResponse): string | undefined {
   return undefined
 }
 
-function buildAuthorizeUrl(redirectUri: string, pkce: PkceCodes, state: string): string {
+export function buildAuthorizeUrl(redirectUri: string, pkce: PkceCodes, state: string): string {
   const params = new URLSearchParams({
     response_type: "code",
     client_id: CLIENT_ID,
@@ -108,7 +108,7 @@ interface TokenResponse {
   expires_in?: number
 }
 
-async function exchangeCodeForTokens(code: string, redirectUri: string, pkce: PkceCodes): Promise<TokenResponse> {
+export async function exchangeCodeForTokens(code: string, redirectUri: string, pkce: PkceCodes): Promise<TokenResponse> {
   const response = await fetch(`${ISSUER}/oauth/token`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -126,7 +126,7 @@ async function exchangeCodeForTokens(code: string, redirectUri: string, pkce: Pk
   return response.json()
 }
 
-async function refreshAccessToken(refreshToken: string): Promise<TokenResponse> {
+export async function refreshAccessToken(refreshToken: string): Promise<TokenResponse> {
   const response = await fetch(`${ISSUER}/oauth/token`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -142,7 +142,7 @@ async function refreshAccessToken(refreshToken: string): Promise<TokenResponse> 
   return response.json()
 }
 
-const HTML_SUCCESS = `<!doctype html>
+export const HTML_SUCCESS = `<!doctype html>
 <html>
   <head>
     <title>OpenCode - Codex Authorization Successful</title>
@@ -184,7 +184,7 @@ const HTML_SUCCESS = `<!doctype html>
   </body>
 </html>`
 
-const HTML_ERROR = (error: string) => `<!doctype html>
+export const HTML_ERROR = (error: string) => `<!doctype html>
 <html>
   <head>
     <title>OpenCode - Codex Authorization Failed</title>
@@ -242,7 +242,7 @@ interface PendingOAuth {
 let oauthServer: ReturnType<typeof Bun.serve> | undefined
 let pendingOAuth: PendingOAuth | undefined
 
-async function startOAuthServer(): Promise<{ port: number; redirectUri: string }> {
+export async function startOAuthServer(): Promise<{ port: number; redirectUri: string }> {
   if (oauthServer) {
     return { port: OAUTH_PORT, redirectUri: `http://localhost:${OAUTH_PORT}/auth/callback` }
   }
@@ -313,7 +313,7 @@ async function startOAuthServer(): Promise<{ port: number; redirectUri: string }
   return { port: OAUTH_PORT, redirectUri: `http://localhost:${OAUTH_PORT}/auth/callback` }
 }
 
-function stopOAuthServer() {
+export function stopOAuthServer() {
   if (oauthServer) {
     oauthServer.stop()
     oauthServer = undefined
@@ -321,7 +321,7 @@ function stopOAuthServer() {
   }
 }
 
-function waitForOAuthCallback(pkce: PkceCodes, state: string): Promise<TokenResponse> {
+export function waitForOAuthCallback(pkce: PkceCodes, state: string): Promise<TokenResponse> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(
       () => {
