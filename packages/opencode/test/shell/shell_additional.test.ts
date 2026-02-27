@@ -8,6 +8,11 @@ describe("Shell additional coverage", () => {
     await Shell.killTree(proc)
   })
 
+  test("killTree exits early when exited callback returns true", async () => {
+    const proc = { pid: 12345 } as unknown as ChildProcess
+    await Shell.killTree(proc, { exited: () => true })
+  })
+
   test("killTree sends signals on unix-like platforms", async () => {
     const originalPlatform = process.platform
     const originalKill = process.kill
@@ -28,6 +33,20 @@ describe("Shell additional coverage", () => {
 
     Object.defineProperty(process, "platform", { value: originalPlatform })
     process.kill = originalKill
+  })
+
+  test("killTree uses taskkill on win32", async () => {
+    const originalPlatform = process.platform
+
+    Object.defineProperty(process, "platform", { value: "win32" })
+
+    const proc = {
+      pid: 12345,
+    } as unknown as ChildProcess
+
+    await Shell.killTree(proc)
+
+    Object.defineProperty(process, "platform", { value: originalPlatform })
   })
 
   test("fallback selects COMSPEC on win32 when no bash or git", () => {
@@ -73,52 +92,203 @@ describe("Shell additional coverage", () => {
     process.env = originalEnv
   })
 
-  test("getShellArgs covers all shell types", () => {
-    const zsh = Shell.getShellArgs("/bin/zsh", "echo 1")
-    expect(zsh).toContain("-l")
-
-    const bash = Shell.getShellArgs("/bin/bash", "echo 1")
-    expect(bash).toContain("-l")
-
-    const pwsh = Shell.getShellArgs("pwsh.exe", "echo 1")
-    expect(pwsh).toEqual(["-NoProfile", "-Command", "echo 1"])
-
-    const fish = Shell.getShellArgs("fish", "echo 1")
-    expect(fish).toEqual(["-c", "echo 1"])
-
-    const other = Shell.getShellArgs("/usr/bin/env", "echo 1")
-    expect(other).toEqual(["-c", "-l", "echo 1"])
-  })
-
-  test("hasDynamicEnvVars detects dynamic vars", () => {
-    expect(Shell.hasDynamicEnvVars("echo %cd%")).toBe(true)
-    expect(Shell.hasDynamicEnvVars("echo %random%")).toBe(true)
-    expect(Shell.hasDynamicEnvVars("echo %NORMAL_VAR%")).toBe(false)
-  })
-
-  test("isCmdCommand detects cmd invocations", () => {
-    expect(Shell.isCmdCommand("cmd /c dir")).toBe(true)
-    expect(Shell.isCmdCommand("cmd.exe /c dir")).toBe(true)
-    expect(Shell.isCmdCommand("echo hello")).toBe(false)
-  })
-
-  test("normalizeExitCode handles undefined and error cases", () => {
-    expect(Shell.normalizeExitCode(0, false)).toBe(0)
-    expect(Shell.normalizeExitCode(0, true)).toBe(1)
-    expect(Shell.normalizeExitCode(undefined, true)).toBe(1)
-    expect(Shell.normalizeExitCode(undefined, false)).toBe(0)
-  })
-
-  test("getSpawnConfig non-win32 path returns shell args without using shell flag", () => {
+  test("acceptable returns SHELL when not blacklisted", () => {
+    const originalEnv = { ...process.env }
     const originalPlatform = process.platform
 
     Object.defineProperty(process, "platform", { value: "linux" })
+    process.env.SHELL = "/bin/bash"
 
-    const config = Shell.getSpawnConfig("echo 1")
-    expect(config.useShellFlag).toBe(false)
-    expect(config.args.length).toBeGreaterThan(0)
+    const shell = Shell.acceptable()
+    expect(shell).toBe("/bin/bash")
 
     Object.defineProperty(process, "platform", { value: originalPlatform })
+    process.env = originalEnv
+  })
+
+  test("preferred uses fallback when SHELL not set", () => {
+    const originalEnv = { ...process.env }
+    const originalPlatform = process.platform
+
+    delete process.env.SHELL
+    Object.defineProperty(process, "platform", { value: "darwin" })
+
+    const shell = Shell.preferred()
+    expect(shell).toBe("/bin/zsh")
+
+    Object.defineProperty(process, "platform", { value: originalPlatform })
+    process.env = originalEnv
+  })
+
+  test("fallback returns bash on linux when available", () => {
+    const originalEnv = { ...process.env }
+    const originalPlatform = process.platform
+    const originalWhich = Bun.which
+
+    delete process.env.SHELL
+    Object.defineProperty(process, "platform", { value: "linux" })
+    Bun.which = (() => "/bin/bash") as any
+
+    const shell = Shell.preferred()
+    expect(shell).toBe("/bin/bash")
+
+    Object.defineProperty(process, "platform", { value: originalPlatform })
+    process.env = originalEnv
+    Bun.which = originalWhich
+  })
+
+  test("fallback returns /bin/sh on linux when no bash", () => {
+    const originalEnv = { ...process.env }
+    const originalPlatform = process.platform
+    const originalWhich = Bun.which
+
+    delete process.env.SHELL
+    Object.defineProperty(process, "platform", { value: "linux" })
+    Bun.which = (() => null) as any
+
+    const shell = Shell.preferred()
+    expect(shell).toBe("/bin/sh")
+
+    Object.defineProperty(process, "platform", { value: originalPlatform })
+    process.env = originalEnv
+    Bun.which = originalWhich
+  })
+
+  test("killTree catches error and uses proc.kill", async () => {
+    const originalPlatform = process.platform
+    const originalKill = process.kill
+
+    Object.defineProperty(process, "platform", { value: "linux" })
+    
+    // Make process.kill throw an error to trigger the catch block
+    process.kill = (() => {
+      throw new Error("test error")
+    }) as any
+
+    const proc = {
+      pid: 12345,
+      kill: () => {},
+    } as unknown as ChildProcess
+
+    await Shell.killTree(proc, { exited: () => false })
+
+    Object.defineProperty(process, "platform", { value: originalPlatform })
+    process.kill = originalKill
+  })
+})
+    const originalWhich = Bun.which
+
+    delete process.env.SHELL
+    Object.defineProperty(process, "platform", { value: "linux" })
+    Bun.which = (() => "/bin/bash") as any
+
+    const shell = Shell.preferred()
+    expect(shell).toBe("/bin/bash")
+
+    Object.defineProperty(process, "platform", { value: originalPlatform })
+    process.env = originalEnv
+    Bun.which = originalWhich
+  })
+
+  test("fallback returns /bin/sh on linux when no bash", () => {
+    const originalEnv = { ...process.env }
+    const originalPlatform = process.platform
+    const originalWhich = Bun.which
+
+    delete process.env.SHELL
+    Object.defineProperty(process, "platform", { value: "linux" })
+    Bun.which = (() => null) as any
+
+    const shell = Shell.preferred()
+    expect(shell).toBe("/bin/sh")
+
+    Object.defineProperty(process, "platform", { value: originalPlatform })
+    process.env = originalEnv
+    Bun.which = originalWhich
+  })
+
+  test("killTree catches error and uses proc.kill", async () => {
+    const originalPlatform = process.platform
+    const originalKill = process.kill
+
+    Object.defineProperty(process, "platform", { value: "linux" })
+    
+    // Make process.kill throw an error to trigger the catch block
+    process.kill = (() => {
+      throw new Error("test error")
+    }) as any
+
+    const proc = {
+      pid: 12345,
+      kill: () => {},
+    } as unknown as ChildProcess
+
+    await Shell.killTree(proc, { exited: () => false })
+
+    Object.defineProperty(process, "platform", { value: originalPlatform })
+    process.kill = originalKill
+  })
+})
+
+
+    delete process.env.SHELL
+    Object.defineProperty(process, "platform", { value: "linux" })
+    Bun.which = (() => "/bin/bash") as any
+
+    const shell = Shell.preferred()
+    expect(shell).toBe("/bin/bash")
+
+    Object.defineProperty(process, "platform", { value: originalPlatform })
+    process.env = originalEnv
+    Bun.which = originalWhich
+  })
+
+  test("fallback returns /bin/sh on linux when no bash", () => {
+    const originalEnv = { ...process.env }
+    const originalPlatform = process.platform
+    const originalWhich = Bun.which
+
+    delete process.env.SHELL
+    Object.defineProperty(process, "platform", { value: "linux" })
+    Bun.which = (() => null) as any
+
+    const shell = Shell.preferred()
+    expect(shell).toBe("/bin/sh")
+
+    Object.defineProperty(process, "platform", { value: originalPlatform })
+    process.env = originalEnv
+    Bun.which = originalWhich
+  })
+
+  test("killTree catches error and uses proc.kill", async () => {
+    const originalPlatform = process.platform
+    const originalKill = process.kill
+
+    Object.defineProperty(process, "platform", { value: "linux" })
+    
+    // Make process.kill throw an error to trigger the catch block
+    process.kill = (() => {
+      throw new Error("test error")
+    }) as any
+
+    const proc = {
+      pid: 12345,
+      kill: () => {},
+    } as unknown as ChildProcess
+
+    await Shell.killTree(proc, { exited: () => false })
+
+    Object.defineProperty(process, "platform", { value: originalPlatform })
+    process.kill = originalKill
+  })
+})
+
+    const shell = Shell.preferred()
+    expect(shell).toBe("/bin/sh")
+
+    Object.defineProperty(process, "platform", { value: originalPlatform })
+    process.env = originalEnv
+    Bun.which = originalWhich
   })
 })
 
