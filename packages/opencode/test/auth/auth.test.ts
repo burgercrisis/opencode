@@ -15,6 +15,9 @@ describe("Auth", () => {
     originalHome = process.env.OPENCODE_TEST_HOME
     process.env.OPENCODE_TEST_HOME = testHome
     Global.resetForTest()
+    // Ensure auth file doesn't exist at start of each test
+    const authPath = path.join(Global.Path.data, "auth.json")
+    await fs.rm(authPath, { force: true }).catch(() => {})
   })
 
   afterEach(async () => {
