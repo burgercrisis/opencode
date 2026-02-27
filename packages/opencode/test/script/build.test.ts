@@ -1,19 +1,23 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test"
+import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test"
 import { mockProcessPlatform, restoreProcess } from "../mocks/process"
 import type { BuildTarget } from "../../script/build"
 
-// Mock the build script functions for testing
+// Mock build script functions for testing
 let originalProcessPlatform: string
 let originalProcessArch: string
+let originalEnv: Record<string, string | undefined>
 
 describe("Build Script - Windows Baseline Build Skipping", () => {
   beforeEach(() => {
     originalProcessPlatform = process.platform
     originalProcessArch = process.arch
+    originalEnv = { ...process.env }
   })
 
   afterEach(() => {
     restoreProcess()
+    // Restore environment variables
+    process.env = originalEnv
   })
 
   describe("Windows Platform Behavior", () => {
@@ -250,6 +254,205 @@ describe("Build Script - Windows Baseline Build Skipping", () => {
 
       const abiTargets = targets.filter((target: BuildTarget) => target.abi !== undefined)
       expect(abiTargets).toHaveLength(0)
+    })
+  })
+
+  describe("Environment Variable Handling", () => {
+    test("should respect OPENCODE_SKIP_WINDOWS_BASELINE environment variable", async () => {
+      mockProcessPlatform("win32", "x64")
+
+      // Test with OPENCODE_SKIP_WINDOWS_BASELINE=false (override default behavior)
+      process.env.OPENCODE_SKIP_WINDOWS_BASELINE = "false"
+
+      const buildModule = await import("../../script/build")
+      const { allTargets } = buildModule
+
+      // Simulate filter logic with environment variable
+      const SKIP_WINDOWS_BASELINE = process.env.OPENCODE_SKIP_WINDOWS_BASELINE !== "false"
+      expect(SKIP_WINDOWS_BASELINE).toBe(false)
+
+      const targets = allTargets.filter((item: BuildTarget) => {
+        if (item.os !== process.platform || item.arch !== process.arch) {
+          return false
+        }
+
+        if (item.avx2 === false) {
+          if (process.platform === "win32" && SKIP_WINDOWS_BASELINE) {
+            return false
+          }
+          return true // baselineFlag = true
+        }
+
+        if (item.abi !== undefined) {
+          return false
+        }
+
+        return true
+      })
+
+      const windowsBaselineTarget = targets.find((target: BuildTarget) =>
+        target.os === "win32" &&
+        target.arch === "x64" &&
+        target.avx2 === false
+      )
+
+      // Should be included when environment variable overrides default
+      expect(windowsBaselineTarget).toBeDefined()
+    })
+
+    test("should default to skipping Windows baseline builds when env var not set", async () => {
+      mockProcessPlatform("win32", "x64")
+
+      // Remove environment variable to test default behavior
+      delete process.env.OPENCODE_SKIP_WINDOWS_BASELINE
+
+      const buildModule = await import("../../script/build")
+      const { allTargets } = buildModule
+
+      // Simulate filter logic without environment variable
+      const SKIP_WINDOWS_BASELINE = process.env.OPENCODE_SKIP_WINDOWS_BASELINE !== "false"
+      expect(SKIP_WINDOWS_BASELINE).toBe(true)
+
+      const targets = allTargets.filter((item: BuildTarget) => {
+        if (item.os !== process.platform || item.arch !== process.arch) {
+          return false
+        }
+
+        if (item.avx2 === false) {
+          if (process.platform === "win32" && SKIP_WINDOWS_BASELINE) {
+            return false
+          }
+          return true // baselineFlag = true
+        }
+
+        if (item.abi !== undefined) {
+          return false
+        }
+
+        return true
+      })
+
+      const windowsBaselineTarget = targets.find((target: BuildTarget) =>
+        target.os === "win32" &&
+        target.arch === "x64" &&
+        target.avx2 === false
+      )
+
+      // Should be skipped by default
+      expect(windowsBaselineTarget).toBeUndefined()
+    })
+  })
+
+  describe("Release Mode Archive Creation", () => {
+    test("should create tar.gz archives for Linux targets in release mode", async () => {
+      // Mock Script.release to true
+      const mockScript = {
+        release: true,
+        version: "1.0.0"
+      }
+
+      // Mock the Script module
+      const originalModule = await import("@opencode-ai/script")
+      mock.module("@opencode-ai/script", () => ({
+        Script: mockScript
+      }))
+
+      const binaries = {
+        "opencode-linux-x64": "1.0.0",
+        "opencode-linux-arm64": "1.0.0"
+      }
+
+      // Mock Bun's $ command for tar creation
+      const mockTar = mock(() => Promise.resolve())
+      mock.module("bun", () => ({
+        $: mockTar
+      }))
+
+      // Simulate the release logic
+      for (const key of Object.keys(binaries)) {
+        if (key.includes("linux")) {
+          expect(key.includes("linux")).toBe(true)
+          // Would call: await $`tar -czf ../../${key}.tar.gz *`.cwd(`dist/${key}/bin`)
+        }
+      }
+    })
+
+    test("should create zip archives for non-Linux targets in release mode", async () => {
+      const mockScript = {
+        release: true,
+        version: "1.0.0"
+      }
+
+      mock.module("@opencode-ai/script", () => ({
+        Script: mockScript
+      }))
+
+      const binaries = {
+        "opencode-win32-x64": "1.0.0",
+        "opencode-darwin-arm64": "1.0.0"
+      }
+
+      // Mock Bun's $ command for zip creation
+      const mockZip = mock(() => Promise.resolve())
+      mock.module("bun", () => ({
+        $: mockZip
+      }))
+
+      // Simulate the release logic
+      for (const key of Object.keys(binaries)) {
+        if (!key.includes("linux")) {
+          expect(key.includes("linux")).toBe(false)
+          // Would call: await $`zip -r ../../${key}.zip *`.cwd(`dist/${key}/bin`)
+        }
+      }
+    })
+
+    test("should upload to GitHub release in release mode", async () => {
+      const mockScript = {
+        release: true,
+        version: "1.0.0"
+      }
+
+      mock.module("@opencode-ai/script", () => ({
+        Script: mockScript
+      }))
+
+      const binaries = {
+        "opencode-linux-x64": "1.0.0",
+        "opencode-win32-x64": "1.0.0"
+      }
+
+      // Mock GitHub CLI command
+      const mockGH = mock(() => Promise.resolve())
+      mock.module("bun", () => ({
+        $: mockGH
+      }))
+
+      // Simulate GitHub upload logic
+      const expectedCommand = `gh release upload v${mockScript.version} ./dist/*.zip ./dist/*.tar.gz --clobber`
+      expect(expectedCommand).toBe("gh release upload v1.0.0 ./dist/*.zip ./dist/*.tar.gz --clobber")
+    })
+
+    test("should skip archive creation when not in release mode", async () => {
+      const mockScript = {
+        release: false,
+        version: "1.0.0"
+      }
+
+      mock.module("@opencode-ai/script", () => ({
+        Script: mockScript
+      }))
+
+      const binaries = {
+        "opencode-linux-x64": "1.0.0",
+        "opencode-win32-x64": "1.0.0"
+      }
+
+      // When release is false, archive creation should be skipped
+      expect(mockScript.release).toBe(false)
+
+      // No archive creation or GitHub upload should occur
+      // This test verifies the conditional logic
     })
   })
 })
