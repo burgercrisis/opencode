@@ -14,7 +14,7 @@ import z from "zod"
 export namespace PermissionNext {
   const log = Log.create({ service: "permission" })
 
-  function expand(pattern: string): string {
+  export function expand(pattern: string): string {
     if (pattern.startsWith("~/")) return os.homedir() + pattern.slice(1)
     if (pattern === "~") return os.homedir()
     if (pattern.startsWith("$HOME/")) return os.homedir() + pattern.slice(5)
