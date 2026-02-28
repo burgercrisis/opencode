@@ -1,17 +1,13 @@
 
-import { describe, expect, test, vi, beforeEach, afterEach } from "bun:test"
+import { describe, expect, test, spyOn, beforeEach } from "bun:test"
 import { SessionCompaction } from "./compaction"
 import { Config } from "../config/config"
 
 describe("SessionCompaction.isOverflow", () => {
   beforeEach(() => {
-    vi.spyOn(Config, "get").mockResolvedValue({
+    spyOn(Config, "get").mockResolvedValue({
       compaction: { auto: true }
     } as any)
-  })
-
-  afterEach(() => {
-    vi.restoreAllMocks()
   })
 
   test("returns true when model context limit is 0 (uses fallback)", async () => {
