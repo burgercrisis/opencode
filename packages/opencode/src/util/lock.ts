@@ -111,6 +111,22 @@ export namespace Lock {
     // Update activity timestamp whenever process is called
     lock.lastActivity = Date.now()
 
+    // If there are waiting writers and no readers, wake up a writer
+    if (lock.waitingWriters.length > 0) {
+      const nextWriter = lock.waitingWriters.shift()
+      if (nextWriter) {
+        lock.writer = true
+        lock.readerAcquireCount = 0 // Reset counter when writer gets lock
+        nextWriter.resolve({
+          [Symbol.dispose]: () => {
+            lock.writer = false
+            process(key)
+          },
+        })
+        return
+      }
+    }
+
     // Prioritize writers if there are many waiting readers to prevent reader starvation
     // or if we have maximum concurrent readers active
     const shouldPrioritizeWriters =
@@ -262,6 +278,26 @@ export namespace Lock {
       clearInterval(cleanupInterval)
       cleanupInterval = null
     }
+
+    // Reject all waiting promises before clearing locks
+    const timeoutError = new Error("Lock cleaned up due to timeout")
+    for (const [key, lock] of locks.entries()) {
+      // Reject all waiting readers and writers
+      const waitingReaders = lock.waitingReaders.splice(0)
+      const waitingWriters = lock.waitingWriters.splice(0)
+
+      waitingReaders.forEach(waiter => {
+        if (waiter && typeof waiter.reject === 'function') {
+          waiter.reject(timeoutError)
+        }
+      })
+      waitingWriters.forEach(waiter => {
+        if (waiter && typeof waiter.reject === 'function') {
+          waiter.reject(timeoutError)
+        }
+      })
+    }
+
     locks.clear()
   }
 
