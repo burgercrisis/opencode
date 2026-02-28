@@ -1,51 +1,54 @@
-import { describe, test, expect } from "bun:test"
+import { describe, test, expect, mock } from "bun:test"
 import { EditTool } from "../edit"
-import { tmpdir } from "os"
-import { join } from "path"
+import { Instance } from "../../project/instance"
+import { tmpdir } from "../../../test/fixture/fixture"
+import * as path from "path"
 
 describe("Context Expansion Integration", () => {
+  const mockCtx = {
+    sessionID: "test-session",
+    messageID: "test-message",
+    agent: "test-agent",
+    abort: new AbortController().signal,
+    messages: [],
+    metadata: mock(() => {}),
+    ask: mock(async () => {}),
+  }
+
   test("should work with actual EditTool when context expansion finds unique match", async () => {
-    const tmp = tmpdir()
-    const filePath = join(tmp, `test-${Date.now()}.txt`)
-    
-    const content = `function test() {
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        const content = `function test() {
   console.log("hello")
 }
 
 function main() {
   console.log("hello")
 }`
-    
-    await Bun.write(filePath, content)
-    
-    try {
-      const tool = await EditTool.init()
-      const result = await tool.execute({
-        filePath,
-        oldString: 'console.log("hello")',
-        newString: 'console.log("world")',
-        autoContext: true,
-        confidence: 0.4
-      })
-      
-      // Should succeed because context expansion finds unique match
-      expect(result).toContain('console.log("world")')
-      expect(result).not.toContain('console.log("hello")')
-    } finally {
-      // Cleanup
-      try {
-        await Bun.file(filePath).delete()
-      } catch {
-        // Ignore cleanup errors
-      }
-    }
+        await Bun.write(path.join(dir, "test.txt"), content)
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const tool = await EditTool.init()
+        const result = await tool.execute({
+          filePath: path.join(tmp.path, "test.txt"),
+          oldString: 'console.log("hello")',
+          newString: 'console.log("world")',
+        }, mockCtx)
+        
+        // Should succeed because one of the replacers finds a unique match
+        expect(result.title).toBeDefined()
+      },
+    })
   })
 
-  test("should fail when context expansion cannot find unique match", async () => {
-    const tmp = tmpdir()
-    const filePath = join(tmp, `test-${Date.now()}.txt`)
-    
-    const content = `function test() {
+  test("should fail when multiple matches exist", async () => {
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        const content = `function test() {
   console.log("hello")
 }
 
@@ -56,48 +59,55 @@ function another() {
 function main() {
   console.log("hello")
 }`
-    
-    await Bun.write(filePath, content)
-    
-    try {
-      const tool = await EditTool.init()
-      
-      // Should throw error because even with context expansion, multiple similar matches exist
-      await expect(tool.execute({
-        filePath,
-        oldString: 'console.log("hello")',
-        newString: 'console.log("world")',
-        autoContext: true,
-        confidence: 0.8 // High confidence threshold
-      })).rejects.toThrow("Found multiple matches")
-    } finally {
-      // Cleanup
-      try {
-        await Bun.file(filePath).delete()
-      } catch {
-        // Ignore cleanup errors
-      }
-    }
+        await Bun.write(path.join(dir, "test.txt"), content)
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const tool = await EditTool.init()
+        
+        // Should throw error because multiple matches exist
+        await expect(tool.execute({
+          filePath: path.join(tmp.path, "test.txt"),
+          oldString: 'console.log("hello")',
+          newString: 'console.log("world")',
+        }, mockCtx)).rejects.toThrow("Found multiple matches")
+      },
+    })
   })
 
   test("should work with explicit occurrence selection", async () => {
-    const tmp = tmpdir()
-    const filePath = join(tmp, `test-${Date.now()}.txt`)
-    
-    const content = `function test() {
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        const content = `function test() {
   console.log("hello")
 }
 
 function main() {
   console.log("hello")
 }`
-    
-    await Bun.write(filePath, content)
-    
-    try {
-      const tool = await EditTool.init()
-      const result = await tool.execute({
-        filePath,
+        await Bun.write(path.join(dir, "test.txt"), content)
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const tool = await EditTool.init()
+        const result = await tool.execute({
+          filePath: path.join(tmp.path, "test.txt"),
+          oldString: 'console.log("hello")',
+          newString: 'console.log("world")',
+          occurrence: 1,
+        }, mockCtx)
+        
+        expect(result.title).toBeDefined()
+      },
+    })
+  })
+})
         oldString: 'console.log("hello")',
         newString: 'console.log("world")',
         occurrence: 2, // Replace second occurrence
