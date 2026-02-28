@@ -153,6 +153,17 @@ const levenshteinStats = {
 }
 
 /**
+ * Reset state for test isolation
+ */
+export function resetForTest() {
+  cache.clear()
+  levenshteinStats.exactCalculations = 0
+  levenshteinStats.approximateCalculations = 0
+  levenshteinStats.cacheHits = 0
+  levenshteinStats.cacheMisses = 0
+}
+
+/**
  * Main Levenshtein distance function with sliding window approach for large strings
  * Maintains accuracy while preventing memory issues
  */
