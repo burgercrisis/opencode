@@ -48,6 +48,10 @@ describe("Provider Routing", () => {
   })
 
   test("Azure provider routes to Anthropic SDK for Anthropic models", async () => {
+  // Set env vars for template resolution BEFORE config is loaded
+  process.env.AZURE_RESOURCE_NAME = "my-resource"
+  process.env.DEPLOYMENT_ID = "my-deploy"
+
   await using tmp = await tmpdir({
     init: async (dir) => {
       await Bun.write(
@@ -56,7 +60,7 @@ describe("Provider Routing", () => {
           $schema: "https://opencode.ai/config.json",
           provider: {
             azure: {
-              api: "https://{{AZURE_RESOURCE_NAME}}.openai.azure.com/openai/deployments/{{DEPLOYMENT_ID}}",
+              api: "https://${AZURE_RESOURCE_NAME}.openai.azure.com/openai/deployments/${DEPLOYMENT_ID}",
               options: { apiKey: "test-key" },
               models: {
                 "claude-3-5-sonnet": {
@@ -75,10 +79,6 @@ describe("Provider Routing", () => {
       )
     },
   })
-
-  // Set env vars for template resolution
-  process.env.AZURE_RESOURCE_NAME = "my-resource"
-  process.env.DEPLOYMENT_ID = "my-deploy"
 
   await Instance.provide({
     directory: tmp.path,
