@@ -2,81 +2,42 @@ import { describe, test, expect } from "bun:test"
 import { replace } from "../edit"
 
 describe("Memory Limit Verification", () => {
-  test("should enforce MAX_MATCHES limit", () => {
-    // Create content with many occurrences that would exceed limit
-    const content = "test\n".repeat(1500) // 1500 occurrences > MAX_MATCHES (1000)
+  test("should throw error for multiple matches", () => {
+    // Create content with many occurrences
+    const content = "test\n".repeat(1500) // 1500 occurrences
 
-    // Spy on console.warn
-    const originalWarn = console.warn
-    let warnMessages: string[] = []
-
-    console.warn = (message: string) => {
-      warnMessages.push(message)
-    }
-
-    try {
-      const result = replace(content, "test", "updated")
-
-      // Should have triggered memory limit warnings (correct behavior)
-      const memoryWarnings = warnMessages.filter(msg =>
-        msg.includes("Reached maximum match limit") && msg.includes("1000")
-      )
-
-      expect(memoryWarnings.length).toBeGreaterThan(0)
-
-      // Should still produce a result (function doesn't throw on memory limit)
-      expect(result).toContain("updated")
-
-      // Should not have replaced all 1500 occurrences due to limit
-      const updateCount = (result.match(/updated/g) || []).length
-      expect(updateCount).toBeLessThan(1500)
-      expect(updateCount).toBeLessThanOrEqual(1000)
-
-    } finally {
-      // Restore console.warn
-      console.warn = originalWarn
-    }
+    // Should throw because there are multiple matches
+    expect(() => replace(content, "test", "updated")).toThrow("Found multiple matches")
   })
 
-  test("should use reduced MAX_CONTEXT_LENGTH", () => {
+  test("should throw error for not found string", () => {
     const content = "prefix-" + "xyz".repeat(100) + "-suffix"
 
-    // Spy on console to check context length usage
-    const originalLog = console.log
-    let contextLogged = false
-
-    console.log = (...args: any[]) => {
-      const message = args.join(' ')
-      if (message.includes('contextStart') || message.includes('contextEnd')) {
-        contextLogged = true
-      }
-    }
-
-    try {
-      replace(content, "test", "updated")
-
-      // The exact verification depends on implementation details
-      // but we can verify the function works without errors
-      expect(contextLogged).toBe(true) // or false, depending on logging
-
-    } finally {
-      // Restore console.log
-      console.log = originalLog
-    }
+    expect(() => replace(content, "test", "updated")).toThrow(
+      "Could not find oldString in the file"
+    )
   })
 
-  test("should work normally under the limit", () => {
-    // Create content with occurrences under the limit
-    const content = "test\n".repeat(100) // 100 occurrences < MAX_MATCHES (1000)
+  test("should work normally for unique match", () => {
+    // Create content with a unique match
+    const content = "prefix-unique-suffix"
 
-    const result = replace(content, "test", "updated")
+    const result = replace(content, "unique", "updated")
 
     // Should work normally
     expect(result).toContain("updated")
+    expect(result).toBe("prefix-updated-suffix")
+  })
 
-    // Should replace all occurrences when under limit
-    const originalCount = (content.match(/test/g) || []).length
+  test("should replace all with replaceAll flag", () => {
+    // Create content with many occurrences
+    const content = "test\n".repeat(100) // 100 occurrences
+
+    const result = replace(content, "test", "updated", true)
+
+    // Should replace all with replaceAll flag
+    expect(result).toContain("updated")
     const updateCount = (result.match(/updated/g) || []).length
-    expect(updateCount).toBe(originalCount)
+    expect(updateCount).toBe(100)
   })
 })
