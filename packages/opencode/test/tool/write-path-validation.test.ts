@@ -12,8 +12,8 @@ describe("WriteTool Path Validation", () => {
     agent: "agent",
     abort: new AbortController().signal,
     messages: [],
-    metadata: vi.fn(),
-    ask: vi.fn(),
+    metadata: mock(),
+    ask: mock(),
   }
 
   describe("Path Validation Security", () => {

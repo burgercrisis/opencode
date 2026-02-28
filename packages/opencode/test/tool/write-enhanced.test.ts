@@ -95,13 +95,14 @@ describe("WriteTool Enhanced Features", () => {
   })
 
   test("handles LSP timeout gracefully", async () => {
+    // Add extra timeout for this test since it simulates a 5s LSP timeout
     await using tmp = await tmpdir()
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
         const filePath = path.join(tmp.path, "timeout.txt")
 
-        // Mock LSP to never resolve
+        // Mock LSP to never resolve - will trigger WriteTool's 5s timeout
         mocks.lspTouch.mockImplementation(() => new Promise(() => { }))
 
         const tool = await WriteTool.init()
@@ -112,7 +113,7 @@ describe("WriteTool Enhanced Features", () => {
         expect(await fs.readFile(filePath, "utf-8")).toBe("content")
       },
     })
-  })
+  }, 15000)
 
   test("handles LSP errors gracefully", async () => {
     await using tmp = await tmpdir()
@@ -190,7 +191,7 @@ describe("WriteTool Enhanced Features", () => {
         // Verify withLock was called
         expect(withLockSpy).toHaveBeenCalledWith(filePath, expect.any(Function))
 
-        vi.restoreAllMocks()
+        withLockSpy.mockRestore()
       },
     })
   })
@@ -205,7 +206,7 @@ describe("WriteTool Enhanced Features", () => {
         // Should reject relative paths with parent directory references
         await expect(
           tool.execute({ filePath: "../outside.txt", content: "content" }, ctx)
-        ).rejects.toThrow("Path must be absolute or not contain parent directory references")
+        ).rejects.toThrow("Path must be safe and within project directory")
       },
     })
   })
