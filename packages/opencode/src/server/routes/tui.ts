@@ -27,7 +27,7 @@ export async function callTui(ctx: Context) {
   return response.next()
 }
 
-const TuiControlRoutes = new Hono()
+export const TuiControlRoutes = new Hono()
   .get(
     "/next",
     describeRoute({
