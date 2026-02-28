@@ -13,7 +13,7 @@ beforeAll(async () => {
   process.env.OPENCODE_TEST_HOME = tmp
   await Global.initialize()
   // Reset lazy caches to ensure they use the new home
-  Config.global.reset()
+  Global.resetForTest()
 })
 
 // Helper to evaluate permission for a tool with wildcard pattern
