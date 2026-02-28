@@ -117,8 +117,13 @@ export namespace Config {
 
     // Project config overrides global and remote config.
     if (!Flag.OPENCODE_DISABLE_PROJECT_CONFIG) {
+      // When worktree equals directory (no git repo), use a fallback stop point to allow
+      // finding config files in parent directories up to the test home or user's home
+      const worktreeStop = Instance.worktree === Instance.directory
+        ? process.env.OPENCODE_TEST_HOME || Global.Path.home
+        : Instance.worktree
       for (const file of ["opencode.jsonc", "opencode.json"]) {
-        const found = await Filesystem.findUp(file, Instance.directory, Instance.worktree)
+        const found = await Filesystem.findUp(file, Instance.directory, worktreeStop)
         for (const resolved of found.toReversed()) {
           result = merge(result, await loadFile(resolved))
         }
@@ -137,7 +142,9 @@ export namespace Config {
             Filesystem.up({
               targets: [".opencode"],
               start: Instance.directory,
-              stop: Instance.worktree,
+              stop: Instance.worktree === Instance.directory
+                ? process.env.OPENCODE_TEST_HOME || Global.Path.home
+                : Instance.worktree,
             }),
           )
         : []),
@@ -341,10 +348,15 @@ export namespace Config {
   }
 
   function rel(item: string, patterns: string[]) {
+    // Normalize path separators for cross-platform compatibility
+    const normalizedItem = item.replace(/\\/g, "/")
     for (const pattern of patterns) {
-      const index = item.indexOf(pattern)
+      const index = normalizedItem.indexOf(pattern)
       if (index === -1) continue
-      return item.slice(index + pattern.length)
+      // Use the original item but extract the relative path after the pattern
+      // and normalize any remaining backslashes
+      const relativePath = item.slice(index + pattern.length)
+      return relativePath.replace(/\\/g, "/")
     }
   }
 
