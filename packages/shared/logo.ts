@@ -36,7 +36,7 @@ const UNICODE_BOX_DRAWING_START = 0x2500
 const UNICODE_BOX_DRAWING_END = 0x259F
 
 // Validate logo structure at runtime
-function validateLogoStructure(logo: BurgercodeLogo): void {
+export function validateLogoStructure(logo: BurgercodeLogo): void {
   if (!logo) {
     throw new Error('Logo cannot be null or undefined')
   }
@@ -90,7 +90,7 @@ function validateLogoStructure(logo: BurgercodeLogo): void {
 }
 
 // Validate individual characters in logo lines
-function validateLogoCharacters(line: string, lineIndex?: number, side?: string): void {
+export function validateLogoCharacters(line: string, lineIndex?: number, side?: string): void {
   if (typeof line !== 'string') {
     let locationInfo = ''
     if (side && lineIndex !== undefined) {
@@ -135,7 +135,7 @@ function validateLogoCharacters(line: string, lineIndex?: number, side?: string)
 }
 
 // Validate logo content quality to prevent rendering issues
-function validateLogoContent(logo: BurgercodeLogo): void {
+export function validateLogoContent(logo: BurgercodeLogo): void {
   [logo.left, logo.right].forEach((array, arrayIndex) => {
     const side = arrayIndex === 0 ? 'left' : 'right';
     array.forEach((line, lineIndex) => {
