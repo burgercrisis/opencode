@@ -35,8 +35,48 @@ export async function tmpdir<T>(options?: TmpDirOptions<T>) {
   const realpath = sanitizePath(await fs.realpath(dirpath))
   const result = {
     [Symbol.asyncDispose]: async () => {
-      await options?.dispose?.(dirpath)
-      // await fs.rm(dirpath, { recursive: true, force: true })
+      // Enhanced cleanup with retry mechanism for Windows file locking
+      const maxRetries = 3
+      const retryDelay = 100 // 100ms between retries
+
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          // Try to remove directory first
+          await fs.rm(dirpath, { recursive: true, force: true })
+
+          // Wait a bit to ensure Windows releases file handles
+          if (process.platform === "win32") {
+            await new Promise(resolve => setTimeout(resolve, retryDelay))
+          }
+
+          // Verify directory is actually gone
+          try {
+            await fs.access(dirpath)
+            // If we can still access it, files are locked
+            await new Promise(resolve => setTimeout(resolve, retryDelay))
+            continue
+          } catch {
+            // Directory is gone, proceed with cleanup
+            break
+          }
+        } catch (error) {
+          // Directory removal failed, try again
+          if (attempt === maxRetries) {
+            console.warn(`Failed to cleanup tmpdir after ${maxRetries} attempts:`, error)
+            break
+          }
+          await new Promise(resolve => setTimeout(resolve, retryDelay))
+        }
+      }
+
+      // Final cleanup of any remaining files
+      try {
+        await options?.dispose?.(dirpath)
+      } catch (error) {
+        console.warn("Dispose callback failed:", error)
+      }
+
+      console.log(`Successfully cleaned up temporary directory: ${dirpath}`)
     },
     path: realpath,
     extra: extra as T,
