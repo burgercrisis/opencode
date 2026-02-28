@@ -2,64 +2,57 @@ import { describe, test, expect } from "bun:test"
 import { replace } from "../edit"
 
 describe("Constants Verification", () => {
-  test("should use configurable constants", () => {
-    // Test that constants are properly defined and used
+  test("should throw error for multiple matches", () => {
+    // Test that multiple matches throw an error
     const content = "test\n".repeat(100)
     
-    // Spy on console to check for warning messages
-    const originalWarn = console.warn
-    let warningMessages: string[] = []
-    
-    console.warn = (message: string) => {
-      warningMessages.push(message)
-    }
-    
-    try {
-      replace(content, "test", "updated")
-      
-      // Should use the defined constants
-      const hasMaxMatchesWarning = warningMessages.some(msg => 
-        msg.includes("1000") && msg.includes("EDIT_MAX_MATCHES")
-      )
-      const hasContextLengthWarning = warningMessages.some(msg => 
-        msg.includes("150") && msg.includes("EDIT_MAX_CONTEXT_LENGTH")
-      )
-      
-      expect(hasMaxMatchesWarning || hasContextLengthWarning).toBe(true)
-      
-    } finally {
-      // Restore console.warn
-      console.warn = originalWarn
-    }
+    expect(() => replace(content, "test", "updated")).toThrow(
+      "Found multiple matches for oldString. Provide more surrounding context to make the match unique."
+    )
   })
 
-  test("should use confidence constants", () => {
+  test("should replace unique match", () => {
     const content = `
 function test() {
   console.log("hello")
 }
 
 function main() {
-  console.log("hello")
+  console.log("world")
 }
 `.trim()
 
-    const result = replace(content, 'console.log("hello")', 'console.log("world")')
+    const result = replace(content, 'console.log("hello")', 'console.log("replaced")')
     
-    // Should work normally and use confidence constants
-    expect(result).toContain('console.log("world")')
+    // Should work normally for unique match
+    expect(result).toContain('console.log("replaced")')
     expect(result).not.toContain('console.log("hello")')
+    // Other content should remain
+    expect(result).toContain('console.log("world")')
   })
 
-  test("should use error context preview constant", () => {
-    const content = "test\n".repeat(100)
+  test("should throw error for not found string", () => {
+    const content = "some content here"
     
-    try {
-      replace(content, "test", "updated")
-    } catch (error: any) {
-      // Should use ERROR_CONTEXT_PREVIEW_LENGTH constant in error messages
-      expect(error.message).toContain("Match 1 (line 1): test")
-      expect(error.message).toContain("...") // Indicates truncation at 50 chars
-    }
+    expect(() => replace(content, "nonexistent", "updated")).toThrow(
+      "Could not find oldString in the file"
+    )
+  })
+
+  test("should throw error for identical old and new strings", () => {
+    const content = "test content"
+    
+    expect(() => replace(content, "test", "test")).toThrow(
+      "No changes to apply: oldString and newString are identical."
+    )
+  })
+
+  test("should replace with replaceAll flag", () => {
+    const content = "test\ntest\ntest\n"
+    
+    const result = replace(content, "test", "updated", true)
+    
+    // All occurrences should be replaced
+    expect(result).toBe("updated\nupdated\nupdated\n")
   })
 })
