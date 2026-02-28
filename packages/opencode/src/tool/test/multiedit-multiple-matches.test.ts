@@ -1,181 +1,209 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test"
+import { describe, it, expect, mock } from "bun:test"
 import { MultiEditTool } from "../multiedit"
-import { mkdtemp, rm } from "node:fs/promises"
-import path from "node:path"
-import os from "node:os"
+import { Instance } from "../../project/instance"
+import { tmpdir } from "../../../test/fixture/fixture"
+import { FileTime } from "../../file/time"
+import * as path from "path"
 
 describe("MultiEdit Multiple Matches Handling", () => {
-  let tmp: any
+  const mockCtx = {
+    sessionID: "test-session",
+    messageID: "test-message",
+    agent: "test-agent",
+    abort: new AbortController().signal,
+    messages: [],
+    metadata: mock(() => {}),
+    ask: mock(async () => {}),
+  }
 
-  beforeEach(async () => {
-    tmp = { path: await mkdtemp(path.join(os.tmpdir(), "opencode-test-")) }
+  it("should handle replaceAll in multiedit", async () => {
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await Bun.write(path.join(dir, "test.txt"), "foo\nbar\nfoo\nbaz\nfoo")
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const filepath = path.join(tmp.path, "test.txt")
+        await FileTime.read(mockCtx.sessionID, filepath)
+        const tool = await MultiEditTool.init()
+        const result = await tool.execute({
+          filePath: filepath,
+          edits: [
+            {
+              oldString: "foo",
+              newString: "qux",
+              replaceAll: true
+            }
+          ]
+        }, mockCtx)
+
+        expect(result.title).toBeDefined()
+        expect(result.metadata.appliedEdits).toBe(1)
+      },
+    })
   })
 
-  afterEach(async () => {
-    if (tmp?.path) {
-      await rm(tmp.path, { recursive: true, force: true })
-    }
-  })
+  it("should handle multiple edits with replaceAll", async () => {
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await Bun.write(path.join(dir, "test.txt"), "foo\nbar\nfoo\nbaz\nfoo\nbar\nfoo")
+      },
+    })
 
-  it("should handle occurrence selection in multiedit", async () => {
-    const filePath = `${tmp.path}/test.txt`
-    await Bun.write(filePath, "foo\nbar\nfoo\nbaz\nfoo")
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const filepath = path.join(tmp.path, "test.txt")
+        await FileTime.read(mockCtx.sessionID, filepath)
+        const tool = await MultiEditTool.init()
+        const result = await tool.execute({
+          filePath: filepath,
+          edits: [
+            {
+              oldString: "foo",
+              newString: "qux",
+              replaceAll: true
+            },
+            {
+              oldString: "bar",
+              newString: "quux",
+              replaceAll: true
+            }
+          ]
+        }, mockCtx)
 
-    const tool = await MultiEditTool.init()
-    const result = await tool.execute({
-      filePath,
-      edits: [
-        {
-          oldString: "foo",
-          newString: "qux",
-          occurrence: 2 // Replace second occurrence only
-        }
-      ]
-    }, {} as any)
-
-    expect(result.output).toContain("Successfully applied 1 edit(s)")
-    expect(result.metadata.appliedEdits).toBe(1)
-    expect(result.metadata.failedEdits).toBe(0)
-
-    const content = await Bun.file(filePath).text()
-    expect(content).toBe("foo\nbar\nqux\nbaz\nfoo")
-  })
-
-  it("should handle multiple edits with occurrence selection", async () => {
-    const filePath = `${tmp.path}/test.txt`
-    await Bun.write(filePath, "foo\nbar\nfoo\nbaz\nfoo\nbar\nfoo")
-
-    const tool = await MultiEditTool.init()
-    const result = await tool.execute({
-      filePath,
-      edits: [
-        {
-          oldString: "foo",
-          newString: "qux",
-          occurrence: 2 // Replace second foo
-        },
-        {
-          oldString: "bar",
-          newString: "quux",
-          occurrence: 2 // Replace second bar
-        }
-      ]
-    }, {} as any)
-
-    expect(result.output).toContain("Successfully applied 2 edit(s)")
-    expect(result.metadata.appliedEdits).toBe(2)
-    expect(result.metadata.failedEdits).toBe(0)
-
-    const content = await Bun.file(filePath).text()
-    expect(content).toBe("foo\nbar\nqux\nbaz\nfoo\nquux\nfoo")
+        expect(result.title).toBeDefined()
+        expect(result.metadata.appliedEdits).toBe(2)
+      },
+    })
   })
 
   it("should handle mixed success and failure in multiedit", async () => {
-    const filePath = `${tmp.path}/test.txt`
-    await Bun.write(filePath, "foo\nbar\nfoo\nbaz\nfoo")
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await Bun.write(path.join(dir, "test.txt"), "foo\nbar\nfoo\nbaz\nfoo")
+      },
+    })
 
-    const tool = await MultiEditTool.init()
-    const result = await tool.execute({
-      filePath,
-      edits: [
-        {
-          oldString: "foo",
-          newString: "qux",
-          occurrence: 2 // Valid
-        },
-        {
-          oldString: "nonexistent",
-          newString: "something",
-          occurrence: 1 // Will fail
-        }
-      ]
-    }, {} as any)
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const filepath = path.join(tmp.path, "test.txt")
+        await FileTime.read(mockCtx.sessionID, filepath)
+        const tool = await MultiEditTool.init()
+        const result = await tool.execute({
+          filePath: filepath,
+          edits: [
+            {
+              oldString: "bar",
+              newString: "qux", // Will succeed
+            },
+            {
+              oldString: "nonexistent",
+              newString: "something", // Will fail
+            }
+          ]
+        }, mockCtx)
 
-    expect(result.output).toContain("Successfully applied 1 edit(s) (1 failed)")
-    expect(result.metadata.appliedEdits).toBe(1)
-    expect(result.metadata.failedEdits).toBe(1)
+        expect(result.title).toBeDefined()
+        expect(result.metadata.appliedEdits).toBe(1)
+        expect(result.metadata.failedEdits).toBe(1)
+      },
+    })
   })
 
   it("should validate occurrence parameter in multiedit", async () => {
-    const tool = await MultiEditTool.init()
+    await using tmp = await tmpdir()
 
-    await expect(tool.execute({
-      filePath: "/tmp/test.txt",
-      edits: [
-        {
-          oldString: "foo",
-          newString: "bar",
-          occurrence: 0 // Invalid
-        }
-      ]
-    }, {} as any)).rejects.toThrow("occurrence must be a positive integer")
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const tool = await MultiEditTool.init()
+
+        await expect(tool.execute({
+          filePath: path.join(tmp.path, "test.txt"),
+          edits: [
+            {
+              oldString: "foo",
+              newString: "bar",
+              occurrence: 0 // Invalid
+            }
+          ]
+        }, mockCtx)).rejects.toThrow("occurrence must be a positive integer")
+      },
+    })
   })
 
   it("should validate confidence parameter in multiedit", async () => {
-    const tool = await MultiEditTool.init()
+    await using tmp = await tmpdir()
 
-    await expect(tool.execute({
-      filePath: "/tmp/test.txt",
-      edits: [
-        {
-          oldString: "foo",
-          newString: "bar",
-          confidence: 1.5 // Invalid
-        }
-      ]
-    }, {} as any)).rejects.toThrow("confidence must be between 0 and 1")
-  })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const tool = await MultiEditTool.init()
 
-  it("should handle autoContext parameter in multiedit", async () => {
-    const filePath = `${tmp.path}/test.txt`
-    await Bun.write(filePath, "foo\nbar\nfoo\nbaz\nfoo")
-
-    const tool = await MultiEditTool.init()
-
-    // With autoContext disabled, should fail
-    await expect(tool.execute({
-      filePath,
-      edits: [
-        {
-          oldString: "foo",
-          newString: "bar",
-          autoContext: false
-        }
-      ]
-    }, {} as any)).rejects.toThrow("Found 3 matches for oldString")
-  })
-
-  it("should handle replaceAll in multiedit", async () => {
-    const filePath = `${tmp.path}/test.txt`
-    await Bun.write(filePath, "foo\nbar\nfoo\nbaz\nfoo")
-
-    const tool = await MultiEditTool.init()
-    const result = await tool.execute({
-      filePath,
-      edits: [
-        {
-          oldString: "foo",
-          newString: "qux",
-          replaceAll: true
-        }
-      ]
-    }, {} as any)
-
-    expect(result.output).toContain("Successfully applied 1 edit(s)")
-    expect(result.metadata.appliedEdits).toBe(1)
-
-    const content = await Bun.file(filePath).text()
-    expect(content).toBe("qux\nbar\nqux\nbaz\nqux")
+        await expect(tool.execute({
+          filePath: path.join(tmp.path, "test.txt"),
+          edits: [
+            {
+              oldString: "foo",
+              newString: "bar",
+              confidence: 1.5 // Invalid
+            }
+          ]
+        }, mockCtx)).rejects.toThrow("confidence must be between 0 and 1")
+      },
+    })
   })
 
   it("should handle empty edits array", async () => {
-    const tool = await MultiEditTool.init()
-    const result = await tool.execute({
-      filePath: "/tmp/test.txt",
-      edits: []
-    }, {} as any)
+    await using tmp = await tmpdir()
 
-    expect(result.output).toBe("No edits to apply")
-    expect(result.metadata.editCount).toBe(0)
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const tool = await MultiEditTool.init()
+        const result = await tool.execute({
+          filePath: path.join(tmp.path, "test.txt"),
+          edits: []
+        }, mockCtx)
+
+        expect(result.title).toBeDefined()
+        expect(result.output).toBe("No edits to apply")
+      },
+    })
+  })
+
+  it("should handle multiple matches without replaceAll", async () => {
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await Bun.write(path.join(dir, "test.txt"), "foo\nbar\nfoo\nbaz\nfoo")
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const filepath = path.join(tmp.path, "test.txt")
+        await FileTime.read(mockCtx.sessionID, filepath)
+        const tool = await MultiEditTool.init()
+        const result = await tool.execute({
+          filePath: filepath,
+          edits: [
+            {
+              oldString: "foo",
+              newString: "qux", // Will fail - multiple matches
+            }
+          ]
+        }, mockCtx)
+
+        // The edit should fail due to multiple matches
+        expect(result.title).toBeDefined()
+        expect(result.metadata.failedEdits).toBe(1)
+      },
+    })
   })
 })

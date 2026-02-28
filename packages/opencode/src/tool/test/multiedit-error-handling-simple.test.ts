@@ -1,12 +1,12 @@
-import { describe, it, expect, vi, beforeEach } from "bun:test"
+import { describe, it, expect, mock, beforeEach } from "bun:test"
 import { replace } from "../edit"
 
 // Mock the replace function to control success/failure
-const mockReplace = vi.fn(replace)
-vi.mock("../edit", () => ({
+const mockReplace = mock(replace)
+mock.module("../edit", () => ({
   replace: mockReplace,
   EditTool: {
-    init: vi.fn(() => Promise.resolve({}))
+    init: mock(() => Promise.resolve({}))
   }
 }))
 
