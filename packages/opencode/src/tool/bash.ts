@@ -18,6 +18,24 @@ import { BashArity } from "@/permission/arity"
 import { Truncate } from "./truncation"
 import { Plugin } from "@/plugin"
 
+// Performance optimization: Detect simple commands for direct execution
+function isSimpleCommand(command: string): boolean {
+  const trimmed = command.trim().toLowerCase()
+
+  // Commands that can be executed directly without shell overhead
+  const simpleCommands = new Set([
+    'echo', 'pwd', 'cd', 'ls', 'dir', 'type', 'cat', 'mkdir', 'rmdir',
+    'del', 'copy', 'move', 'ren', 'cls', 'exit', 'ver', 'vol', 'date', 'time',
+    'whoami', 'hostname', 'ipconfig', 'ping', 'tracert', 'nslookup', 'netstat',
+    'tasklist', 'wmic', 'systeminfo', 'help', 'assoc', 'ftype', 'path',
+    'prompt', 'set', 'setlocal', 'endlocal', 'call', 'goto', 'for', 'if', 'exist',
+    'defined', 'errorlevel', 'shift', 'choice', 'findstr', 'sort', 'more', 'find'
+  ])
+
+  // Check if command starts with any simple command (ignoring arguments)
+  return simpleCommands.has(trimmed.split(' ')[0]) || simpleCommands.has(trimmed.split('&')[0]) || simpleCommands.has(trimmed.split('|')[0])
+}
+
 const MAX_METADATA_LENGTH = 30_000
 const DEFAULT_TIMEOUT = Flag.OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS || 2 * 60 * 1000
 
@@ -168,8 +186,17 @@ export const BashTool = Tool.define("bash", async () => {
         { cwd, sessionID: ctx.sessionID, callID: ctx.callID },
         { env: {} },
       )
+      const spawnConfig = Shell.getSpawnConfig(params.command)
+      const shell = spawnConfig.shell
+      const args = spawnConfig.args
+
+      // Performance optimization: Disable direct spawn on Windows for now
+      // The direct spawn optimization doesn't work with shell built-ins like echo on Windows
+      const useDirectSpawn = false
+
       const proc = spawn(params.command, {
-        shell,
+        shell: useDirectSpawn ? false : shell,
+        args: useDirectSpawn ? [params.command] : args,
         cwd,
         env: {
           ...process.env,
