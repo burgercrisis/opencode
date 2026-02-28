@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test"
 import { File } from "../index"
 import { Instance } from "../../project/instance"
 import { Global } from "../../global"
-import { tmpdir } from "bun"
+import os from "os"
 import fs from "fs/promises"
 import path from "path"
 
@@ -30,7 +30,7 @@ describe("File", () => {
   let tempDir: string
 
   beforeEach(() => {
-    tempDir = tmpdir()
+    tempDir = os.tmpdir()
     // Mock Instance and Filesystem
     globalThis.Instance = mockInstance
     globalThis.Filesystem = mockFilesystem

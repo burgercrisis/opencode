@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test"
 import { FileIgnore } from "../ignore"
-import { tmpdir } from "bun"
+import os from "os"
 
 describe("FileIgnore", () => {
   let tempDir: string
 
   beforeEach(() => {
-    tempDir = tmpdir()
+    tempDir = os.tmpdir()
   })
 
   afterEach(async () => {

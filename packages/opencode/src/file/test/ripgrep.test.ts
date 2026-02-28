@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test"
 import { Ripgrep } from "../ripgrep"
 import { Global } from "../../global"
-import { tmpdir } from "bun"
+import os from "os"
 import fs from "fs/promises"
 import path from "path"
 
@@ -9,7 +9,7 @@ describe("Ripgrep", () => {
   let tempDir: string
 
   beforeEach(() => {
-    tempDir = tmpdir()
+    tempDir = os.tmpdir()
   })
 
   afterEach(async () => {

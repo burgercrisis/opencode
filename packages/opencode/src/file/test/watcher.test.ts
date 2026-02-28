@@ -4,13 +4,13 @@ import { Instance } from "../../project/instance"
 import { Config } from "../../config/config"
 import { Flag } from "../../flag/flag"
 import { Bus } from "../../bus"
-import { tmpdir } from "bun"
+import os from "os"
 
 describe("FileWatcher", () => {
   let tempDir: string
 
   beforeEach(() => {
-    tempDir = tmpdir()
+    tempDir = os.tmpdir()
   })
 
   afterEach(() => {
