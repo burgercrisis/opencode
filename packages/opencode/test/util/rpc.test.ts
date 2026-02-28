@@ -1,4 +1,4 @@
-import { expect, test, describe, vi, beforeEach } from "bun:test"
+import { expect, test, describe, beforeEach } from "bun:test"
 import { Rpc } from "../../src/util/rpc"
 
 describe("Rpc", () => {
@@ -11,9 +11,9 @@ describe("Rpc", () => {
     }
     
     let result: string | undefined
-    globalThis.postMessage = vi.fn().mockImplementation((msg: string) => {
+    globalThis.postMessage = (msg: string) => {
       result = msg
-    })
+    }
     
     Rpc.listen(rpc)
     
@@ -32,13 +32,15 @@ describe("Rpc", () => {
 
   test("emit should post event message", () => {
     const originalPostMessage = globalThis.postMessage
-    globalThis.postMessage = vi.fn()
+    let captured: any = null
+    globalThis.postMessage = (msg: any) => {
+      captured = msg
+    }
     
     Rpc.emit("test-event", { a: 1 })
     
-    expect(globalThis.postMessage).toHaveBeenCalled()
-    const msg = (globalThis.postMessage as any).mock.calls[0][0]
-    const parsed = JSON.parse(msg)
+    expect(captured).not.toBeNull()
+    const parsed = JSON.parse(captured)
     expect(parsed.type).toBe("rpc.event")
     expect(parsed.event).toBe("test-event")
     expect(parsed.data).toEqual({ a: 1 })
@@ -47,8 +49,9 @@ describe("Rpc", () => {
   })
 
   test("client should call methods and receive events", async () => {
+    let captured: any[] = []
     const target = {
-      postMessage: vi.fn(),
+      postMessage: (msg: any) => { captured.push(msg) },
       onmessage: null as any
     }
     
@@ -56,8 +59,8 @@ describe("Rpc", () => {
     
     // Test call
     const callPromise = client.call("add", 5)
-    expect(target.postMessage).toHaveBeenCalled()
-    const msg = JSON.parse(target.postMessage.mock.calls[0][0])
+    expect(captured.length).toBe(1)
+    const msg = JSON.parse(captured[0])
     expect(msg.type).toBe("rpc.request")
     expect(msg.method).toBe("add")
     expect(msg.input).toBe(5)

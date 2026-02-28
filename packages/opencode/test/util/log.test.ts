@@ -1,4 +1,4 @@
-import { expect, test, describe, beforeEach, afterEach, vi } from "bun:test"
+import { expect, test, describe, beforeEach, afterEach, spyOn } from "bun:test"
 import { Log } from "../../src/util/log"
 import { Global } from "../../src/global"
 import fs from "node:fs/promises"
@@ -11,7 +11,7 @@ describe("Log", () => {
   })
 
   test("should log with levels", () => {
-    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true)
+    const stderrSpy = spyOn(process.stderr, "write").mockImplementation(() => true)
     
     Log.Default.info("test info")
     expect(stderrSpy).toHaveBeenCalled()
@@ -27,7 +27,7 @@ describe("Log", () => {
   })
 
   test("should handle tags and extra", () => {
-    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true)
+    const stderrSpy = spyOn(process.stderr, "write").mockImplementation(() => true)
     const logger = Log.create({ foo: "bar" })
     
     logger.info("msg", { baz: 123, obj: { a: 1 }, skip: null })
@@ -86,7 +86,7 @@ describe("Log", () => {
   })
 
   test("should handle time and Symbol.dispose", () => {
-    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true)
+    const stderrSpy = spyOn(process.stderr, "write").mockImplementation(() => true)
     
     {
       const timer = Log.Default.time("disposable")
@@ -106,7 +106,7 @@ describe("Log", () => {
   })
 
   test("should cover remaining methods", () => {
-    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true)
+    const stderrSpy = spyOn(process.stderr, "write").mockImplementation(() => true)
     
     Log.Default.error("err msg")
     expect(stderrSpy.mock.calls[stderrSpy.mock.calls.length - 1][0]).toContain("ERROR")
@@ -122,7 +122,7 @@ describe("Log", () => {
   })
 
   test("should handle all log levels and shouldLog branches", () => {
-    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true)
+    const stderrSpy = spyOn(process.stderr, "write").mockImplementation(() => true)
     
     Log.init({ print: true, level: "ERROR" })
     Log.Default.warn("test warn")
@@ -140,7 +140,7 @@ describe("Log", () => {
   })
 
   test("formatError should respect max depth", () => {
-    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true)
+    const stderrSpy = spyOn(process.stderr, "write").mockImplementation(() => true)
     
     let current = new Error("level 0")
     for (let i = 1; i <= 15; i++) {
@@ -254,7 +254,7 @@ describe("Log", () => {
         
         const files = await fs.readdir(logDir)
         expect(files.length).toBe(1)
-        const content = await fs.readFile(path.join(logDir, files[0]), "utf8")
+        const content = await fs.readFile(path.join(logDir, files[0]!), "utf8")
         expect(content).toContain("test print false")
       } finally {
         Object.defineProperty(Global.Path, 'log', { value: originalLogPath, configurable: true })
@@ -265,7 +265,7 @@ describe("Log", () => {
   })
 
   test("should handle errors in extra", () => {
-    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true)
+    const stderrSpy = spyOn(process.stderr, "write").mockImplementation(() => true)
     const error = new Error("inner")
     const outer = new Error("outer", { cause: error })
     
@@ -287,7 +287,7 @@ describe("Log", () => {
   })
 
   test("time() should log start and stop", () => {
-    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true)
+    const stderrSpy = spyOn(process.stderr, "write").mockImplementation(() => true)
     const t = Log.Default.time("task")
     expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining("status=started"))
     
@@ -300,7 +300,7 @@ describe("Log", () => {
   })
 
   test("time() should work with Symbol.dispose", () => {
-    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true)
+    const stderrSpy = spyOn(process.stderr, "write").mockImplementation(() => true)
     {
       using _ = Log.Default.time("disposable")
     }
