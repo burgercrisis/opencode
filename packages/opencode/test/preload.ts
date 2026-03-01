@@ -83,6 +83,8 @@ const { Log } = await import("../src/util/log")
 const { Instance } = await import("../src/project/instance")
 const { Snapshot } = await import("../src/snapshot/index")
 const { Global } = await import("../src/global/index")
+const { levenshtein, resetForTest: resetLevenshteinForTest } = await import("../src/util/levenshtein")
+const { GlobalBus, resetForTest: resetGlobalBusForTest } = await import("../src/bus/global")
 const { afterEach } = await import("bun:test")
 
 Log.init({
@@ -96,6 +98,48 @@ afterEach(async () => {
   Snapshot.resetForTest()
   Global.resetForTest()
   Log.resetForTest()
+  resetLevenshteinForTest()
+  resetGlobalBusForTest()
+  
+  // Clean up any polluted globals from tests in src/*/test/ directories
+  // These tests may set globalThis.Instance, Config, Filesystem, etc. without cleanup
+  delete (globalThis as any).Instance
+  delete (globalThis as any).Config
+  delete (globalThis as any).Filesystem
+  delete (globalThis as any).Global
+  
+  // Reset working directory after each test
+  if (process.cwd() !== originalCwd) {
+    process.chdir(originalCwd)
+  }
+})
+
+// Also run cleanup BEFORE each test to ensure no pollution from previous tests
+// This helps when tests run in different orders or when beforeEach doesn't run early enough
+const { beforeEach } = await import("bun:test")
+
+// Store original working directory to reset after each test
+const originalCwd = process.cwd()
+
+beforeEach(async () => {
+  // Clean up any polluted globals BEFORE each test runs
+  delete (globalThis as any).Instance
+  delete (globalThis as any).Config
+  delete (globalThis as any).Filesystem
+  delete (globalThis as any).Global
+  
+  // Reset working directory to original to fix shell command failures
+  if (process.cwd() !== originalCwd) {
+    process.chdir(originalCwd)
+  }
+  
+  // Clear auth.json to prevent auth state pollution between tests
+  try {
+    const authPath = path.join(Global.Path.data, "auth.json")
+    await fs.writeFile(authPath, "{}", "utf-8")
+  } catch {
+    // Ignore errors if file doesn't exist
+  }
 })
 
 const { BunProc } = await import("../src/bun/index")

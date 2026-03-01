@@ -233,19 +233,19 @@ describe("FileIgnore", () => {
         "README.md",
       ]
 
-      const expectedIgnored = [
-        "src/index.ts", // false
-        "src/components/Button.tsx", // false
-        "node_modules/react/index.js", // true
-        "dist/bundle.js", // true
-        "build/output.css", // true
-        ".git/config", // true
-        ".vscode/settings.json", // true
-        "coverage/lcov.info", // true
-        "src/__pycache__/module.pyc", // true
-        "logs/app.log", // true
-        "temp/cache.tmp", // true
-        "README.md", // false
+      const expectedIgnored: boolean[] = [
+        false, // "src/index.ts"
+        false, // "src/components/Button.tsx"
+        true, // "node_modules/react/index.js"
+        true, // "dist/bundle.js"
+        true, // "build/output.css"
+        true, // ".git/config"
+        true, // ".vscode/settings.json"
+        true, // "coverage/lcov.info"
+        true, // "src/__pycache__/module.pyc"
+        true, // "logs/app.log"
+        true, // "temp/cache.tmp"
+        false, // "README.md"
       ]
 
       projectFiles.forEach((file, index) => {
