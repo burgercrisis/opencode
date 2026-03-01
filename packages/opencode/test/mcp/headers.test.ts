@@ -1,4 +1,4 @@
-import { test, expect, beforeEach, afterEach, beforeAll, describe, mock, spyOn, restoreAllMocks } from "bun:test"
+import { test, expect, beforeEach, afterEach, beforeAll, describe, mock, spyOn } from "bun:test"
 import path from "path"
 import os from "os"
 import fs from "fs"
@@ -50,7 +50,7 @@ describe("MCP Headers", () => {
   })
 
   afterEach(() => {
-    restoreAllMocks()
+    // Mocks are automatically cleaned up in Bun
   })
 
   test("headers are passed to transports when oauth is enabled (default)", async () => {
