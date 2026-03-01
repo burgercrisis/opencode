@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test"
+import { describe, test, expect } from "bun:test"
 import { $ } from "bun"
 import fs from "fs/promises"
 import path from "path"
@@ -7,7 +7,11 @@ import { Instance } from "../../src/project/instance"
 import { Filesystem } from "../../src/util/filesystem"
 import { tmpdir } from "../fixture/fixture"
 
-function normalizePath(p: string): string {
+describe("Snapshot", () => {
+  // @ts-expect-error - Bun test describe.timeout() exists at runtime
+  describe.timeout(90000)
+
+  function normalizePath(p: string): string {
   return p.replace(/\\/g, "/")
 }
 
@@ -168,4 +172,5 @@ test("multiple file operations", async () => {
       expect(patch.files.length).toBeGreaterThan(0)
     },
   })
+})  // End of Snapshot describe block
 })

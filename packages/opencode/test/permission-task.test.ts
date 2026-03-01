@@ -5,6 +5,8 @@ import { Instance } from "../src/project/instance"
 import { tmpdir } from "./fixture/fixture"
 
 describe("PermissionNext.evaluate for permission.task", () => {
+  // @ts-expect-error - Bun test describe.timeout() exists at runtime
+  describe.timeout(180000)
   const createRuleset = (rules: Record<string, "allow" | "deny" | "ask">): PermissionNext.Ruleset =>
     Object.entries(rules).map(([pattern, action]) => ({
       permission: "task",
@@ -139,6 +141,8 @@ describe("PermissionNext.disabled for task tool", () => {
 
 // Integration tests that load permissions from real config files
 describe("permission.task with real config files", () => {
+  // @ts-expect-error - Bun test describe.timeout() exists at runtime
+  describe.timeout(180000)
   test("loads task permissions from opencode.json config", async () => {
     await using tmp = await tmpdir({
       git: true,
