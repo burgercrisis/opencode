@@ -240,7 +240,7 @@ test("discovers global skills from ~/.claude/skills/ directory", async () => {
         expect(skills.length).toBe(1)
         expect(skills[0].name).toBe("global-test-skill")
         expect(skills[0].description).toBe("A global skill from ~/.claude/skills for testing.")
-        expect(skills[0].location).toContain(".claude/skills/global-test-skill/SKILL.md")
+        expect(skills[0].location).toContain(path.join(".claude", "skills", "global-test-skill", "SKILL.md").replace(/\\/g, "/"))
       },
     })
   } finally {
@@ -300,7 +300,7 @@ description: A skill in the .agents/skills directory.
         expect(skills.length).toBe(1)
         const agentSkill = skills.find((s) => s.name === "agent-skill")
         expect(agentSkill).toBeDefined()
-        expect(agentSkill!.location).toContain(".agents/skills/agent-skill/SKILL.md")
+        expect(agentSkill!.location).toContain(path.join(".agents", "skills", "agent-skill", "SKILL.md").replace(/\\/g, "/"))
       },
     })
   } finally {
@@ -339,7 +339,7 @@ This skill is loaded from the global home directory.
         expect(skills.length).toBe(1)
         expect(skills[0].name).toBe("global-agent-skill")
         expect(skills[0].description).toBe("A global skill from ~/.agents/skills for testing.")
-        expect(skills[0].location).toContain(".agents/skills/global-agent-skill/SKILL.md")
+        expect(skills[0].location).toContain(path.join(".agents", "skills", "global-agent-skill", "SKILL.md").replace(/\\/g, "/"))
       },
     })
   } finally {
