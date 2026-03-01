@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test"
 import { ConfigRoutes } from "../../routes/config"
-import * as Config from "../../../config/config"
+import { Config } from "../../../config/config"
 import * as Provider from "../../../provider/provider"
-import * as Instance from "../../../project/instance"
+import { Instance } from "../../../project/instance"
 
 // Mock the dependencies
 const mockConfig = {

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test"
-import * as Project from "../project"
+import { Project } from "../project"
 
 describe("Project Module", () => {
   describe("Schema Validation", () => {
