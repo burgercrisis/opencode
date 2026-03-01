@@ -1,4 +1,4 @@
-import { test, expect, beforeAll } from "bun:test"
+import { describe, test, expect, beforeAll } from "bun:test"
 import path from "path"
 import os from "os"
 import { tmpdir } from "../fixture/fixture"

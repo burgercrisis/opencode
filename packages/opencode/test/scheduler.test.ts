@@ -4,8 +4,6 @@ import { Instance } from "../src/project/instance"
 import { tmpdir } from "./fixture/fixture"
 
 describe("Scheduler.register", () => {
-  // @ts-expect-error - Bun test describe.timeout() exists at runtime
-  describe.timeout(90000)
   const hour = 60 * 60 * 1000
 
   test("defaults to instance scope per directory", async () => {
