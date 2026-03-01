@@ -87,6 +87,9 @@ const { levenshtein, resetForTest: resetLevenshteinForTest } = await import("../
 const { GlobalBus, resetForTest: resetGlobalBusForTest } = await import("../src/bus/global")
 const { afterEach } = await import("bun:test")
 
+// Expose Instance globally so tests can use Instance.provide()
+;(globalThis as any).Instance = Instance
+
 Log.init({
   print: true,
   dev: true,
@@ -102,8 +105,8 @@ afterEach(async () => {
   resetGlobalBusForTest()
   
   // Clean up any polluted globals from tests in src/*/test/ directories
-  // These tests may set globalThis.Instance, Config, Filesystem, etc. without cleanup
-  delete (globalThis as any).Instance
+  // These tests may set globalThis.Config, Filesystem, Global, etc. without cleanup
+  // Note: We don't delete Instance here since it's set up by preload.ts
   delete (globalThis as any).Config
   delete (globalThis as any).Filesystem
   delete (globalThis as any).Global
@@ -123,7 +126,7 @@ const originalCwd = process.cwd()
 
 beforeEach(async () => {
   // Clean up any polluted globals BEFORE each test runs
-  delete (globalThis as any).Instance
+  // Note: We don't delete Instance here since it's set up by preload.ts
   delete (globalThis as any).Config
   delete (globalThis as any).Filesystem
   delete (globalThis as any).Global
