@@ -29,6 +29,6 @@ export namespace Glob {
   }
 
   export function match(pattern: string, filepath: string): boolean {
-    return minimatch(filepath, pattern, { dot: true })
+    return minimatch(filepath, pattern, { dot: true, matchBase: true })
   }
 }

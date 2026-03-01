@@ -22,7 +22,7 @@ export const MultiEditTool = Tool.define("multiedit", {
           replaceAll: z.boolean().optional().describe("Replace all occurrences of oldString (default false)"),
           occurrence: z.number().optional().describe("Replace the Nth occurrence (1-based index) when multiple matches exist"),
           autoContext: z.boolean().optional().describe("Automatically expand context when multiple matches are found (default true)"),
-          confidence: z.number().min(0).max(1).optional().describe("Minimum confidence threshold for automatic selection (0-1, default 0.8)"),
+          confidence: z.number().optional().describe("Minimum confidence threshold for automatic selection (0-1, default 0.8)"),
         }),
       )
       .describe("Array of edit operations to perform sequentially on the file"),
@@ -96,11 +96,7 @@ export const MultiEditTool = Tool.define("multiedit", {
       }
 
       try {
-        contentNew = replace(contentNew, edit.oldString, edit.newString, edit.replaceAll, {
-          occurrence: edit.occurrence,
-          autoContext: edit.autoContext !== false, // default true
-          confidence: edit.confidence ?? 0.8 // default 0.8
-        })
+        contentNew = replace(contentNew, edit.oldString, edit.newString, edit.replaceAll)
         appliedEdits++
         editResults.push({
           index: i,

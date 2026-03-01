@@ -187,7 +187,7 @@ export const BashTool = Tool.define("bash", async () => {
         { env: {} },
       )
       const spawnConfig = Shell.getSpawnConfig(params.command)
-      const shell = spawnConfig.shell
+      const shell = spawnConfig.executable
       const args = spawnConfig.args
 
       // Performance optimization: Disable direct spawn on Windows for now
