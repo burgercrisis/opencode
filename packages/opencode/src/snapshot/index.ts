@@ -382,7 +382,7 @@ export namespace Snapshot {
       .filter(Boolean)
       .map((x) => {
         // Normalize path separators for Windows using unified utility
-        const withWorktree = Filesystem.normalizeGitPath(path.join(Instance.worktree, x), false)
+        const withWorktree = Filesystem.normalizeGitPath(path.join(Instance.worktree, x), true)
         return withWorktree
       })
 
