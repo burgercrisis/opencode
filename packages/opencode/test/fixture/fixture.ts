@@ -9,6 +9,59 @@ function sanitizePath(p: string): string {
   return p.replace(/\0/g, "")
 }
 
+// Cross-platform symlink helper
+// On Windows, creates a junction for directories, or a symbolic link for files
+// On Unix, creates a symbolic link
+export async function symlink(target: string, linkPath: string): Promise<void> {
+  try {
+    // First try the standard fs.symlink
+    await fs.symlink(target, linkPath)
+  } catch (error) {
+    // On Windows, may need administrator privileges for symlinks
+    // Fall back to junction for directories
+    if (process.platform === "win32") {
+      try {
+        const stats = await fs.lstat(target)
+        if (stats.isDirectory()) {
+          await $`cmd /c mklink /J "${linkPath}" "${target}"`.quiet()
+          return
+        }
+      } catch {
+        // Target doesn't exist, try file symlink
+      }
+      // Try file symlink with admin elevation prompt handled
+      await $`cmd /c mklink "${linkPath}" "${target}"`.quiet()
+    } else {
+      throw error
+    }
+  }
+}
+
+// Cross-platform chmod helper
+// On Windows, this is a no-op since Windows uses ACLs instead of Unix permissions
+export async function chmod(filePath: string, mode: number): Promise<void> {
+  if (process.platform === "win32") {
+    // On Windows, chmod doesn't work the same way
+    // Only set executable bit on .bat, .cmd, .exe, .ps1 files
+    const ext = path.extname(filePath).toLowerCase()
+    if ([".bat", ".cmd", ".exe", ".ps1", ".sh"].includes(ext)) {
+      // Try to make file executable - best effort on Windows
+      try {
+        await fs.chmod(filePath, 0o755)
+      } catch {
+        // Best effort - may fail without admin rights
+      }
+    }
+    return
+  }
+  await fs.chmod(filePath, mode)
+}
+
+// Make file executable (cross-platform)
+export async function makeExecutable(filePath: string): Promise<void> {
+  await chmod(filePath, 0o755)
+}
+
 type TmpDirOptions<T> = {
   git?: boolean
   config?: Partial<Config.Info>
