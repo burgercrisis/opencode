@@ -6,6 +6,10 @@ import { Instance } from "../../src/project/instance"
 import { Filesystem } from "../../src/util/filesystem"
 import { tmpdir } from "../fixture/fixture"
 
+function normalizePath(p: string): string {
+  return p.replace(/\\/g, "/")
+}
+
 async function bootstrap() {
   return tmpdir({
     git: true,
@@ -35,7 +39,7 @@ test("tracks deleted files correctly", async () => {
 
       await $`rm ${tmp.path}/a.txt`.quiet()
 
-      expect((await Snapshot.patch(before!)).files).toContain(`${tmp.path}/a.txt`)
+      expect((await Snapshot.patch(before!)).files).toContain(normalizePath(`${tmp.path}/a.txt`))
     },
   })
 })
@@ -143,7 +147,7 @@ test("binary file handling", async () => {
       await Filesystem.write(`${tmp.path}/image.png`, new Uint8Array([0x89, 0x50, 0x4e, 0x47]))
 
       const patch = await Snapshot.patch(before!)
-      expect(patch.files).toContain(`${tmp.path}/image.png`)
+      expect(patch.files).toContain(normalizePath(`${tmp.path}/image.png`))
 
       await Snapshot.revert([patch])
       expect(
@@ -164,9 +168,9 @@ test("symlink handling", async () => {
       const before = await Snapshot.track()
       expect(before).toBeTruthy()
 
-      await $`ln -s ${tmp.path}/a.txt ${tmp.path}/link.txt`.quiet()
+      await fs.symlink(`${tmp.path}/a.txt`, `${tmp.path}/link.txt`)
 
-      expect((await Snapshot.patch(before!)).files).toContain(`${tmp.path}/link.txt`)
+      expect((await Snapshot.patch(before!)).files).toContain(normalizePath(`${tmp.path}/link.txt`))
     },
   })
 })
@@ -181,7 +185,7 @@ test("large file handling", async () => {
 
       await Filesystem.write(`${tmp.path}/large.txt`, "x".repeat(1024 * 1024))
 
-      expect((await Snapshot.patch(before!)).files).toContain(`${tmp.path}/large.txt`)
+      expect((await Snapshot.patch(before!)).files).toContain(normalizePath(`${tmp.path}/large.txt`))
     },
   })
 })
@@ -307,7 +311,7 @@ test("unicode filenames", async () => {
       expect(patch.files.length).toBe(4)
 
       for (const file of unicodeFiles) {
-        expect(patch.files).toContain(file.path)
+        expect(patch.files).toContain(normalizePath(file.path))
       }
 
       await Snapshot.revert([patch])
@@ -342,8 +346,8 @@ test.skip("unicode filenames modification and restore", async () => {
       await Filesystem.write(cyrillicFile, "modified cyrillic")
 
       const patch = await Snapshot.patch(before!)
-      expect(patch.files).toContain(chineseFile)
-      expect(patch.files).toContain(cyrillicFile)
+      expect(patch.files).toContain(normalizePath(chineseFile))
+      expect(patch.files).toContain(normalizePath(cyrillicFile))
 
       await Snapshot.revert([patch])
 
@@ -366,7 +370,7 @@ test("unicode filenames in subdirectories", async () => {
       await Filesystem.write(deepFile, "deep unicode content")
 
       const patch = await Snapshot.patch(before!)
-      expect(patch.files).toContain(deepFile)
+      expect(patch.files).toContain(normalizePath(deepFile))
 
       await Snapshot.revert([patch])
       expect(
@@ -393,7 +397,7 @@ test("very long filenames", async () => {
       await Filesystem.write(longFile, "long filename content")
 
       const patch = await Snapshot.patch(before!)
-      expect(patch.files).toContain(longFile)
+      expect(patch.files).toContain(normalizePath(longFile))
 
       await Snapshot.revert([patch])
       expect(
@@ -419,9 +423,9 @@ test("hidden files", async () => {
       await Filesystem.write(`${tmp.path}/.config`, "config content")
 
       const patch = await Snapshot.patch(before!)
-      expect(patch.files).toContain(`${tmp.path}/.hidden`)
-      expect(patch.files).toContain(`${tmp.path}/.gitignore`)
-      expect(patch.files).toContain(`${tmp.path}/.config`)
+      expect(patch.files).toContain(normalizePath(`${tmp.path}/.hidden`))
+      expect(patch.files).toContain(normalizePath(`${tmp.path}/.gitignore`))
+      expect(patch.files).toContain(normalizePath(`${tmp.path}/.config`))
     },
   })
 })
@@ -436,12 +440,12 @@ test("nested symlinks", async () => {
 
       await $`mkdir -p ${tmp.path}/sub/dir`.quiet()
       await Filesystem.write(`${tmp.path}/sub/dir/target.txt`, "target content")
-      await $`ln -s ${tmp.path}/sub/dir/target.txt ${tmp.path}/sub/dir/link.txt`.quiet()
-      await $`ln -s ${tmp.path}/sub ${tmp.path}/sub-link`.quiet()
+      await fs.symlink(`${tmp.path}/sub/dir/target.txt`, `${tmp.path}/sub/dir/link.txt`)
+      await fs.symlink(`${tmp.path}/sub`, `${tmp.path}/sub-link`)
 
       const patch = await Snapshot.patch(before!)
-      expect(patch.files).toContain(`${tmp.path}/sub/dir/link.txt`)
-      expect(patch.files).toContain(`${tmp.path}/sub-link`)
+      expect(patch.files).toContain(normalizePath(`${tmp.path}/sub/dir/link.txt`))
+      expect(patch.files).toContain(normalizePath(`${tmp.path}/sub-link`))
     },
   })
 })
@@ -455,9 +459,9 @@ test("file permissions and ownership changes", async () => {
       expect(before).toBeTruthy()
 
       // Change permissions multiple times
-      await $`chmod 600 ${tmp.path}/a.txt`.quiet()
-      await $`chmod 755 ${tmp.path}/a.txt`.quiet()
-      await $`chmod 644 ${tmp.path}/a.txt`.quiet()
+      await fs.chmod(`${tmp.path}/a.txt`, 0o600)
+      await fs.chmod(`${tmp.path}/a.txt`, 0o755)
+      await fs.chmod(`${tmp.path}/a.txt`, 0o644)
 
       const patch = await Snapshot.patch(before!)
       // Note: git doesn't track permission changes on existing files by default
@@ -476,7 +480,7 @@ test("circular symlinks", async () => {
       expect(before).toBeTruthy()
 
       // Create circular symlink
-      await $`ln -s ${tmp.path}/circular ${tmp.path}/circular`.quiet().nothrow()
+      await fs.symlink(`${tmp.path}/circular`, `${tmp.path}/circular`).catch(() => {})
 
       const patch = await Snapshot.patch(before!)
       expect(patch.files.length).toBeGreaterThanOrEqual(0) // Should not crash
@@ -499,11 +503,11 @@ test("gitignore changes", async () => {
       const patch = await Snapshot.patch(before!)
 
       // Should track gitignore itself
-      expect(patch.files).toContain(`${tmp.path}/.gitignore`)
+      expect(patch.files).toContain(normalizePath(`${tmp.path}/.gitignore`))
       // Should track normal files
-      expect(patch.files).toContain(`${tmp.path}/normal.txt`)
+      expect(patch.files).toContain(normalizePath(`${tmp.path}/normal.txt`))
       // Should not track ignored files (git won't see them)
-      expect(patch.files).not.toContain(`${tmp.path}/test.ignored`)
+      expect(patch.files).not.toContain(normalizePath(`${tmp.path}/test.ignored`))
     },
   })
 })
@@ -548,7 +552,7 @@ test("snapshot state isolation between projects", async () => {
       const before1 = await Snapshot.track()
       await Filesystem.write(`${tmp1.path}/project1.txt`, "project1 content")
       const patch1 = await Snapshot.patch(before1!)
-      expect(patch1.files).toContain(`${tmp1.path}/project1.txt`)
+      expect(patch1.files).toContain(normalizePath(`${tmp1.path}/project1.txt`))
     },
   })
 
@@ -558,10 +562,10 @@ test("snapshot state isolation between projects", async () => {
       const before2 = await Snapshot.track()
       await Filesystem.write(`${tmp2.path}/project2.txt`, "project2 content")
       const patch2 = await Snapshot.patch(before2!)
-      expect(patch2.files).toContain(`${tmp2.path}/project2.txt`)
+      expect(patch2.files).toContain(normalizePath(`${tmp2.path}/project2.txt`))
 
       // Ensure project1 files don't appear in project2
-      expect(patch2.files).not.toContain(`${tmp1?.path}/project1.txt`)
+      expect(patch2.files).not.toContain(normalizePath(`${tmp1?.path}/project1.txt`))
     },
   })
 })
@@ -589,7 +593,7 @@ test("patch detects changes in secondary worktree", async () => {
         await Filesystem.write(worktreeFile, "worktree content")
 
         const patch = await Snapshot.patch(before!)
-        expect(patch.files).toContain(worktreeFile)
+        expect(patch.files).toContain(normalizePath(worktreeFile))
       },
     })
   } finally {
@@ -770,7 +774,7 @@ test("revert should not delete files that existed but were deleted in snapshot",
       await Filesystem.write(`${tmp.path}/a.txt`, "recreated content")
 
       const patch = await Snapshot.patch(snapshot2!)
-      expect(patch.files).toContain(`${tmp.path}/a.txt`)
+      expect(patch.files).toContain(normalizePath(`${tmp.path}/a.txt`))
 
       await Snapshot.revert([patch])
 
@@ -799,8 +803,8 @@ test("revert preserves file that existed in snapshot when deleted then recreated
       await Filesystem.write(`${tmp.path}/newfile.txt`, "new")
 
       const patch = await Snapshot.patch(snapshot!)
-      expect(patch.files).toContain(`${tmp.path}/existing.txt`)
-      expect(patch.files).toContain(`${tmp.path}/newfile.txt`)
+      expect(patch.files).toContain(normalizePath(`${tmp.path}/existing.txt`))
+      expect(patch.files).toContain(normalizePath(`${tmp.path}/newfile.txt`))
 
       await Snapshot.revert([patch])
 

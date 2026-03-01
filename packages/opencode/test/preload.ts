@@ -79,16 +79,31 @@ delete process.env["CEREBRAS_API_KEY"]
 delete process.env["SAMBANOVA_API_KEY"]
 
 // Now safe to import from src/
-const { Log } = await import("../src/util/log")
-const { Instance } = await import("../src/project/instance")
-const { Snapshot } = await import("../src/snapshot/index")
-const { Global } = await import("../src/global/index")
-const { levenshtein, resetForTest: resetLevenshteinForTest } = await import("../src/util/levenshtein")
-const { GlobalBus, resetForTest: resetGlobalBusForTest } = await import("../src/bus/global")
-const { afterEach } = await import("bun:test")
+let Log: any, Instance: any, Snapshot: any, Global: any, resetLevenshteinForTest: any, resetGlobalBusForTest: any, afterEach: any
 
-// Expose Instance globally so tests can use Instance.provide()
-;(globalThis as any).Instance = Instance
+try {
+  const logModule = await import("../src/util/log")
+  Log = logModule.Log
+  const instanceModule = await import("../src/project/instance")
+  Instance = instanceModule.Instance
+  const snapshotModule = await import("../src/snapshot/index")
+  Snapshot = snapshotModule.Snapshot
+  const globalModule = await import("../src/global/index")
+  Global = globalModule.Global
+  const levenshteinModule = await import("../src/util/levenshtein")
+  resetLevenshteinForTest = levenshteinModule.resetForTest
+  const globalBusModule = await import("../src/bus/global")
+  resetGlobalBusForTest = globalBusModule.resetForTest
+  const bunTest = await import("bun:test")
+  afterEach = bunTest.afterEach
+
+  // Expose Instance globally so tests can use Instance.provide()
+  ;(globalThis as any).Instance = Instance
+  console.log("[preload.ts] Instance global exposed successfully")
+} catch (err) {
+  console.error("[preload.ts] Failed to import modules:", err)
+  throw err
+}
 
 Log.init({
   print: true,
