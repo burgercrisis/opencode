@@ -119,9 +119,8 @@ afterEach(async () => {
   resetLevenshteinForTest()
   resetGlobalBusForTest()
   
-  // Clean up any polluted globals from tests in src/*/test/ directories
-  // These tests may set globalThis.Config, Filesystem, Global, etc. without cleanup
-  // Note: We don't delete Instance here since it's set up by preload.ts
+  // Note: We do NOT delete Instance here because subsequent tests may need it
+  // Tests that pollute global state should clean up after themselves
   delete (globalThis as any).Config
   delete (globalThis as any).Filesystem
   delete (globalThis as any).Global
@@ -141,7 +140,7 @@ const originalCwd = process.cwd()
 
 beforeEach(async () => {
   // Clean up any polluted globals BEFORE each test runs
-  // Note: We don't delete Instance here since it's set up by preload.ts
+  // Keep Instance - it's set once and reused for all tests
   delete (globalThis as any).Config
   delete (globalThis as any).Filesystem
   delete (globalThis as any).Global
