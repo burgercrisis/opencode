@@ -1,6 +1,7 @@
 import { describe, test, expect, beforeAll } from "bun:test"
 import path from "path"
 import os from "os"
+import fs from "fs/promises"
 import { tmpdir } from "../fixture/fixture"
 import { Instance } from "../../src/project/instance"
 import { Agent } from "../../src/agent/agent"
@@ -9,11 +10,20 @@ import { Global } from "../../src/global"
 import { Config } from "../../src/config/config"
 
 beforeAll(async () => {
-  const tmp = path.join(os.tmpdir(), "opencode-test-home-" + Math.random().toString(36).slice(2))
-  process.env.OPENCODE_TEST_HOME = tmp
+  // Use the preload's test home directory to avoid path mismatch
+  // The preload sets OPENCODE_TEST_HOME before importing Global, so we should use that
+  const testHome = process.env.OPENCODE_TEST_HOME
+  if (!testHome) {
+    throw new Error("OPENCODE_TEST_HOME not set - preload may not have run")
+  }
   await Global.initialize()
-  // Reset lazy caches to ensure they use the new home
-  Global.resetForTest()
+  // Clear auth.json in the test home to avoid pollution from real user config
+  try {
+    const authPath = path.join(Global.Path.data, "auth.json")
+    await fs.writeFile(authPath, "{}", "utf-8")
+  } catch {
+    // Ignore errors
+  }
 })
 
 // Helper to evaluate permission for a tool with wildcard pattern
