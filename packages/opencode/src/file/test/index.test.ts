@@ -6,9 +6,9 @@ import os from "os"
 import fs from "fs/promises"
 import path from "path"
 
-// Mock dependencies
-// Note: We import Instance directly from the module instead of using globalThis
-// to avoid polluting the global state and breaking other tests
+// Note: We properly save and restore the real Instance
+// to avoid polluting global state and breaking other tests
+
 const mockInstance = {
   directory: "/test/project",
   worktree: "/test/project",
@@ -33,25 +33,23 @@ const mockFilesystem = {
 
 describe("File", () => {
   let tempDir: string
-  let hadInstance: boolean
+  let savedInstance: any
 
   beforeEach(() => {
     tempDir = os.tmpdir()
-    // Check if global had Instance before we modify it
-    hadInstance = (globalThis as any).Instance !== undefined
-    // Save current Instance to restore later
-    // Note: We temporarily modify global for any code that uses it,
-    // but the key fix is in the afterEach to properly restore
+    // Save the current Instance (which should be the real one from preload.ts)
+    savedInstance = (globalThis as any).Instance
+    // Replace with our mock
     globalThis.Instance = mockInstance
     globalThis.Filesystem = mockFilesystem
   })
 
   afterEach(() => {
-    // Restore the global state - either back to what it was, or ensure
-    // preload.ts will restore it in its beforeEach
-    if (hadInstance) {
-      // There was an Instance before, but we don't know if it was the real one
-      // The safest approach is to delete it and let preload.ts restore in its beforeEach
+    // CRITICAL: Restore the real Instance, not delete it!
+    // This ensures subsequent tests have access to the real Instance
+    if (savedInstance !== undefined) {
+      (globalThis as any).Instance = savedInstance
+    } else {
       delete (globalThis as any).Instance
     }
     delete (globalThis as any).Filesystem

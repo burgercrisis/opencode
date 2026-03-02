@@ -17,8 +17,8 @@ describe("VCS Module", () => {
         }
       }
 
-      // Mock Instance.worktree
-      const originalWorktree = (global as any).Instance?.worktree
+      // Mock Instance - save full object to restore properly
+      const originalInstance = (global as any).Instance
       ;(global as any).Instance = { worktree: "/test/repo" }
       const originalBun = (global as any).Bun
       ;(global as any).Bun = mockBun
@@ -27,8 +27,8 @@ describe("VCS Module", () => {
       expect(branch).toBe("main")
 
       // Restore
-      if (originalWorktree) {
-        ;(global as any).Instance.worktree = originalWorktree
+      if (originalInstance) {
+        ;(global as any).Instance = originalInstance
       }
       if (originalBun) {
         ;(global as any).Bun = originalBun
@@ -49,8 +49,8 @@ describe("VCS Module", () => {
         }
       }
 
-      // Mock Instance.worktree
-      const originalWorktree = (global as any).Instance?.worktree
+      // Mock Instance - save full object to restore properly
+      const originalInstance = (global as any).Instance
       ;(global as any).Instance = { worktree: "/test/repo" }
       const originalBun = (global as any).Bun
       ;(global as any).Bun = mockBun
@@ -59,8 +59,8 @@ describe("VCS Module", () => {
       expect(branch).toBeUndefined()
 
       // Restore
-      if (originalWorktree) {
-        ;(global as any).Instance.worktree = originalWorktree
+      if (originalInstance) {
+        ;(global as any).Instance = originalInstance
       }
       if (originalBun) {
         ;(global as any).Bun = originalBun
@@ -80,8 +80,8 @@ describe("VCS Module", () => {
         }
       }
 
-      // Mock Instance.worktree
-      const originalWorktree = (global as any).Instance?.worktree
+      // Mock Instance - save full object to restore properly
+      const originalInstance = (global as any).Instance
       ;(global as any).Instance = { worktree: "/test/repo" }
       const originalBun = (global as any).Bun
       ;(global as any).Bun = mockBun
@@ -90,8 +90,8 @@ describe("VCS Module", () => {
       expect(branch).toBe("feature-branch")
 
       // Restore
-      if (originalWorktree) {
-        ;(global as any).Instance.worktree = originalWorktree
+      if (originalInstance) {
+        ;(global as any).Instance = originalInstance
       }
       if (originalBun) {
         ;(global as any).Bun = originalBun
