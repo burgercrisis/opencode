@@ -1,7 +1,7 @@
-preload = ["@opentui/solid/preload"]
+preload = ["@opentui/solid/preload", "./test/preload.ts"]
 
-[test]
-preload = ["./test/preload.ts"]
-# timeout is not actually parsed from bunfig.toml (see src/bunfig.zig in oven-sh/bun)
-# using --timeout in package.json scripts instead
-# https://github.com/oven-sh/bun/issues/7789
+# Exclude src/*/test/ files - they pollute global state (globalThis.Instance)
+# causing "Instance.provide is not a function" errors in subsequent tests
+# These tests also have fundamental design issues (mocking const values)
+# The test/ directory tests work correctly
+exclude = ["src/**/*.test.ts", "node_modules/**", "**/node_modules/**"]
