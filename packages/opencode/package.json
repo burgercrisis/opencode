@@ -7,7 +7,7 @@
   "private": true,
   "scripts": {
     "typecheck": "tsgo --noEmit",
-    "test": "bun test test/bun.test.ts test/keybind.test.ts test/permission-task.test.ts test/scheduler.test.ts test/auth/ test/bus/bus-event.test.ts test/bus/global.test.ts test/cli/ test/mcp/headers.test.ts test/acp/ src/provider/ src/session/ src/util/ src/scheduler/ src/ide/ src/lsp/ --timeout 180000",
+    "test": "bun test --preload ./test/preload.ts test/bun.test.ts test/keybind.test.ts test/permission-task.test.ts test/scheduler.test.ts test/auth/ test/bus/bus-event.test.ts test/bus/global.test.ts test/cli/ test/mcp/headers.test.ts test/acp/ src/provider/ src/session/ src/util/ src/scheduler/ src/ide/ src/lsp/ --timeout 180000",
     "build": "bun run script/build.ts",
     "dev": "bun run --conditions=browser ./src/index.ts",
     "random": "echo 'Random script updated at $(date)' && echo 'Change queued successfully' && echo 'Another change made' && echo 'Yet another change' && echo 'One more change' && echo 'Final change' && echo 'Another final change' && echo 'Yet another final change'",
