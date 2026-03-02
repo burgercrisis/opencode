@@ -104,7 +104,7 @@ try {
   ;(globalThis as any).Instance = Instance
   // Save the real Instance for restoration after polluted tests
   realInstance = Instance
-  console.log("[preload.ts] Instance global exposed successfully")
+  console.log("[preload.ts] Instance global exposed successfully, provide is:", typeof Instance.provide)
 } catch (err) {
   console.error("[preload.ts] Failed to import modules:", err)
   throw err
@@ -147,15 +147,21 @@ afterEach(async () => {
 const originalCwd = process.cwd()
 
 bunBeforeEach(async () => {
-  // Clean up any polluted globals BEFORE each test runs
-  // Restore Instance if it was polluted by src/*/test/ files or deleted entirely
+  // ALWAYS restore the real Instance - this must be done BEFORE any test code runs
+  // to ensure test files that import Instance get the real one, not a polluted version
   if (realInstance) {
-    const currentInstance = (globalThis as any).Instance
-    // Restore if: different reference, or undefined, or deleted entirely
-    if (currentInstance !== realInstance) {
-      (globalThis as any).Instance = realInstance
-    }
+    (globalThis as any).Instance = realInstance
   }
+  
+  // Clear auth.json to prevent auth state pollution between tests
+  // This must happen BEFORE we potentially delete Global below
+  try {
+    const authPath = path.join(Global.Path.data, "auth.json")
+    await fs.writeFile(authPath, "{}", "utf-8")
+  } catch {
+    // Ignore errors if file doesn't exist or Global not available
+  }
+  
   delete (globalThis as any).Config
   delete (globalThis as any).Filesystem
   delete (globalThis as any).Global
@@ -163,14 +169,6 @@ bunBeforeEach(async () => {
   // Reset working directory to original to fix shell command failures
   if (process.cwd() !== originalCwd) {
     process.chdir(originalCwd)
-  }
-  
-  // Clear auth.json to prevent auth state pollution between tests
-  try {
-    const authPath = path.join(Global.Path.data, "auth.json")
-    await fs.writeFile(authPath, "{}", "utf-8")
-  } catch {
-    // Ignore errors if file doesn't exist
   }
 })
 
