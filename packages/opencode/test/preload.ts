@@ -146,14 +146,21 @@ afterEach(async () => {
 // Store original working directory to reset after each test
 const originalCwd = process.cwd()
 
-bunBeforeEach(async () => {
-  // ALWAYS restore the real Instance - this must be done BEFORE any test code runs
-  // to ensure test files that import Instance get the real one, not a polluted version
-  if (realInstance) {
-    (globalThis as any).Instance = realInstance
-  }
-  
-  // Clear auth.json to prevent auth state pollution between tests
+  bunBeforeEach(async () => {
+    // ALWAYS restore the real Instance - this must be done BEFORE any test code runs
+    // to ensure test files that import Instance get the real one, not a polluted version
+    if (realInstance) {
+      (globalThis as any).Instance = realInstance
+    }
+    
+    // DEBUG: Check if the Instance module export has been corrupted
+    const currentProvide = (Instance as any).provide
+    if (typeof currentProvide !== 'function') {
+      console.error(`[preload.ts] CRITICAL: Instance.provide is ${typeof currentProvide}, not function!`)
+      console.error(`[preload.ts] Instance keys:`, Object.keys(Instance || {}))
+    }
+    
+    // Clear auth.json to prevent auth state pollution between tests
   // This must happen BEFORE we potentially delete Global below
   try {
     const authPath = path.join(Global.Path.data, "auth.json")
