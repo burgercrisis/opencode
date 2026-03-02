@@ -18,6 +18,18 @@ const ctx = {
 
 const projectRoot = path.join(__dirname, "../..")
 
+// Helper to check if we're running in Git Bash (which doesn't handle PowerShell syntax well)
+const isGitBash = async () => {
+  if (process.platform !== "win32") return false
+  const bash = await BashTool.init()
+  const result = await bash.execute(
+    { command: "echo $SHELL", description: "Check shell" },
+    ctx,
+  )
+  // Git Bash typically has /usr/bin/bash or similar as SHELL
+  return result.metadata.output.includes("/bin/bash") || result.metadata.output.includes("/usr/bin")
+}
+
 describe("tool.bash preliminary test suite", () => {
   describe("Part 1: Basic Shell Execution", () => {
     describe("1.1 Simple PowerShell Commands", () => {

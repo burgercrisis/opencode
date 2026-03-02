@@ -1,8 +1,3 @@
+[test]
 preload = ["./test/preload.ts"]
-
-# Exclude src/*/test/ files - they pollute global state (globalThis.Instance)
-# causing "Instance.provide is not a function" errors in subsequent tests
-# These tests also have fundamental design issues (mocking const values)
-# The test/ directory tests work correctly
-# Note: Bun's exclude uses glob patterns - use **/ to match any path
-exclude = ["**/src/**/*.test.ts", "node_modules/**", "**/node_modules/**"]
+exclude = ["src/**/*.test.ts"]
