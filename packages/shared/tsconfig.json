@@ -15,7 +15,7 @@
     "allowSyntheticDefaultImports": true,
     "module": "ESNext",
     "target": "ES2022",
-    "noEmit": false,
+    "emitDeclarationOnly": true,
     "paths": {
       "@opencode-ai/*": [
         "./*"
