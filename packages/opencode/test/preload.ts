@@ -4,7 +4,10 @@ import os from "os"
 import path from "path"
 import fs from "fs/promises"
 import fsSync from "fs"
-import { afterAll } from "bun:test"
+import { afterAll, afterEach as bunAfterEach, beforeEach as bunBeforeEach } from "bun:test"
+
+// Store the real Instance reference to restore after polluted tests
+let realInstance: any = null
 
 const sanitize = (p: string) => {
   if (!p) return p
@@ -99,6 +102,8 @@ try {
 
   // Expose Instance globally so tests can use Instance.provide()
   ;(globalThis as any).Instance = Instance
+  // Save the real Instance for restoration after polluted tests
+  realInstance = Instance
   console.log("[preload.ts] Instance global exposed successfully")
 } catch (err) {
   console.error("[preload.ts] Failed to import modules:", err)
@@ -119,8 +124,12 @@ afterEach(async () => {
   resetLevenshteinForTest()
   resetGlobalBusForTest()
   
-  // Note: We do NOT delete Instance here because subsequent tests may need it
-  // Tests that pollute global state should clean up after themselves
+  // Restore the real Instance if it was polluted by mock objects
+  // This fixes test isolation issues where src/*/test/ files set globalThis.Instance to mocks
+  if (realInstance && (globalThis as any).Instance !== realInstance) {
+    (globalThis as any).Instance = realInstance
+  }
+  
   delete (globalThis as any).Config
   delete (globalThis as any).Filesystem
   delete (globalThis as any).Global
@@ -133,14 +142,20 @@ afterEach(async () => {
 
 // Also run cleanup BEFORE each test to ensure no pollution from previous tests
 // This helps when tests run in different orders or when beforeEach doesn't run early enough
-const { beforeEach } = await import("bun:test")
 
 // Store original working directory to reset after each test
 const originalCwd = process.cwd()
 
-beforeEach(async () => {
+bunBeforeEach(async () => {
   // Clean up any polluted globals BEFORE each test runs
-  // Keep Instance - it's set once and reused for all tests
+  // Restore Instance if it was polluted by src/*/test/ files or deleted entirely
+  if (realInstance) {
+    const currentInstance = (globalThis as any).Instance
+    // Restore if: different reference, or undefined, or deleted entirely
+    if (currentInstance !== realInstance) {
+      (globalThis as any).Instance = realInstance
+    }
+  }
   delete (globalThis as any).Config
   delete (globalThis as any).Filesystem
   delete (globalThis as any).Global

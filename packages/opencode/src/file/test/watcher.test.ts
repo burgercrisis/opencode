@@ -8,15 +8,28 @@ import os from "os"
 
 describe("FileWatcher", () => {
   let tempDir: string
+  let originalInstance: any
+  let originalConfig: any
 
   beforeEach(() => {
     tempDir = os.tmpdir()
+    // Save original values before any nested beforeEach runs
+    originalInstance = (globalThis as any).Instance
+    originalConfig = (globalThis as any).Config
   })
 
   afterEach(() => {
-    // Clean up any subscriptions or mocks
-    delete (globalThis as any).Instance
-    delete (globalThis as any).Config
+    // Restore original values instead of deleting
+    if (originalInstance !== undefined) {
+      (globalThis as any).Instance = originalInstance
+    } else {
+      delete (globalThis as any).Instance
+    }
+    if (originalConfig !== undefined) {
+      (globalThis as any).Config = originalConfig
+    } else {
+      delete (globalThis as any).Config
+    }
   })
 
   describe("Event schema", () => {

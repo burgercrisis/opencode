@@ -8,7 +8,11 @@ import * as Formatter from "../formatter"
 import { Flag } from "../../flag/flag"
 
 describe("Format", () => {
+  let originalInstance: any
+
   beforeEach(() => {
+    // Save original Instance before mocking
+    originalInstance = (globalThis as any).Instance
     // Mock Instance
     globalThis.Instance = {
       directory: "/test/project",
@@ -20,8 +24,12 @@ describe("Format", () => {
   })
 
   afterEach(() => {
-    // Clean up global mocks
-    delete (globalThis as any).Instance
+    // Restore original Instance instead of deleting
+    if (originalInstance !== undefined) {
+      (globalThis as any).Instance = originalInstance
+    } else {
+      delete (globalThis as any).Instance
+    }
   })
 
   describe("state management", () => {
