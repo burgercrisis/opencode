@@ -1,19 +1,19 @@
 import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test"
 import { Ripgrep } from "../ripgrep"
 import { Global } from "../../global"
-import os from "os"
+import { tmpdir } from "../../../test/fixture/fixture"
 import fs from "fs/promises"
 import path from "path"
 
 describe("Ripgrep", () => {
-  let tempDir: string
+  let temp: { path: string; [Symbol.asyncDispose]: () => Promise<void> }
 
-  beforeEach(() => {
-    tempDir = os.tmpdir()
+  beforeEach(async () => {
+    temp = await tmpdir()
   })
 
   afterEach(async () => {
-    // Clean up temp directory if needed
+    await temp[Symbol.asyncDispose]()
   })
 
   describe("schema validation", () => {
@@ -195,12 +195,12 @@ describe("Ripgrep", () => {
       })()
 
       const files = []
-      for await (const file of Ripgrep.files({ cwd: tempDir })) {
+      for await (const file of Ripgrep.files({ cwd: temp.path })) {
         files.push(file)
       }
 
-      expect(files).toContain("file1.ts")
-      expect(files).toContain("file2.js")
+      expect(files.map(f => f.replace(/\\/g, "/"))).toContain("file1.ts")
+      expect(files.map(f => f.replace(/\\/g, "/"))).toContain("file2.js")
     })
 
     it("should respect glob patterns", async () => {
@@ -227,13 +227,13 @@ describe("Ripgrep", () => {
 
       const files = []
       for await (const file of Ripgrep.files({ 
-        cwd: tempDir, 
+        cwd: temp.path, 
         glob: ["*.ts"] 
       })) {
         files.push(file)
       }
 
-      expect(files).toContain("file.ts")
+      expect(files.map(f => f.replace(/\\/g, "/"))).toContain("file.ts")
     })
 
     it("should handle hidden files option", async () => {
@@ -260,7 +260,7 @@ describe("Ripgrep", () => {
 
       const files = []
       for await (const file of Ripgrep.files({ 
-        cwd: tempDir, 
+        cwd: temp.path, 
         hidden: true 
       })) {
         files.push(file)
@@ -386,9 +386,9 @@ describe("Ripgrep", () => {
         }
       })()
 
-      const tree = await Ripgrep.tree({ cwd: tempDir })
+      const tree = await Ripgrep.tree({ cwd: temp.path })
       expect(typeof tree).toBe("string")
-      expect(tree).toContain("src/")
+      expect(tree.replace(/\\/g, "/")).toContain("src/")
       expect(tree).toContain("src/components/")
     })
 
@@ -411,8 +411,8 @@ describe("Ripgrep", () => {
         }
       })()
 
-      const tree = await Ripgrep.tree({ cwd: tempDir, limit: 10 })
-      const lines = tree.split('\n').filter(line => line.trim())
+      const tree = await Ripgrep.tree({ cwd: temp.path, limit: 10 })
+      const lines = tree.split(/\r?\n/).filter(line => line.trim())
       expect(lines.length).toBeLessThanOrEqual(10)
     })
 
@@ -492,9 +492,9 @@ describe("Ripgrep", () => {
         }
       })()
 
-      const results = await Ripgrep.search({ 
-        cwd: tempDir, 
-        pattern: "console" 
+      const results = await Ripgrep.search({
+        cwd: temp.path,
+        pattern: "console"
       })
 
       expect(results).toHaveLength(1)
