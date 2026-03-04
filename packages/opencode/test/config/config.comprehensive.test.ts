@@ -16,7 +16,7 @@ import { Log } from "../../src/util/log"
 const managedConfigDir = process.env.OPENCODE_TEST_MANAGED_CONFIG_DIR!
 
 afterEach(async () => {
-  await fs.rm(managedConfigDir, { force: true, recursive: true }).catch(() => {})
+  await fs.rm(managedConfigDir, { force: true, recursive: true }).catch(() => { })
 })
 
 async function writeManagedSettings(settings: object, filename = "opencode.json") {
@@ -35,7 +35,7 @@ describe("Config System - Comprehensive Tests", () => {
       await Instance.provide({
         directory: tmp.path,
         fn: async () => {
-          const config = await Config.load()
+          const config = await Config.get()
           expect(config.theme).toBeDefined()
           expect(config.language).toBeDefined()
           expect(config.autoSave).toBeDefined()
@@ -57,7 +57,7 @@ describe("Config System - Comprehensive Tests", () => {
           }
           await writeConfig(tmp.path, projectConfig)
 
-          const config = await Config.load()
+          const config = await Config.get()
           expect(config.theme).toBe("dark")
           expect(config.language).toBe("fr")
           expect(config.autoSave).toBe(false)
@@ -81,11 +81,11 @@ describe("Config System - Comprehensive Tests", () => {
             model: "claude-3-sonnet",
             telemetry: false
           }
-          
+
           await writeConfig(tmp.path, projectConfig)
           await writeManagedSettings(managedConfig)
 
-          const config = await Config.load()
+          const config = await Config.get()
           expect(config.theme).toBe("dark") // From project
           expect(config.language).toBe("fr") // From project
           expect(config.provider).toBe("anthropic") // From managed
@@ -102,8 +102,8 @@ describe("Config System - Comprehensive Tests", () => {
         fn: async () => {
           // Write invalid JSON
           await Filesystem.write(path.join(tmp.path, "opencode.json"), "{ invalid json")
-          
-          const config = await Config.load()
+
+          const config = await Config.get()
           // Should fall back to defaults
           expect(config.theme).toBeDefined()
           expect(config.language).toBeDefined()
@@ -123,7 +123,7 @@ describe("Config System - Comprehensive Tests", () => {
           }
           await writeConfig(tmp.path, invalidConfig)
 
-          const config = await Config.load()
+          const config = await Config.get()
           // Should handle validation gracefully
           expect(typeof config.theme).toBe("string")
           expect(typeof config.autoSave).toBe("boolean")
@@ -169,7 +169,7 @@ describe("Config System - Comprehensive Tests", () => {
       it("should return configuration", async () => {
         const res = await app.request("/")
         expect([200, 500]).toContain(res.status)
-        
+
         if (res.status === 200) {
           expect(res.headers.get("content-type")).toMatch(/application\/json/)
           const json = await res.json()
@@ -186,10 +186,10 @@ describe("Config System - Comprehensive Tests", () => {
       it("should return consistent configuration data", async () => {
         const res1 = await app.request("/")
         const res2 = await app.request("/")
-        
+
         expect([200, 500]).toContain(res1.status)
         expect([200, 500]).toContain(res2.status)
-        
+
         if (res1.status === 200 && res2.status === 200) {
           const json1 = await res1.json()
           const json2 = await res2.json()
@@ -205,13 +205,13 @@ describe("Config System - Comprehensive Tests", () => {
           language: "es",
           autoSave: false
         }
-        
+
         const res = await app.request("/", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify(newConfig)
         })
-        
+
         expect([200, 400, 500]).toContain(res.status)
       })
 
@@ -220,13 +220,13 @@ describe("Config System - Comprehensive Tests", () => {
           theme: 123, // Invalid type
           autoSave: "maybe" // Invalid type
         }
-        
+
         const res = await app.request("/", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify(invalidConfig)
         })
-        
+
         expect([400, 500]).toContain(res.status)
       })
 
@@ -236,7 +236,7 @@ describe("Config System - Comprehensive Tests", () => {
           headers: { "content-type": "application/json" },
           body: "{ invalid json"
         })
-        
+
         expect([400, 500]).toContain(res.status)
       })
     })
@@ -277,7 +277,7 @@ describe("Config System - Comprehensive Tests", () => {
       it("should return configuration with provider info", async () => {
         const res = await app.request("/")
         expect([200, 500]).toContain(res.status)
-        
+
         if (res.status === 200) {
           const json = await res.json()
           expect(json).toHaveProperty('config')
@@ -318,7 +318,7 @@ describe("Config System - Comprehensive Tests", () => {
           }
           await writeConfig(tmp.path, childConfig)
 
-          const config = await Config.load()
+          const config = await Config.get()
           expect(config.theme).toBe("dark") // From parent
           expect(config.language).toBe("fr") // Overridden
           expect(config.provider).toBe("openai") // From child
@@ -337,13 +337,13 @@ describe("Config System - Comprehensive Tests", () => {
             language: "en",
             autoSave: true
           }
-          
+
           const developmentProfile = {
             theme: "light",
             telemetry: true,
             debug: true
           }
-          
+
           const productionProfile = {
             telemetry: false,
             debug: false,
@@ -385,7 +385,7 @@ describe("Config System - Comprehensive Tests", () => {
           }
           await writeConfig(tmp.path, configWithValidation)
 
-          const config = await Config.load()
+          const config = await Config.get()
           expect(typeof config.customSettings.maxFileSize).toBe("number")
           expect(Array.isArray(config.customSettings.allowedExtensions)).toBe(true)
         },
@@ -435,8 +435,8 @@ describe("Config System - Comprehensive Tests", () => {
           }
           await writeConfig(tmp.path, configWithSecrets)
 
-          const config = await Config.load()
-          
+          const config = await Config.get()
+
           // Sensitive fields should be masked in output
           expect(config.apiKey).not.toBe("secret-key-123")
           expect(config.password).not.toBe("secret-password")
@@ -458,7 +458,7 @@ describe("Config System - Comprehensive Tests", () => {
           }
           await writeConfig(tmp.path, encryptedConfig)
 
-          const config = await Config.load()
+          const config = await Config.get()
           expect(config.theme).toBe("dark")
           expect(config.language).toBe("en")
         },
@@ -504,7 +504,7 @@ describe("Config System - Comprehensive Tests", () => {
 
           const startTime = Date.now()
           await writeConfig(tmp.path, largeConfig)
-          const config = await Config.load()
+          const config = await Config.get()
           const endTime = Date.now()
 
           expect(endTime - startTime).toBeLessThan(1000) // Should complete in under 1 second
@@ -584,7 +584,7 @@ describe("Config System - Comprehensive Tests", () => {
           }
           await writeConfig(tmp.path, configWithAuth)
 
-          const config = await Config.load()
+          const config = await Config.get()
           expect(config.auth).toBeDefined()
           expect(config.auth.provider).toBe("github")
           expect(config.auth.scopes).toEqual(["read", "write"])
@@ -648,8 +648,8 @@ describe("Config System - Comprehensive Tests", () => {
         directory: tmp.path,
         fn: async () => {
           await Filesystem.write(path.join(tmp.path, "opencode.json"), "{}")
-          
-          const config = await Config.load()
+
+          const config = await Config.get()
           expect(config).toBeDefined()
           // Should have default values
           expect(config.theme).toBeDefined()
@@ -670,7 +670,7 @@ describe("Config System - Comprehensive Tests", () => {
           }
           await writeConfig(tmp.path, configWithNulls)
 
-          const config = await Config.load()
+          const config = await Config.get()
           expect(config.autoSave).toBe(true)
           // Should handle null/undefined gracefully
           expect(typeof config.theme).toBe("string")
@@ -706,7 +706,7 @@ describe("Config System - Comprehensive Tests", () => {
         fn: async () => {
           const longKey = "x".repeat(100)
           const longValue = "y".repeat(1000)
-          
+
           const config = {
             theme: "dark",
             [longKey]: longValue

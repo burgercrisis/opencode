@@ -12,7 +12,8 @@ describe("Formatter", () => {
     // Mock Instance
     globalThis.Instance = {
       directory: "/test/project",
-      worktree: "/test/project"
+      worktree: "/test/project",
+      provide: async () => ({}) as any
     } as any
   })
 

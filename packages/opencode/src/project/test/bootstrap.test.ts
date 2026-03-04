@@ -103,18 +103,18 @@ describe("Project Bootstrap", () => {
       Project: (global as any).Project
     }
 
-    ;(global as any).Plugin = mockPlugin
-    ;(global as any).ShareNext = mockShareNext
-    ;(global as any).Format = mockFormat
-    ;(global as any).LSP = mockLSP
-    ;(global as any).FileWatcher = mockFileWatcher
-    ;(global as any).File = mockFile
-    ;(global as any).Vcs = mockVcs
-    ;(global as any).Snapshot = mockSnapshot
-    ;(global as any).Truncate = mockTruncate
-    ;(global as any).Bus = mockBus
-    ;(global as any).Command = mockCommand
-    ;(global as any).Project = mockProject
+      ; (global as any).Plugin = mockPlugin
+      ; (global as any).ShareNext = mockShareNext
+      ; (global as any).Format = mockFormat
+      ; (global as any).LSP = mockLSP
+      ; (global as any).FileWatcher = mockFileWatcher
+      ; (global as any).File = mockFile
+      ; (global as any).Vcs = mockVcs
+      ; (global as any).Snapshot = mockSnapshot
+      ; (global as any).Truncate = mockTruncate
+      ; (global as any).Bus = mockBus
+      ; (global as any).Command = mockCommand
+      ; (global as any).Project = mockProject
 
     // This should not throw since it returns early
     await expect(InstanceBootstrap()).resolves.toBeUndefined()
@@ -122,7 +122,7 @@ describe("Project Bootstrap", () => {
     // Restore original modules
     Object.keys(originalModules).forEach(key => {
       if (originalModules[key as string]) {
-        ;(global as any)[key] = originalModules[key as string]
+        ; (global as any)[key] = originalModules[key as string]
       }
     })
   })
@@ -135,7 +135,7 @@ describe("Project Bootstrap", () => {
 
     // Track which init functions were called
     const calledInits = []
-    
+
     const mockPlugin = {
       init: () => {
         calledInits.push("Plugin.init")
@@ -225,7 +225,8 @@ describe("Project Bootstrap", () => {
 
     const mockInstance = {
       project: { id: "test-project-id" },
-      directory: "/test/directory"
+      directory: "/test/directory",
+      provide: async () => ({}) as any
     }
 
     // Mock the modules
@@ -245,19 +246,19 @@ describe("Project Bootstrap", () => {
       Instance: (global as any).Instance
     }
 
-    ;(global as any).Plugin = mockPlugin
-    ;(global as any).ShareNext = mockShareNext
-    ;(global as any).Format = mockFormat
-    ;(global as any).LSP = mockLSP
-    ;(global as any).FileWatcher = mockFileWatcher
-    ;(global as any).File = mockFile
-    ;(global as any).Vcs = mockVcs
-    ;(global as any).Snapshot = mockSnapshot
-    ;(global as any).Truncate = mockTruncate
-    ;(global as any).Bus = mockBus
-    ;(global as any).Command = mockCommand
-    ;(global as any).Project = mockProject
-    ;(global as any).Instance = mockInstance
+      ; (global as any).Plugin = mockPlugin
+      ; (global as any).ShareNext = mockShareNext
+      ; (global as any).Format = mockFormat
+      ; (global as any).LSP = mockLSP
+      ; (global as any).FileWatcher = mockFileWatcher
+      ; (global as any).File = mockFile
+      ; (global as any).Vcs = mockVcs
+      ; (global as any).Snapshot = mockSnapshot
+      ; (global as any).Truncate = mockTruncate
+      ; (global as any).Bus = mockBus
+      ; (global as any).Command = mockCommand
+      ; (global as any).Project = mockProject
+      ; (global as any).Instance = mockInstance
 
     await InstanceBootstrap()
 
@@ -293,7 +294,7 @@ describe("Project Bootstrap", () => {
     // Restore original modules
     Object.keys(originalModules).forEach(key => {
       if (originalModules[key as string]) {
-        ;(global as any)[key] = originalModules[key as string]
+        ; (global as any)[key] = originalModules[key as string]
       }
     })
   })
@@ -330,7 +331,7 @@ describe("Project Bootstrap", () => {
     const mockSnapshot = { init: () => initOrder.push("Snapshot.init") }
     const mockTruncate = { init: () => initOrder.push("Truncate.init") }
 
-    const mockBus = { subscribe: () => {} }
+    const mockBus = { subscribe: () => { } }
     const mockCommand = {
       Event: { Executed: "executed-event" },
       Default: { INIT: "init-command" }
@@ -353,18 +354,18 @@ describe("Project Bootstrap", () => {
       Project: (global as any).Project
     }
 
-    ;(global as any).Plugin = asyncMockPlugin
-    ;(global as any).ShareNext = asyncMockShareNext
-    ;(global as any).Format = mockFormat
-    ;(global as any).LSP = mockLSP
-    ;(global as any).FileWatcher = mockFileWatcher
-    ;(global as any).File = mockFile
-    ;(global as any).Vcs = mockVcs
-    ;(global as any).Snapshot = mockSnapshot
-    ;(global as any).Truncate = mockTruncate
-    ;(global as any).Bus = mockBus
-    ;(global as any).Command = mockCommand
-    ;(global as any).Project = mockProject
+      ; (global as any).Plugin = asyncMockPlugin
+      ; (global as any).ShareNext = asyncMockShareNext
+      ; (global as any).Format = mockFormat
+      ; (global as any).LSP = mockLSP
+      ; (global as any).FileWatcher = mockFileWatcher
+      ; (global as any).File = mockFile
+      ; (global as any).Vcs = mockVcs
+      ; (global as any).Snapshot = mockSnapshot
+      ; (global as any).Truncate = mockTruncate
+      ; (global as any).Bus = mockBus
+      ; (global as any).Command = mockCommand
+      ; (global as any).Project = mockProject
 
     await InstanceBootstrap()
 
@@ -372,7 +373,7 @@ describe("Project Bootstrap", () => {
     expect(initOrder).toEqual([
       "Plugin.init start",
       "Plugin.init end",
-      "ShareNext.init start", 
+      "ShareNext.init start",
       "ShareNext.init end",
       "Format.init",
       "LSP.init",
@@ -386,7 +387,7 @@ describe("Project Bootstrap", () => {
     // Restore original modules
     Object.keys(originalModules).forEach(key => {
       if (originalModules[key as string]) {
-        ;(global as any)[key] = originalModules[key as string]
+        ; (global as any)[key] = originalModules[key as string]
       }
     })
   })
@@ -407,7 +408,8 @@ describe("Project Bootstrap", () => {
     }
 
     const mockInstance = {
-      directory: "/test/directory"
+      directory: "/test/directory",
+      provide: async () => ({}) as any
     }
 
     // Mock modules
@@ -430,14 +432,14 @@ describe("Project Bootstrap", () => {
     const mockModules = {
       Plugin: { init: () => Promise.resolve() },
       ShareNext: { init: () => Promise.resolve() },
-      Format: { init: () => {} },
+      Format: { init: () => { } },
       LSP: { init: () => Promise.resolve() },
-      FileWatcher: { init: () => {} },
-      File: { init: () => {} },
-      Vcs: { init: () => {} },
-      Snapshot: { init: () => {} },
-      Truncate: { init: () => {} },
-      Bus: { subscribe: () => {} },
+      FileWatcher: { init: () => { } },
+      File: { init: () => { } },
+      Vcs: { init: () => { } },
+      Snapshot: { init: () => { } },
+      Truncate: { init: () => { } },
+      Bus: { subscribe: () => { } },
       Command: {
         Event: { Executed: "executed-event" },
         Default: { INIT: "init-command" }
@@ -446,13 +448,13 @@ describe("Project Bootstrap", () => {
     }
 
     Object.keys(mockModules).forEach(key => {
-      ;(global as any)[key] = mockModules[key as string]
+      ; (global as any)[key] = mockModules[key as string]
     })
 
     // Override Log.Default
     const originalLogDefault = (global as any).Log?.Default
-    ;(global as any).Log = { Default: mockLog }
-    ;(global as any).Instance = mockInstance
+      ; (global as any).Log = { Default: mockLog }
+      ; (global as any).Instance = mockInstance
 
     await InstanceBootstrap()
 
@@ -462,11 +464,11 @@ describe("Project Bootstrap", () => {
     // Restore
     Object.keys(originalModules).forEach(key => {
       if (originalModules[key as string]) {
-        ;(global as any)[key] = originalModules[key as string]
+        ; (global as any)[key] = originalModules[key as string]
       }
     })
     if (originalLogDefault) {
-      ;(global as any).Log.Default = originalLogDefault
+      ; (global as any).Log.Default = originalLogDefault
     }
   })
 })

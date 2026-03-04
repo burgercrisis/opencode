@@ -16,7 +16,8 @@ describe("Format", () => {
     // Mock Instance
     globalThis.Instance = {
       directory: "/test/project",
-      worktree: "/test/project"
+      worktree: "/test/project",
+      provide: async () => ({}) as any
     } as any
 
     // Reset Format state
@@ -42,10 +43,10 @@ describe("Format", () => {
       // Set some state
       Format.state.enabled = true
       Format.state.cache.set("test", true)
-      
+
       // Reset
       Format.resetForTest?.()
-      
+
       expect(Format.state.enabled).toBe(false)
       expect(Format.state.cache.size).toBe(0)
     })
@@ -283,7 +284,7 @@ describe("Format", () => {
           ...mod.Bus,
           subscribe: () => {
             subscribeCalled = true
-            return () => {} // unsubscribe function
+            return () => { } // unsubscribe function
           }
         }
       })()
@@ -308,7 +309,7 @@ describe("Format", () => {
           ...mod.Bus,
           subscribe: () => {
             subscribeCalled = true
-            return () => {}
+            return () => { }
           }
         }
       })()
@@ -339,7 +340,7 @@ describe("Format", () => {
                 content: "package main\n\nfunc main() {\n}"
               })
             }
-            return () => {}
+            return () => { }
           }
         }
       })()
@@ -390,7 +391,7 @@ describe("Format", () => {
                 content: "some content"
               })
             }
-            return () => {}
+            return () => { }
           }
         }
       })()
@@ -430,7 +431,7 @@ describe("Format", () => {
                 content: "package main\n\nfunc main() {\n}"
               })
             }
-            return () => {}
+            return () => { }
           }
         }
       })()
@@ -470,7 +471,7 @@ describe("Format", () => {
                 content: "package main\n\nfunc main() {\n}"
               })
             }
-            return () => {}
+            return () => { }
           }
         }
       })()
@@ -479,7 +480,7 @@ describe("Format", () => {
         const mod = await import("../../config/config")
         return {
           ...mod.Config,
-          get: () => Promise.resolve({ 
+          get: () => Promise.resolve({
             format: { enabled: true },
             ignore: ["node_modules"]
           })
@@ -616,7 +617,7 @@ describe("Format", () => {
                 content: "package main\n\nfunc main() {\n}"
               })
             }
-            return () => {}
+            return () => { }
           }
         }
       })()
@@ -678,7 +679,7 @@ describe("Format", () => {
         const mod = await import("../../config/config")
         return {
           ...mod.Config,
-          get: () => Promise.resolve({ 
+          get: () => Promise.resolve({
             format: { enabled: true },
             ignore: ["test"]
           })
@@ -699,7 +700,7 @@ describe("Format", () => {
             if (event === "file.edited") {
               eventReceived = true
             }
-            return () => {}
+            return () => { }
           }
         }
       })()

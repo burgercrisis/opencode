@@ -6,8 +6,35 @@ import fs from "fs/promises"
 import fsSync from "fs"
 import { afterAll, afterEach as bunAfterEach, beforeEach as bunBeforeEach } from "bun:test"
 
-// Store the real Instance reference to restore after polluted tests
+// Store the real Instance reference
 let realInstance: any = null
+
+// Create a protected wrapper that can't be modified
+function createProtectedInstance(instance: any) {
+  return new Proxy(instance, {
+    get(target, prop) {
+      // Always return from the original instance
+      return target[prop]
+    },
+    set(target, prop, value) {
+      // Allow setting properties but preserve the provide method
+      if (prop === 'provide') {
+        console.warn("[preload.ts] WARNING: Attempt to modify Instance.provide blocked")
+        return false
+      }
+      target[prop] = value
+      return true
+    },
+    deleteProperty(target, prop) {
+      if (prop === 'provide') {
+        console.warn("[preload.ts] WARNING: Attempt to delete Instance.provide blocked")
+        return false
+      }
+      delete target[prop]
+      return true
+    }
+  })
+}
 
 const sanitize = (p: string) => {
   if (!p) return p
@@ -101,9 +128,17 @@ try {
   afterEach = bunTest.afterEach
 
   // Expose Instance globally so tests can use Instance.provide()
-  ;(globalThis as any).Instance = Instance
+  const protectedInstance = createProtectedInstance(Instance)
+    ; (globalThis as any).Instance = protectedInstance
   // Save the real Instance for restoration after polluted tests
-  realInstance = Instance
+  realInstance = protectedInstance
+
+  // DEEP FREEZE to prevent modifications
+  if (typeof Object.freeze === 'function') {
+    Object.freeze((globalThis as any).Instance)
+    Object.freeze((globalThis as any).Instance.provide)
+  }
+
   console.log("[preload.ts] Instance global exposed successfully, provide is:", typeof Instance.provide)
 } catch (err) {
   console.error("[preload.ts] Failed to import modules:", err)
@@ -123,17 +158,85 @@ afterEach(async () => {
   Log.resetForTest()
   resetLevenshteinForTest()
   resetGlobalBusForTest()
-  
+
   // Restore the real Instance if it was polluted by mock objects
   // This fixes test isolation issues where src/*/test/ files set globalThis.Instance to mocks
   if (realInstance && (globalThis as any).Instance !== realInstance) {
     (globalThis as any).Instance = realInstance
   }
-  
+
+  // ALWAYS ensure the global Instance has the provide method
+  // Some tests might be modifying the Instance object in-place
+  if ((globalThis as any).Instance && typeof (globalThis as any).Instance.provide !== 'function') {
+    console.error("[preload.ts] Global Instance missing provide method, attempting complete restoration")
+
+    // EMERGENCY: Complete module reload
+    try {
+      // Clear all caches
+      delete require.cache[require.resolve("../src/project/instance")]
+
+      // Re-import the Instance module
+      const freshInstanceModule = await import("../src/project/instance")
+      const freshInstance = freshInstanceModule.default || freshInstanceModule.Instance
+
+      // Verify the fresh instance has provide method
+      if (typeof freshInstance?.provide === 'function') {
+        const protectedInstance = createProtectedInstance(freshInstance)
+          ; (globalThis as any).Instance = protectedInstance
+        realInstance = protectedInstance
+
+        // Re-freeze the new instance
+        if (typeof Object.freeze === 'function') {
+          Object.freeze((globalThis as any).Instance)
+          Object.freeze((globalThis as any).Instance.provide)
+        }
+
+        console.error("[preload.ts] Emergency restoration successful")
+      } else {
+        console.error("[preload.ts] Emergency restoration failed - fresh instance missing provide method")
+      }
+    } catch (err) {
+      console.error("[preload.ts] Emergency restoration failed:", err)
+    }
+  }
+
+  // ADDITIONAL SAFETY: Always verify Instance.provide exists and recreate if needed
+  if (typeof (globalThis as any).Instance?.provide !== 'function') {
+    console.error("[preload.ts] CRITICAL: Instance.provide still missing after restoration, forcing recreation")
+    try {
+      // Force complete recreation
+      const { Instance: FreshInstance } = await import("../src/project/instance")
+      if (typeof FreshInstance?.provide === 'function') {
+        const protectedInstance = createProtectedInstance(FreshInstance)
+          ; (globalThis as any).Instance = protectedInstance
+        realInstance = protectedInstance
+
+        // Re-freeze
+        if (typeof Object.freeze === 'function') {
+          Object.freeze((globalThis as any).Instance)
+          Object.freeze((globalThis as any).Instance.provide)
+        }
+        console.error("[preload.ts] Force recreation successful")
+      }
+    } catch (err) {
+      console.error("[preload.ts] Force recreation failed:", err)
+    }
+  }
+
   delete (globalThis as any).Config
   delete (globalThis as any).Filesystem
   delete (globalThis as any).Global
-  
+
+  // Reset Global.Path to prevent pollution from tests that modify it
+  // This is critical because some tests modify Global.Path.config and Global.Path.data
+  // which can break module loading for Config and other modules
+  try {
+    const { Global } = await import("../src/global")
+    Global.resetForTest()
+  } catch (err) {
+    // Ignore if Global module is not available
+  }
+
   // Reset working directory after each test
   if (process.cwd() !== originalCwd) {
     process.chdir(originalCwd)
@@ -146,21 +249,41 @@ afterEach(async () => {
 // Store original working directory to reset after each test
 const originalCwd = process.cwd()
 
-  bunBeforeEach(async () => {
-    // ALWAYS restore the real Instance - this must be done BEFORE any test code runs
-    // to ensure test files that import Instance get the real one, not a polluted version
-    if (realInstance) {
+bunBeforeEach(async () => {
+  // ALWAYS restore the real Instance - this must be done BEFORE any test code runs
+  // to ensure test files that import Instance get the real one, not a polluted version
+  if (realInstance) {
+    (globalThis as any).Instance = realInstance
+  }
+
+  // ALWAYS ensure the global Instance has the provide method
+  // Some tests might be modifying the Instance object in-place
+  if ((globalThis as any).Instance && typeof (globalThis as any).Instance.provide !== 'function') {
+    console.error("[preload.ts] beforeEach: Global Instance missing provide method, restoring from realInstance")
       (globalThis as any).Instance = realInstance
+  }
+
+  // DEBUG: Check if the Instance module export has been corrupted
+  const currentProvide = (Instance as any).provide
+  if (typeof currentProvide !== 'function') {
+    console.error(`[preload.ts] CRITICAL: Instance.provide is ${typeof currentProvide}, not function!`)
+    console.error(`[preload.ts] Instance keys:`, Object.keys(Instance || {}))
+
+    // EMERGENCY: Try to reload the Instance module
+    try {
+      console.error("[preload.ts] Attempting emergency reload of Instance module")
+      const instancePath = path.join(import.meta.dir, "src", "project", "instance.ts")
+      delete require.cache[instancePath]
+      const freshInstance = await import(instancePath)
+        ; (globalThis as any).Instance = freshInstance.default
+      realInstance = freshInstance.default
+      console.error("[preload.ts] Emergency reload completed, provide is:", typeof freshInstance.default.provide)
+    } catch (err) {
+      console.error("[preload.ts] Emergency reload failed:", err)
     }
-    
-    // DEBUG: Check if the Instance module export has been corrupted
-    const currentProvide = (Instance as any).provide
-    if (typeof currentProvide !== 'function') {
-      console.error(`[preload.ts] CRITICAL: Instance.provide is ${typeof currentProvide}, not function!`)
-      console.error(`[preload.ts] Instance keys:`, Object.keys(Instance || {}))
-    }
-    
-    // Clear auth.json to prevent auth state pollution between tests
+  }
+
+  // Clear auth.json to prevent auth state pollution between tests
   // This must happen BEFORE we potentially delete Global below
   try {
     const authPath = path.join(Global.Path.data, "auth.json")
@@ -168,11 +291,11 @@ const originalCwd = process.cwd()
   } catch {
     // Ignore errors if file doesn't exist or Global not available
   }
-  
+
   delete (globalThis as any).Config
   delete (globalThis as any).Filesystem
   delete (globalThis as any).Global
-  
+
   // Reset working directory to original to fix shell command failures
   if (process.cwd() !== originalCwd) {
     process.chdir(originalCwd)

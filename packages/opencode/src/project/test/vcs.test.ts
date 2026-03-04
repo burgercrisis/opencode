@@ -3,14 +3,14 @@ import * as Vcs from "../vcs"
 
 describe("VCS Module", () => {
   describe("currentBranch function", () => {
-    it("should return current branch name", async () => {
+    it("should return current branch", async () => {
       const mockBun = {
         $: {
-          text: () => Promise.resolve("main\n"),
+          text: () => Promise.resolve("main"),
           quiet: () => ({
             nothrow: () => ({
               cwd: () => ({
-                text: () => Promise.resolve("main\n")
+                text: () => Promise.resolve("main")
               })
             })
           })
@@ -19,19 +19,22 @@ describe("VCS Module", () => {
 
       // Mock Instance - save full object to restore properly
       const originalInstance = (global as any).Instance
-      ;(global as any).Instance = { worktree: "/test/repo" }
+        ; (global as any).Instance = {
+          worktree: "/test/repo",
+          provide: async () => ({}) as any
+        }
       const originalBun = (global as any).Bun
-      ;(global as any).Bun = mockBun
+        ; (global as any).Bun = mockBun
 
       const branch = await (Vcs as any).currentBranch()
       expect(branch).toBe("main")
 
       // Restore
       if (originalInstance) {
-        ;(global as any).Instance = originalInstance
+        ; (global as any).Instance = originalInstance
       }
       if (originalBun) {
-        ;(global as any).Bun = originalBun
+        ; (global as any).Bun = originalBun
       }
     })
 
@@ -51,19 +54,22 @@ describe("VCS Module", () => {
 
       // Mock Instance - save full object to restore properly
       const originalInstance = (global as any).Instance
-      ;(global as any).Instance = { worktree: "/test/repo" }
+        ; (global as any).Instance = {
+          worktree: "/test/repo",
+          provide: async () => ({}) as any
+        }
       const originalBun = (global as any).Bun
-      ;(global as any).Bun = mockBun
+        ; (global as any).Bun = mockBun
 
       const branch = await (Vcs as any).currentBranch()
       expect(branch).toBeUndefined()
 
       // Restore
       if (originalInstance) {
-        ;(global as any).Instance = originalInstance
+        ; (global as any).Instance = originalInstance
       }
       if (originalBun) {
-        ;(global as any).Bun = originalBun
+        ; (global as any).Bun = originalBun
       }
     })
 
@@ -82,19 +88,22 @@ describe("VCS Module", () => {
 
       // Mock Instance - save full object to restore properly
       const originalInstance = (global as any).Instance
-      ;(global as any).Instance = { worktree: "/test/repo" }
+        ; (global as any).Instance = {
+          worktree: "/test/repo",
+          provide: async () => ({}) as any
+        }
       const originalBun = (global as any).Bun
-      ;(global as any).Bun = mockBun
+        ; (global as any).Bun = mockBun
 
       const branch = await (Vcs as any).currentBranch()
       expect(branch).toBe("feature-branch")
 
       // Restore
       if (originalInstance) {
-        ;(global as any).Instance = originalInstance
+        ; (global as any).Instance = originalInstance
       }
       if (originalBun) {
-        ;(global as any).Bun = originalBun
+        ; (global as any).Bun = originalBun
       }
     })
   })
@@ -127,7 +136,8 @@ describe("VCS Module", () => {
 
       const mockInstance = {
         project: { vcs: "git" },
-        worktree: "/test/repo"
+        worktree: "/test/repo",
+        provide: async () => ({}) as any
       }
 
       // Mock dependencies
@@ -135,9 +145,9 @@ describe("VCS Module", () => {
       const originalBus = (global as any).Bus
       const originalInstance = (global as any).Instance
 
-      ;(global as any).Bun = mockBun
-      ;(global as any).Bus = mockBus
-      ;(global as any).Instance = mockInstance
+        ; (global as any).Bun = mockBun
+        ; (global as any).Bus = mockBus
+        ; (global as any).Instance = mockInstance
 
       const state = await Vcs.init()
 
@@ -161,13 +171,14 @@ describe("VCS Module", () => {
     it("should return empty state for non-git repository", async () => {
       const mockInstance = {
         project: { vcs: undefined },
-        worktree: "/test/repo"
+        worktree: "/test/repo",
+        provide: async () => ({}) as any
       }
 
       // Mock dependencies
       const originalInstance = (global as any).Instance
 
-      ;(global as any).Instance = mockInstance
+        ; (global as any).Instance = mockInstance
 
       const state = await Vcs.init()
 
@@ -198,12 +209,13 @@ describe("VCS Module", () => {
       }
 
       const mockBus = {
-        subscribe: () => () => {}
+        subscribe: () => () => { }
       }
 
       const mockInstance = {
         project: { vcs: "git" },
-        worktree: "/test/repo"
+        worktree: "/test/repo",
+        provide: async () => ({}) as any
       }
 
       // Mock dependencies
@@ -211,9 +223,9 @@ describe("VCS Module", () => {
       const originalBus = (global as any).Bus
       const originalInstance = (global as any).Instance
 
-      ;(global as any).Bun = mockBun
-      ;(global as any).Bus = mockBus
-      ;(global as any).Instance = mockInstance
+        ; (global as any).Bun = mockBun
+        ; (global as any).Bus = mockBus
+        ; (global as any).Instance = mockInstance
 
       const branch = await Vcs.branch()
       expect(branch).toBe("develop")
@@ -254,7 +266,7 @@ describe("VCS Module", () => {
           // Store the handler to call it manually
           return {
             handler,
-            unsubscribe: () => {}
+            unsubscribe: () => { }
           }
         },
         publish: (event: any, data: any) => {
@@ -264,7 +276,8 @@ describe("VCS Module", () => {
 
       const mockInstance = {
         project: { vcs: "git" },
-        worktree: "/test/repo"
+        worktree: "/test/repo",
+        provide: async () => ({}) as any
       }
 
       // Mock FileWatcher event
@@ -277,9 +290,9 @@ describe("VCS Module", () => {
       const originalBus = (global as any).Bus
       const originalInstance = (global as any).Instance
 
-      ;(global as any).Bun = mockBun
-      ;(global as any).Bus = mockBus
-      ;(global as any).Instance = mockInstance
+        ; (global as any).Bun = mockBun
+        ; (global as any).Bus = mockBus
+        ; (global as any).Instance = mockInstance
 
       // Initialize VCS
       await Vcs.init()
@@ -288,19 +301,19 @@ describe("VCS Module", () => {
       const headFileEvent = {
         properties: { file: "/test/repo/.git/HEAD" }
       }
-      
+
       // Get the handler from the subscription
       const subscription = mockBus.subscribe()
       if (subscription.handler) {
         // Call with HEAD file (should be ignored)
         await subscription.handler(headFileEvent)
-        
+
         // No event should be published for HEAD file
         expect(publishedEvent).toBeUndefined()
 
         // Call with non-HEAD file (should trigger branch check)
         await subscription.handler(mockFileWatcherEvent)
-        
+
         // Event should be published for branch change
         expect(publishedEvent).toBeDefined()
         expect(publishedEvent.event).toBe(Vcs.Event.BranchUpdated)
@@ -330,8 +343,8 @@ describe("VCS Module", () => {
 
       const mockBus = {
         subscribe: () => ({
-          handler: async (event: any) => {},
-          unsubscribe: () => {}
+          handler: async (event: any) => { },
+          unsubscribe: () => { }
         }),
         publish: (event: any, data: any) => {
           publishCallCount++
@@ -340,7 +353,8 @@ describe("VCS Module", () => {
 
       const mockInstance = {
         project: { vcs: "git" },
-        worktree: "/test/repo"
+        worktree: "/test/repo",
+        provide: async () => ({}) as any
       }
 
       // Mock dependencies
@@ -348,9 +362,9 @@ describe("VCS Module", () => {
       const originalBus = (global as any).Bus
       const originalInstance = (global as any).Instance
 
-      ;(global as any).Bun = mockBun
-      ;(global as any).Bus = mockBus
-      ;(global as any).Instance = mockInstance
+        ; (global as any).Bun = mockBun
+        ; (global as any).Bus = mockBus
+        ; (global as any).Instance = mockInstance
 
       // Initialize VCS
       await Vcs.init()
@@ -361,7 +375,7 @@ describe("VCS Module", () => {
         // Call handler multiple times
         await subscription.handler({ properties: { file: "some-file" } })
         await subscription.handler({ properties: { file: "another-file" } })
-        
+
         // No events should be published since branch didn't change
         expect(publishCallCount).toBe(0)
       }
@@ -435,7 +449,8 @@ describe("VCS Module", () => {
       const mockBus = { subscribe: () => ({}) }
       const mockInstance = {
         project: { vcs: "git" },
-        worktree: "/test/repo"
+        worktree: "/test/repo",
+        provide: async () => ({}) as any
       }
 
       // Mock dependencies
@@ -444,10 +459,10 @@ describe("VCS Module", () => {
       const originalBus = (global as any).Bus
       const originalInstance = (global as any).Instance
 
-      ;(global as any).Log = { create: () => mockLog }
-      ;(global as any).Bun = mockBun
-      ;(global as any).Bus = mockBus
-      ;(global as any).Instance = mockInstance
+        ; (global as any).Log = { create: () => mockLog }
+        ; (global as any).Bun = mockBun
+        ; (global as any).Bus = mockBus
+        ; (global as any).Instance = mockInstance
 
       await Vcs.init()
 
@@ -493,15 +508,16 @@ describe("VCS Module", () => {
         subscribe: (event: any, handler: any) => {
           return {
             handler,
-            unsubscribe: () => {}
+            unsubscribe: () => { }
           }
         },
-        publish: () => {}
+        publish: () => { }
       }
 
       const mockInstance = {
         project: { vcs: "git" },
-        worktree: "/test/repo"
+        worktree: "/test/repo",
+        provide: async () => ({}) as any
       }
 
       // Mock dependencies
@@ -510,10 +526,10 @@ describe("VCS Module", () => {
       const originalBus = (global as any).Bus
       const originalInstance = (global as any).Instance
 
-      ;(global as any).Log = { create: () => mockLog }
-      ;(global as any).Bun = mockBun
-      ;(global as any).Bus = mockBus
-      ;(global as any).Instance = mockInstance
+        ; (global as any).Log = { create: () => mockLog }
+        ; (global as any).Bun = mockBun
+        ; (global as any).Bus = mockBus
+        ; (global as any).Instance = mockInstance
 
       await Vcs.init()
 

@@ -1,6 +1,7 @@
-import { describe, test, expect, beforeEach, mock } from "bun:test"
+import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test"
 import { ACPSessionManager } from "../../src/acp/session"
 import type { ACPSessionState } from "../../src/acp/types"
+import { RequestError } from "@agentclientprotocol/sdk"
 
 // Mock SDK - using plain functions instead of bun:test mock
 const createSessionMock = async () => ({
@@ -60,20 +61,20 @@ describe("ACP Session Manager - Comprehensive Tests", () => {
 
     test("should have expected methods", () => {
       const sessionManager = new ACPSessionManager({} as any)
-      
+
       // Check for key methods that should exist
       const managerMethods = Object.getOwnPropertyNames(ACPSessionManager.prototype)
       const expectedMethods = [
         "constructor",
         "create",
-        "load", 
+        "load",
         "tryGet",
         "get",
         "setModel",
         "setVariant",
         "setMode"
       ]
-      
+
       for (const method of expectedMethods) {
         expect(managerMethods.includes(method)).toBe(true)
       }
@@ -94,7 +95,7 @@ describe("ACP Session Manager - Comprehensive Tests", () => {
 
       const manager = new ACPSessionManager(mockSDK as any)
       const session = await manager.create("/test", [], {})
-      
+
       expect(session).toBeDefined()
       expect(session.id).toBe("minimal-session")
     })
@@ -114,25 +115,26 @@ describe("ACP Session Manager - Comprehensive Tests", () => {
         [],
         { providerID: "test", modelID: "test-model" }
       )
-      
+
       expect(session).toBeDefined()
       expect(session.id).toBe("test-session-id")
-      expect(session.directory).toBe("/test")
+      expect(session.cwd).toBe("/test")
     })
 
     test("should load existing session", async () => {
       const session = await sessionManager.load("test-session-id")
-      
+
       expect(session).toBeDefined()
       expect(session.id).toBe("test-session-id")
-      expect(session.model?.providerID).toBe("test")
+      expect(session.cwd).toBe("/test")
     })
 
     test("should try get session safely", async () => {
       const session = await sessionManager.tryGet("test-session-id")
-      
+
       expect(session).toBeDefined()
       expect(session.id).toBe("test-session-id")
+      expect(session.cwd).toBe("/test")
     })
 
     test("should handle non-existent session in tryGet", async () => {
@@ -142,16 +144,17 @@ describe("ACP Session Manager - Comprehensive Tests", () => {
         }
       }
       const manager = new ACPSessionManager(mockSDK as any)
-      
+
       const session = await manager.tryGet("non-existent")
       expect(session).toBeUndefined()
     })
 
     test("should get session with error handling", async () => {
       const session = await sessionManager.get("test-session-id")
-      
+
       expect(session).toBeDefined()
       expect(session.id).toBe("test-session-id")
+      expect(session.cwd).toBe("/test")
     })
 
     test("should handle session creation errors", async () => {
@@ -161,7 +164,7 @@ describe("ACP Session Manager - Comprehensive Tests", () => {
         }
       }
       const manager = new ACPSessionManager(mockSDK as any)
-      
+
       await expect(manager.create("/test", [], {})).rejects.toThrow("Creation failed")
     })
   })
@@ -172,7 +175,7 @@ describe("ACP Session Manager - Comprehensive Tests", () => {
         providerID: "openai",
         modelID: "gpt-4"
       })
-      
+
       // Verify the model was set (implementation dependent)
       expect(sessionManager).toBeDefined()
     })
@@ -182,14 +185,14 @@ describe("ACP Session Manager - Comprehensive Tests", () => {
         temperature: 0.7,
         maxTokens: 1000
       })
-      
+
       // Verify the variant was set (implementation dependent)
       expect(sessionManager).toBeDefined()
     })
 
     test("should set mode configuration", async () => {
       await sessionManager.setMode("test-session-id", "edit")
-      
+
       // Verify the mode was set (implementation dependent)
       expect(sessionManager).toBeDefined()
     })
@@ -207,8 +210,8 @@ describe("ACP Session Manager - Comprehensive Tests", () => {
         }
       }
       const manager = new ACPSessionManager(mockSDK as any)
-      
-      await expect(manager.get("non-existent")).rejects.toThrow()
+
+      await expect(manager.get("non-existent")).rejects.toThrow(RequestError)
     })
 
     test("should handle malformed session data", async () => {
@@ -218,23 +221,22 @@ describe("ACP Session Manager - Comprehensive Tests", () => {
         }
       }
       const manager = new ACPSessionManager(mockSDK as any)
-      
-      const session = await manager.get("malformed")
-      expect(session).toBeDefined()
+
+      await expect(manager.get("malformed")).rejects.toThrow(RequestError)
     })
   })
 
   describe("Edge Cases", () => {
     test("should handle empty session ID", async () => {
-      await expect(sessionManager.get("")).rejects.toThrow()
+      await expect(sessionManager.get("")).rejects.toThrow(RequestError)
     })
 
     test("should handle null session ID", async () => {
-      await expect(sessionManager.get(null as any)).rejects.toThrow()
+      await expect(sessionManager.get(null as any)).rejects.toThrow(RequestError)
     })
 
     test("should handle undefined session ID", async () => {
-      await expect(sessionManager.get(undefined as any)).rejects.toThrow()
+      await expect(sessionManager.get(undefined as any)).rejects.toThrow(RequestError)
     })
 
     test("should handle concurrent session operations", async () => {
@@ -243,7 +245,7 @@ describe("ACP Session Manager - Comprehensive Tests", () => {
         sessionManager.create("/test2", [], {}),
         sessionManager.create("/test3", [], {})
       ]
-      
+
       const sessions = await Promise.all(promises)
       expect(sessions).toHaveLength(3)
       expect(sessions[0].id).toBe("test-session-id")

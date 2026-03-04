@@ -35,10 +35,10 @@ describe("FileWatcher", () => {
   describe("Event schema", () => {
     it("should define file watcher events", () => {
       expect(FileWatcher.Event.Updated.type).toBe("file.watcher.updated")
-      
+
       const payload = { file: "test.txt", event: "add" as const }
       expect(() => FileWatcher.Event.Updated.schema.parse(payload)).not.toThrow()
-      
+
       const parsed = FileWatcher.Event.Updated.schema.parse(payload)
       expect(parsed.file).toBe("test.txt")
       expect(parsed.event).toBe("add")
@@ -46,7 +46,7 @@ describe("FileWatcher", () => {
 
     it("should validate all event types", () => {
       const events = ["add", "change", "unlink"] as const
-      
+
       events.forEach(event => {
         const payload = { file: "test.txt", event }
         expect(() => FileWatcher.Event.Updated.schema.parse(payload)).not.toThrow()
@@ -62,9 +62,10 @@ describe("FileWatcher", () => {
       globalThis.Instance = {
         directory: tempDir,
         worktree: tempDir,
-        project: { vcs: "git" as const }
+        project: { vcs: "git" as const },
+        provide: async () => ({}) as any
       } as any
-      
+
       globalThis.Config = {
         get: () => Promise.resolve({
           watcher: { ignore: [] }
@@ -93,7 +94,8 @@ describe("FileWatcher", () => {
     it("should not initialize when project VCS is not git", () => {
       globalThis.Instance = {
         ...globalThis.Instance,
-        project: { vcs: "svn" as const }
+        project: { vcs: "svn" as const },
+        provide: async () => ({}) as any
       }
 
       FileWatcher.init()
@@ -106,9 +108,10 @@ describe("FileWatcher", () => {
       globalThis.Instance = {
         directory: tempDir,
         worktree: tempDir,
-        project: { vcs: "git" as const }
+        project: { vcs: "git" as const },
+        provide: async () => ({}) as any
       } as any
-      
+
       globalThis.Config = {
         get: () => Promise.resolve({
           watcher: { ignore: [] }
@@ -123,7 +126,7 @@ describe("FileWatcher", () => {
         return {
           default: () => ({
             subscribe: () => Promise.resolve({
-              unsubscribe: () => {}
+              unsubscribe: () => { }
             })
           })
         }
@@ -148,23 +151,23 @@ describe("FileWatcher", () => {
 
     it("should detect platform-specific backends", async () => {
       const originalPlatform = process.platform
-      
+
       try {
         // Test Windows
         Object.defineProperty(process, 'platform', { value: 'win32' })
         FileWatcher.init()
-        
+
         // Test macOS
         Object.defineProperty(process, 'platform', { value: 'darwin' })
         FileWatcher.init()
-        
+
         // Test Linux
         Object.defineProperty(process, 'platform', { value: 'linux' })
         FileWatcher.init()
       } finally {
         Object.defineProperty(process, 'platform', { value: originalPlatform })
       }
-      
+
       expect(true).toBe(true)
     })
   })
@@ -174,9 +177,10 @@ describe("FileWatcher", () => {
       globalThis.Instance = {
         directory: tempDir,
         worktree: tempDir,
-        project: { vcs: "git" as const }
+        project: { vcs: "git" as const },
+        provide: async () => ({}) as any
       } as any
-      
+
       globalThis.Config = {
         get: () => Promise.resolve({
           watcher: { ignore: [] }
@@ -195,7 +199,7 @@ describe("FileWatcher", () => {
 
       let subscribedPath = ""
       let subscribedOptions: any = {}
-      
+
       mock(async () => {
         const mod = await import("@parcel/watcher")
         return {
@@ -204,7 +208,7 @@ describe("FileWatcher", () => {
               subscribedPath = path
               subscribedOptions = options
               return Promise.resolve({
-                unsubscribe: () => {}
+                unsubscribe: () => { }
               })
             }
           })
@@ -212,7 +216,7 @@ describe("FileWatcher", () => {
       })()
 
       FileWatcher.init()
-      
+
       expect(subscribedPath).toBe(tempDir)
       expect(subscribedOptions.ignore).toContain(".git")
     })
@@ -225,7 +229,7 @@ describe("FileWatcher", () => {
       } as any
 
       let subscribedIgnore: string[] = []
-      
+
       mock(async () => {
         const mod = await import("@parcel/watcher")
         return {
@@ -233,7 +237,7 @@ describe("FileWatcher", () => {
             subscribe: (path: string, options: any) => {
               subscribedIgnore = options.ignore || []
               return Promise.resolve({
-                unsubscribe: () => {}
+                unsubscribe: () => { }
               })
             }
           })
@@ -241,7 +245,7 @@ describe("FileWatcher", () => {
       })()
 
       FileWatcher.init()
-      
+
       expect(subscribedIgnore).toContain("*.tmp")
       expect(subscribedIgnore).toContain("logs/**")
     })
@@ -252,7 +256,7 @@ describe("FileWatcher", () => {
         return {
           default: () => ({
             subscribe: () => new Promise((resolve) => {
-              setTimeout(() => resolve({ unsubscribe: () => {} }), 100)
+              setTimeout(() => resolve({ unsubscribe: () => { } }), 100)
             })
           })
         }
@@ -284,9 +288,10 @@ describe("FileWatcher", () => {
       globalThis.Instance = {
         directory: tempDir,
         worktree: tempDir,
-        project: { vcs: "git" as const }
+        project: { vcs: "git" as const },
+        provide: async () => ({}) as any
       } as any
-      
+
       globalThis.Config = {
         get: () => Promise.resolve({
           watcher: { ignore: [] }
@@ -297,7 +302,7 @@ describe("FileWatcher", () => {
     it("should find and watch git directory", async () => {
       let gitDirFound = false
       let watchedGitDir = ""
-      
+
       mock(async () => {
         // Mock git rev-parse
         const { $ } = await import("bun")
@@ -319,7 +324,7 @@ describe("FileWatcher", () => {
                 watchedGitDir = path
               }
               return Promise.resolve({
-                unsubscribe: () => {}
+                unsubscribe: () => { }
               })
             }
           })
@@ -327,14 +332,14 @@ describe("FileWatcher", () => {
       })()
 
       FileWatcher.init()
-      
+
       expect(gitDirFound).toBe(true)
       expect(watchedGitDir).toContain(".git")
     })
 
     it("should respect git ignore patterns", async () => {
       let gitIgnoreList: string[] = []
-      
+
       mock(async () => {
         const fs = await import("fs/promises")
         return {
@@ -352,7 +357,7 @@ describe("FileWatcher", () => {
                 gitIgnoreList = options.ignore || []
               }
               return Promise.resolve({
-                unsubscribe: () => {}
+                unsubscribe: () => { }
               })
             }
           })
@@ -360,7 +365,7 @@ describe("FileWatcher", () => {
       })()
 
       FileWatcher.init()
-      
+
       expect(gitIgnoreList).not.toContain("HEAD")
       expect(gitIgnoreList.length).toBeGreaterThan(0)
     })
@@ -388,9 +393,10 @@ describe("FileWatcher", () => {
       globalThis.Instance = {
         directory: tempDir,
         worktree: tempDir,
-        project: { vcs: "git" as const }
+        project: { vcs: "git" as const },
+        provide: async () => ({}) as any
       } as any
-      
+
       globalThis.Config = {
         get: () => Promise.resolve({
           watcher: { ignore: [] }
@@ -400,7 +406,7 @@ describe("FileWatcher", () => {
 
     it("should publish add events", async () => {
       let publishedEvent: any = null
-      
+
       mock(() => {
         const { Bus } = require("../../bus")
         return {
@@ -424,7 +430,7 @@ describe("FileWatcher", () => {
                 }])
               }, 10)
               return Promise.resolve({
-                unsubscribe: () => {}
+                unsubscribe: () => { }
               })
             }
           })
@@ -432,10 +438,10 @@ describe("FileWatcher", () => {
       })()
 
       FileWatcher.init()
-      
+
       // Wait for async event
       await new Promise(resolve => setTimeout(resolve, 50))
-      
+
       expect(publishedEvent).not.toBeNull()
       expect(publishedEvent.payload.file).toBe("test.txt")
       expect(publishedEvent.payload.event).toBe("add")
@@ -443,7 +449,7 @@ describe("FileWatcher", () => {
 
     it("should publish update events", async () => {
       let publishedEvent: any = null
-      
+
       mock(() => {
         const { Bus } = require("../../bus")
         return {
@@ -467,7 +473,7 @@ describe("FileWatcher", () => {
                 }])
               }, 10)
               return Promise.resolve({
-                unsubscribe: () => {}
+                unsubscribe: () => { }
               })
             }
           })
@@ -475,9 +481,9 @@ describe("FileWatcher", () => {
       })()
 
       FileWatcher.init()
-      
+
       await new Promise(resolve => setTimeout(resolve, 50))
-      
+
       expect(publishedEvent).not.toBeNull()
       expect(publishedEvent.payload.file).toBe("test.txt")
       expect(publishedEvent.payload.event).toBe("change")
@@ -485,7 +491,7 @@ describe("FileWatcher", () => {
 
     it("should publish unlink events", async () => {
       let publishedEvent: any = null
-      
+
       mock(() => {
         const { Bus } = require("../../bus")
         return {
@@ -509,7 +515,7 @@ describe("FileWatcher", () => {
                 }])
               }, 10)
               return Promise.resolve({
-                unsubscribe: () => {}
+                unsubscribe: () => { }
               })
             }
           })
@@ -517,9 +523,9 @@ describe("FileWatcher", () => {
       })()
 
       FileWatcher.init()
-      
+
       await new Promise(resolve => setTimeout(resolve, 50))
-      
+
       expect(publishedEvent).not.toBeNull()
       expect(publishedEvent.payload.file).toBe("test.txt")
       expect(publishedEvent.payload.event).toBe("unlink")
@@ -536,7 +542,7 @@ describe("FileWatcher", () => {
                 callback(new Error("Watcher error"), [])
               }, 10)
               return Promise.resolve({
-                unsubscribe: () => {}
+                unsubscribe: () => { }
               })
             }
           })
@@ -544,7 +550,7 @@ describe("FileWatcher", () => {
       })()
 
       FileWatcher.init()
-      
+
       // Should handle errors gracefully
       await new Promise(resolve => setTimeout(resolve, 50))
       expect(true).toBe(true)
@@ -556,9 +562,10 @@ describe("FileWatcher", () => {
       globalThis.Instance = {
         directory: tempDir,
         worktree: tempDir,
-        project: { vcs: "git" as const }
+        project: { vcs: "git" as const },
+        provide: async () => ({}) as any
       } as any
-      
+
       globalThis.Config = {
         get: () => Promise.resolve({
           watcher: { ignore: [] }
@@ -568,7 +575,7 @@ describe("FileWatcher", () => {
 
     it("should unsubscribe from all subscriptions on cleanup", async () => {
       let unsubscribedCount = 0
-      
+
       mock(async () => {
         const mod = await import("@parcel/watcher")
         return {
@@ -583,7 +590,7 @@ describe("FileWatcher", () => {
       })()
 
       FileWatcher.init()
-      
+
       // Simulate cleanup (would happen on module unload)
       // This is hard to test directly, but we can ensure subscriptions are created
       expect(unsubscribedCount).toBeGreaterThanOrEqual(0)
@@ -593,18 +600,19 @@ describe("FileWatcher", () => {
   describe("platform-specific behavior", () => {
     it("should handle Windows paths correctly", async () => {
       const originalPlatform = process.platform
-      
+
       try {
         Object.defineProperty(process, 'platform', { value: 'win32' })
-        
+
         globalThis.Instance = {
           directory: "C:\\test\\project",
           worktree: "C:\\test\\project",
-          project: { vcs: "git" as const }
+          project: { vcs: "git" as const },
+          provide: async () => ({}) as any
         } as any
-        
+
         FileWatcher.init()
-        
+
         expect(true).toBe(true)
       } finally {
         Object.defineProperty(process, 'platform', { value: originalPlatform })
@@ -613,18 +621,19 @@ describe("FileWatcher", () => {
 
     it("should handle macOS paths correctly", async () => {
       const originalPlatform = process.platform
-      
+
       try {
         Object.defineProperty(process, 'platform', { value: 'darwin' })
-        
+
         globalThis.Instance = {
           directory: "/Users/test/project",
           worktree: "/Users/test/project",
-          project: { vcs: "git" as const }
+          project: { vcs: "git" as const },
+          provide: async () => ({}) as any
         } as any
-        
+
         FileWatcher.init()
-        
+
         expect(true).toBe(true)
       } finally {
         Object.defineProperty(process, 'platform', { value: originalPlatform })
@@ -633,18 +642,19 @@ describe("FileWatcher", () => {
 
     it("should handle Linux paths correctly", async () => {
       const originalPlatform = process.platform
-      
+
       try {
         Object.defineProperty(process, 'platform', { value: 'linux' })
-        
+
         globalThis.Instance = {
           directory: "/home/test/project",
           worktree: "/home/test/project",
-          project: { vcs: "git" as const }
+          project: { vcs: "git" as const },
+          provide: async () => ({}) as any
         } as any
-        
+
         FileWatcher.init()
-        
+
         expect(true).toBe(true)
       } finally {
         Object.defineProperty(process, 'platform', { value: originalPlatform })
