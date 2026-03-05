@@ -35,11 +35,13 @@ const mockFilesystem = {
 describe("File", () => {
   let tempDir: string
   let savedInstance: any
+  let savedFilesystem: any
 
   beforeEach(() => {
     tempDir = os.tmpdir()
     // Save the current Instance (which should be the real one from preload.ts)
     savedInstance = (globalThis as any).Instance
+    savedFilesystem = (globalThis as any).Filesystem
     // Replace with our mock
     globalThis.Instance = mockInstance
     globalThis.Filesystem = mockFilesystem
@@ -53,7 +55,13 @@ describe("File", () => {
     } else {
       delete (globalThis as any).Instance
     }
-    delete (globalThis as any).Filesystem
+    // Restore the original Filesystem, not delete it!
+    // This prevents interference with test-specific Filesystem modifications
+    if (savedFilesystem !== undefined) {
+      (globalThis as any).Filesystem = savedFilesystem
+    } else {
+      delete (globalThis as any).Filesystem
+    }
   })
 
   describe("Info schema", () => {

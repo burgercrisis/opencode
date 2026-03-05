@@ -388,6 +388,45 @@ test("Bedrock: model without prefix in US region should get us. prefix added", a
 // These test the prefix detection logic used in getModel
 
 describe("Bedrock cross-region prefix detection", () => {
+  // Global test isolation pattern
+  let savedInstance: any
+  let savedFilesystem: any
+
+  beforeEach(() => {
+    // Save global state before each test
+    savedInstance = (globalThis as any).Instance
+    savedFilesystem = (globalThis as any).Filesystem
+  })
+
+  afterEach(() => {
+    // Restore global state after each test
+    if (savedInstance !== undefined) {
+      (globalThis as any).Instance = savedInstance
+    } else {
+      if (savedInstance !== undefined) {
+    (globalThis as any).Instance = savedInstance
+  } else {
+    delete (globalThis as any).Instance
+  }
+    }
+    
+    if (savedFilesystem !== undefined) {
+      (globalThis as any).Filesystem = savedFilesystem
+    } else {
+      if (savedFilesystem !== undefined) {
+    (globalThis as any).Filesystem = savedFilesystem
+  } else {
+    delete (globalThis as any).Filesystem
+  }
+    }
+    
+    // Clean up any mocks
+    try {
+      mock?.unmock?.()
+    } catch (e) {
+      // Ignore mock cleanup errors
+    }
+  })
   const crossRegionPrefixes = ["global.", "us.", "eu.", "jp.", "apac.", "au."]
 
   test("should detect global. prefix", () => {

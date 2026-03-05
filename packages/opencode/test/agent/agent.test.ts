@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeAll } from "bun:test"
+import { describe, test, expect, beforeAll, beforeEach, afterEach } from "bun:test"
 import path from "path"
 import os from "os"
 import fs from "fs/promises"
@@ -9,7 +9,15 @@ import { PermissionNext } from "../../src/permission/next"
 import { Global } from "../../src/global"
 import { Config } from "../../src/config/config"
 
+// Global test isolation pattern
+let savedInstance: any
+let savedFilesystem: any
+
 beforeAll(async () => {
+  // Save initial global state
+  savedInstance = (globalThis as any).Instance
+  savedFilesystem = (globalThis as any).Filesystem
+
   // Use the preload's test home directory to avoid path mismatch
   // The preload sets OPENCODE_TEST_HOME before importing Global, so we should use that
   const testHome = process.env.OPENCODE_TEST_HOME
@@ -23,6 +31,25 @@ beforeAll(async () => {
     await fs.writeFile(authPath, "{}", "utf-8")
   } catch {
     // Ignore errors
+  }
+})
+
+beforeEach(() => {
+  // Restore global state before each test
+  if (savedInstance !== undefined) {
+    (globalThis as any).Instance = savedInstance
+  }
+  if (savedFilesystem !== undefined) {
+    (globalThis as any).Filesystem = savedFilesystem
+  }
+})
+
+afterEach(() => {
+  // Clean up any mocks
+  try {
+    mock?.unmock?.()
+  } catch (e) {
+    // Ignore mock cleanup errors
   }
 })
 
