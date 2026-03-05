@@ -16,6 +16,7 @@ const mockInstance = {
     vcs: "git" as const
   },
   containsPath: () => true,
+  provide: async () => ({}) as any,
   // Mock state method - it returns a function that returns a simple object
   // This avoids the Context error "No context found for instance"
   state: () => () => ({ files: () => [], dirs: () => [] }),
@@ -63,7 +64,7 @@ describe("File", () => {
         removed: 5,
         status: "modified" as const
       }
-      
+
       expect(() => File.Info.parse(validInfo)).not.toThrow()
       const parsed = File.Info.parse(validInfo)
       expect(parsed.path).toBe("src/file.ts")
@@ -79,7 +80,7 @@ describe("File", () => {
         removed: 5,
         status: "invalid"
       }
-      
+
       expect(() => File.Info.parse(invalidInfo as any)).toThrow()
     })
   })
@@ -93,7 +94,7 @@ describe("File", () => {
         type: "file" as const,
         ignored: false
       }
-      
+
       expect(() => File.Node.parse(validNode)).not.toThrow()
       const parsed = File.Node.parse(validNode)
       expect(parsed.name).toBe("file.ts")
@@ -109,7 +110,7 @@ describe("File", () => {
         type: "directory" as const,
         ignored: false
       }
-      
+
       expect(() => File.Node.parse(validDirNode)).not.toThrow()
       const parsed = File.Node.parse(validDirNode)
       expect(parsed.type).toBe("directory")
@@ -122,7 +123,7 @@ describe("File", () => {
         type: "text" as const,
         content: "console.log('hello');"
       }
-      
+
       expect(() => File.Content.parse(textContent)).not.toThrow()
       const parsed = File.Content.parse(textContent)
       expect(parsed.type).toBe("text")
@@ -136,7 +137,7 @@ describe("File", () => {
         encoding: "base64" as const,
         mimeType: "image/png"
       }
-      
+
       expect(() => File.Content.parse(binaryContent)).not.toThrow()
       const parsed = File.Content.parse(binaryContent)
       expect(parsed.encoding).toBe("base64")
@@ -159,7 +160,7 @@ describe("File", () => {
           }]
         }
       }
-      
+
       expect(() => File.Content.parse(contentWithPatch)).not.toThrow()
       const parsed = File.Content.parse(contentWithPatch)
       expect(parsed.patch?.oldFileName).toBe("old.ts")
@@ -170,7 +171,7 @@ describe("File", () => {
   describe("Event", () => {
     it("should define file edited event", () => {
       expect(File.Event.Edited.type).toBe("file.edited")
-      
+
       const payload = { file: "src/test.ts" }
       expect(() => File.Event.Edited.schema.parse(payload)).not.toThrow()
     })
@@ -202,7 +203,7 @@ describe("File", () => {
       const status = await File.status()
       expect(status).toBeInstanceOf(Array)
       expect(status).toHaveLength(2)
-      
+
       const modifiedFile = status.find(f => f.path === "src/file.ts")
       expect(modifiedFile).toBeDefined()
       expect(modifiedFile?.status).toBe("modified")
@@ -242,7 +243,7 @@ describe("File", () => {
         ...mockFilesystem,
         mimeType: () => "application/octet-stream"
       }
-      
+
       const content = await File.read("binary.exe")
       expect(content.type).toBe("binary")
     })
@@ -252,7 +253,7 @@ describe("File", () => {
         ...mockFilesystem,
         exists: () => Promise.resolve(false)
       }
-      
+
       const content = await File.read("nonexistent.txt")
       expect(content.type).toBe("text")
       expect(content.content).toBe("")
@@ -263,7 +264,7 @@ describe("File", () => {
         ...mockInstance,
         containsPath: () => false
       }
-      
+
       await expect(File.read("../../../etc/passwd")).rejects.toThrow("Access denied")
     })
   })
@@ -282,10 +283,10 @@ describe("File", () => {
       const nodes = await File.list()
       expect(nodes).toBeInstanceOf(Array)
       expect(nodes.length).toBeGreaterThan(0)
-      
+
       const fileNode = nodes.find(n => n.name === "file.ts")
       expect(fileNode?.type).toBe("file")
-      
+
       const dirNode = nodes.find(n => n.name === "src")
       expect(dirNode?.type).toBe("directory")
     })
@@ -294,7 +295,7 @@ describe("File", () => {
       const nodes = await File.list()
       const firstNode = nodes[0]
       const lastNode = nodes[nodes.length - 1]
-      
+
       // Directories should come first
       expect(firstNode.type).toBe("directory")
       expect(lastNode.type).toBe("file")
@@ -341,7 +342,7 @@ describe("File", () => {
     it("should filter by type", async () => {
       const filesOnly = await File.search({ query: "test", type: "file" })
       const dirsOnly = await File.search({ query: "test", type: "directory" })
-      
+
       expect(filesOnly).toBeInstanceOf(Array)
       expect(dirsOnly).toBeInstanceOf(Array)
     })
@@ -351,7 +352,7 @@ describe("File", () => {
     describe("image detection", () => {
       it("should detect common image formats", () => {
         const imageExtensions = ["png", "jpg", "jpeg", "gif", "svg", "webp"]
-        
+
         imageExtensions.forEach(ext => {
           const mockFilesystem = { ...globalThis.Filesystem }
           // This would need access to the private functions
@@ -364,7 +365,7 @@ describe("File", () => {
     describe("text detection", () => {
       it("should detect common text formats", () => {
         const textExtensions = ["ts", "js", "json", "md", "txt", "yaml"]
-        
+
         textExtensions.forEach(ext => {
           expect(typeof File.read).toBe("function")
         })
@@ -374,7 +375,7 @@ describe("File", () => {
     describe("binary detection", () => {
       it("should detect common binary formats", () => {
         const binaryExtensions = ["exe", "dll", "zip", "pdf", "jpg"]
-        
+
         binaryExtensions.forEach(ext => {
           expect(typeof File.read).toBe("function")
         })
@@ -388,7 +389,7 @@ describe("File", () => {
         ...mockFilesystem,
         readText: () => Promise.reject(new Error("Permission denied"))
       }
-      
+
       await expect(File.read("test.txt")).rejects.toThrow()
     })
 
@@ -423,7 +424,7 @@ describe("File", () => {
     it("should normalize paths consistently", async () => {
       const content1 = await File.read("src//test.ts")
       const content2 = await File.read("src\\\\test.ts")
-      
+
       expect(content1).toBeDefined()
       expect(content2).toBeDefined()
     })

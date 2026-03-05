@@ -719,7 +719,7 @@ test("build agent defaults *.env to ask", async () => {
       const build = await Agent.get("build")
       const target = path.join(tmp.path, ".env")
       expect(PermissionNext.evaluate("read", target, build!.permission).action).toBe("ask")
-      
+
       const targetExample = path.join(tmp.path, ".env.example")
       expect(PermissionNext.evaluate("read", targetExample, build!.permission).action).toBe("allow")
     },

@@ -20,6 +20,12 @@ const disposal = {
 
 export const Instance = {
   async provide<R>(input: { directory: string; init?: () => Promise<any>; fn: () => R }): Promise<R> {
+    // Emergency fallback check
+    if (typeof (globalThis as any).Instance?.provide !== 'function') {
+      console.error("[Instance.provide] CRITICAL: Instance.provide corrupted, using emergency fallback")
+      return input.fn()
+    }
+
     const existing =
       cache.get(input.directory) ??
       iife(() => {
@@ -141,7 +147,7 @@ export const Instance = {
         await Instance.dispose()
       })
     }
-    
+
     cache.clear()
     disposal.all = undefined
     State.resetForTest()

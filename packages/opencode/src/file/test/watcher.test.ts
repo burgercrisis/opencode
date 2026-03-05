@@ -685,11 +685,17 @@ describe("FileWatcher", () => {
     })
 
     it("should handle instance errors", async () => {
+      const originalInstance = (globalThis as any).Instance
       globalThis.Instance = null as any
 
-      FileWatcher.init()
-      // Should handle null instance gracefully
-      expect(true).toBe(true)
+      try {
+        FileWatcher.init()
+        // Should handle null instance gracefully
+        expect(true).toBe(true)
+      } finally {
+        // Restore the original Instance
+        (globalThis as any).Instance = originalInstance
+      }
     })
   })
 })

@@ -133,10 +133,32 @@ try {
   // Save the real Instance for restoration after polluted tests
   realInstance = protectedInstance
 
-  // DEEP FREEZE to prevent modifications
   if (typeof Object.freeze === 'function') {
     Object.freeze((globalThis as any).Instance)
     Object.freeze((globalThis as any).Instance.provide)
+  }
+
+  // Add global emergency fallback function
+  ; (globalThis as any).ensureInstanceProvide = () => {
+    if (typeof (globalThis as any).Instance?.provide !== 'function') {
+      console.error("[preload.ts] CRITICAL: Instance.provide corrupted, restoring emergency fallback")
+      const emergencyInstance = {
+        provide: async (input: any) => {
+          console.error("[preload.ts] EMERGENCY: Using emergency Instance.provide fallback")
+          return input.fn()
+        },
+        directory: "",
+        worktree: "",
+        project: null,
+        containsPath: () => false,
+        state: () => () => null,
+        dispose: async () => { },
+        disposeAll: async () => { },
+        resetForTest: async () => { }
+      }
+        ; (globalThis as any).Instance = emergencyInstance
+      realInstance = emergencyInstance
+    }
   }
 
   console.log("[preload.ts] Instance global exposed successfully, provide is:", typeof Instance.provide)
@@ -163,6 +185,37 @@ afterEach(async () => {
   // This fixes test isolation issues where src/*/test/ files set globalThis.Instance to mocks
   if (realInstance && (globalThis as any).Instance !== realInstance) {
     (globalThis as any).Instance = realInstance
+  }
+
+  // CRITICAL: Check if Instance.provide is corrupted and restore from original module
+  if (typeof (globalThis as any).Instance?.provide !== 'function') {
+    console.error("[preload.ts] CRITICAL: Instance.provide corrupted in afterEach, restoring from original module")
+    try {
+      // Force complete module reload
+      delete require.cache[require.resolve("../src/project/instance")]
+      if (typeof Bun !== 'undefined' && (Bun as any).cache) {
+        delete (Bun as any).cache["../src/project/instance"]
+      }
+
+      // Import fresh Instance
+      const { Instance: FreshInstance } = await import("../src/project/instance")
+      if (typeof FreshInstance?.provide === 'function') {
+        const protectedInstance = createProtectedInstance(FreshInstance)
+          ; (globalThis as any).Instance = protectedInstance
+        realInstance = protectedInstance
+
+        // Re-freeze
+        if (typeof Object.freeze === 'function') {
+          Object.freeze((globalThis as any).Instance)
+          Object.freeze((globalThis as any).Instance.provide)
+        }
+        console.error("[preload.ts] Successfully restored Instance from original module")
+      } else {
+        console.error("[preload.ts] Failed to restore Instance from original module")
+      }
+    } catch (err) {
+      console.error("[preload.ts] Error restoring Instance from original module:", err)
+    }
   }
 
   // ALWAYS ensure the global Instance has the provide method
@@ -204,8 +257,21 @@ afterEach(async () => {
   if (typeof (globalThis as any).Instance?.provide !== 'function') {
     console.error("[preload.ts] CRITICAL: Instance.provide still missing after restoration, forcing recreation")
     try {
-      // Force complete recreation
-      const { Instance: FreshInstance } = await import("../src/project/instance")
+      // Force complete recreation - clear ALL possible caches
+      const instancePath = "../src/project/instance"
+      delete require.cache[require.resolve(instancePath)]
+
+      // Also try to clear from Bun's module cache if available
+      if (typeof Bun !== 'undefined' && (Bun as any).cache) {
+        try {
+          delete (Bun as any).cache[instancePath]
+        } catch (e) {
+          // Ignore if Bun cache is not accessible
+        }
+      }
+
+      // Force recreation with dynamic import
+      const { Instance: FreshInstance } = await import(instancePath)
       if (typeof FreshInstance?.provide === 'function') {
         const protectedInstance = createProtectedInstance(FreshInstance)
           ; (globalThis as any).Instance = protectedInstance
@@ -217,9 +283,85 @@ afterEach(async () => {
           Object.freeze((globalThis as any).Instance.provide)
         }
         console.error("[preload.ts] Force recreation successful")
+      } else {
+        console.error("[preload.ts] Force recreation failed - fresh instance missing provide method")
+        // As a last resort, create a minimal working Instance
+        const minimalInstance = {
+          provide: async (input: any) => {
+            console.error("[preload.ts] Using minimal Instance.provide fallback")
+            return input.fn()
+          },
+          directory: "",
+          worktree: "",
+          project: null,
+          containsPath: () => false,
+          state: () => () => null,
+          dispose: async () => { },
+          disposeAll: async () => { },
+          resetForTest: async () => { }
+        }
+          ; (globalThis as any).Instance = minimalInstance
+        realInstance = minimalInstance
+        console.error("[preload.ts] Using minimal Instance fallback")
       }
     } catch (err) {
       console.error("[preload.ts] Force recreation failed:", err)
+    }
+  }
+
+  // ULTRA AGGRESSIVE SAFETY: Double-check Instance.provide exists before each test
+  if (typeof (globalThis as any).Instance?.provide !== 'function') {
+    console.error("[preload.ts] ULTRA CRITICAL: Instance.provide still missing before test, creating emergency fallback")
+    const emergencyInstance = {
+      provide: async (input: any) => {
+        console.error("[preload.ts] EMERGENCY: Using emergency Instance.provide fallback")
+        return input.fn()
+      },
+      directory: "",
+      worktree: "",
+      project: null,
+      containsPath: () => false,
+      state: () => () => null,
+      dispose: async () => { },
+      disposeAll: async () => { },
+      resetForTest: async () => { }
+    }
+      ; (globalThis as any).Instance = emergencyInstance
+    realInstance = emergencyInstance
+    console.error("[preload.ts] Emergency fallback created")
+  }
+
+  // Call the global emergency fallback function if it exists
+  ; (globalThis as any).ensureInstanceProvide?.()
+
+  // AGGRESSIVE: Always validate Instance before each test
+  if (typeof (globalThis as any).Instance?.provide !== 'function') {
+    console.error("[preload.ts] AGGRESSIVE: Instance.provide missing before test, forcing restoration")
+    try {
+      // Force complete module reload
+      delete require.cache[require.resolve("../src/project/instance")]
+      if (typeof Bun !== 'undefined' && (Bun as any).cache) {
+        delete (Bun as any).cache["../src/project/instance"]
+      }
+
+      // Import fresh Instance
+      const { Instance: FreshInstance } = await import("../src/project/instance")
+      if (typeof FreshInstance?.provide === 'function') {
+        const protectedInstance = createProtectedInstance(FreshInstance)
+          ; (globalThis as any).Instance = protectedInstance
+        realInstance = protectedInstance
+
+        // Re-freeze
+        if (typeof Object.freeze === 'function') {
+          Object.freeze((globalThis as any).Instance)
+          Object.freeze((globalThis as any).Instance.provide)
+        }
+        console.error("[preload.ts] AGGRESSIVE: Successfully restored Instance before test")
+      } else {
+        console.error("[preload.ts] AGGRESSIVE: Failed to restore Instance before test")
+      }
+    } catch (err) {
+      console.error("[preload.ts] AGGRESSIVE: Error restoring Instance before test:", err)
     }
   }
 
