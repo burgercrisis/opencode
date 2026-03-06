@@ -18,23 +18,15 @@ describe("BunProc registry configuration", () => {
     if (savedInstance !== undefined) {
       (globalThis as any).Instance = savedInstance
     } else {
-      if (savedInstance !== undefined) {
-    (globalThis as any).Instance = savedInstance
-  } else {
-    delete (globalThis as any).Instance
-  }
+      delete (globalThis as any).Instance
     }
-    
+
     if (savedFilesystem !== undefined) {
       (globalThis as any).Filesystem = savedFilesystem
     } else {
-      if (savedFilesystem !== undefined) {
-    (globalThis as any).Filesystem = savedFilesystem
-  } else {
-    delete (globalThis as any).Filesystem
-  }
+      delete (globalThis as any).Filesystem
     }
-    
+
     // Clean up any mocks
     try {
       mock?.unmock?.()

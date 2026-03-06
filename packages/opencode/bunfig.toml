@@ -1,3 +1,2 @@
 [test]
 preload = ["./test/global-test-setup.ts"]
-exclude = ["src/**/*.test.ts"]

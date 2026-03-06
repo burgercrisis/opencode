@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach } from "bun:test"
+import { describe, test, expect, beforeEach, afterEach } from "bun:test"
 import path from "path"
 import fs from "fs/promises"
 import { EditTool } from "../../src/tool/edit"
@@ -18,6 +18,40 @@ const ctx = {
 }
 
 describe("tool.edit", () => {
+  // Global test isolation pattern
+  let savedInstance: any
+  let savedFilesystem: any
+
+  beforeEach(() => {
+    // Save global state before each test
+    savedInstance = (globalThis as any).Instance
+    savedFilesystem = (globalThis as any).Filesystem
+  })
+
+  afterEach(() => {
+    // Restore global state after each test
+    if (savedInstance !== undefined) {
+      (globalThis as any).Instance = savedInstance
+    } else {
+      delete (globalThis as any).Instance
+    }
+
+    if (savedFilesystem !== undefined) {
+      (globalThis as any).Filesystem = savedFilesystem
+    } else {
+      delete (globalThis as any).Filesystem
+    }
+
+    // Clean up any mocks
+    try {
+      if (typeof (globalThis as any).mock !== 'undefined' && (globalThis as any).mock.unmock) {
+        (globalThis as any).mock.unmock()
+      }
+    } catch (e) {
+      // Ignore mock cleanup errors
+    }
+  })
+
   describe("input validation", () => {
     test("should validate required filePath", async () => {
       await expect(

@@ -1,91 +1,117 @@
 
-// Final Instance protection - runs BEFORE each test
+// COORDINATED GLOBAL TEST SETUP - Works WITH preload.ts
 import { beforeAll, beforeEach, afterEach } from "bun:test"
 
-// Import preload to ensure it runs
+// Import preload to ensure it runs first
 import "./preload"
 
-// Global state preservation
-let globalSavedInstance: any
-let globalSavedFilesystem: any
-let originalProvide: any
+console.log("[coordinated-protection] Loading coordinated global setup")
 
-// Save global state at the very beginning
-beforeAll(async () => {
-  globalSavedInstance = (globalThis as any).Instance
-  globalSavedFilesystem = (globalThis as any).Filesystem
+// Wait for preload to complete its setup
+let isPreloadReady = false
+let preloadInstance: any = null
+let preloadFilesystem: any = null
 
-  // Save the original provide method
-  if (globalSavedInstance && globalSavedInstance.provide) {
-    originalProvide = globalSavedInstance.provide
-  }
-})
-
-// CRITICAL: Restore global state BEFORE each test runs
-beforeEach(async () => {
-  // First, call the emergency fallback if it exists
+// Get references from preload after it's ready
+const getPreloadReferences = () => {
   try {
-    if (typeof (globalThis as any).ensureInstanceProvide === 'function') {
-      (globalThis as any).ensureInstanceProvide()
+    // Check if preload has set up its protected instance
+    if ((globalThis as any).protectedInstance) {
+      preloadInstance = (globalThis as any).protectedInstance
+      preloadFilesystem = (globalThis as any).Filesystem
+      
+      if (preloadInstance && typeof preloadInstance.provide === 'function') {
+        isPreloadReady = true
+        console.log("[coordinated-protection] Got references from preload")
+        return true
+      }
     }
-  } catch (e) {
-    // Ignore errors
+    
+    // Fallback to direct Instance if protected instance not available
+    const directInstance = (globalThis as any).Instance
+    if (directInstance && typeof directInstance.provide === 'function') {
+      preloadInstance = directInstance
+      preloadFilesystem = (globalThis as any).Filesystem
+      isPreloadReady = true
+      console.log("[coordinated-protection] Got direct Instance references")
+      return true
+    }
+    
+    console.log("[coordinated-protection] Preload not ready yet, will retry")
+    return false
+  } catch (error) {
+    console.log("[coordinated-protection] Error getting preload references:", error.message)
+    return false
   }
+}
 
-  // Restore the original Instance
-  if (globalSavedInstance !== undefined) {
-    (globalThis as any).Instance = globalSavedInstance
+// Try to get preload references immediately
+getPreloadReferences()
+
+// Coordinated protection that respects preload's work
+const coordinatedProtection = () => {
+  // Ensure we have preload references
+  if (!isPreloadReady) {
+    getPreloadReferences()
   }
-
-  // Restore Filesystem
-  if (globalSavedFilesystem !== undefined) {
-    (globalThis as any).Filesystem = globalSavedFilesystem
+  
+  if (!isPreloadReady) {
+    console.log("[coordinated-protection] WARNING: Preload references not available")
+    return false
   }
-
-  // CRITICAL: Ensure provide method is always available
-  if (!(globalThis as any).Instance?.provide) {
-    console.error("[global-test-setup] CRITICAL: Instance.provide missing, restoring from saved")
-    if (originalProvide) {
-      (globalThis as any).Instance.provide = originalProvide
+  
+  // Verify Instance is working
+  const currentInstance = (globalThis as any).Instance
+  if (currentInstance && typeof currentInstance.provide === 'function') {
+    console.log("[coordinated-protection] Instance is working correctly")
+    return true
+  }
+  
+  // Try to restore using preload's references
+  if (preloadInstance) {
+    console.log("[coordinated-protection] Restoring Instance from preload references")
+    
+    // Let preload handle the restoration - don't fight it
+    if (typeof (globalThis as any).restoreInstance === 'function') {
+      (globalThis as any).restoreInstance()
     } else {
-      // Create emergency provide method
-      (globalThis as any).Instance.provide = async (input: any) => {
-        console.error("[global-test-setup] EMERGENCY: Using fallback Instance.provide")
-        return input.fn()
+      // Fallback: set Instance directly
+      (globalThis as any).Instance = preloadInstance
+      if (preloadFilesystem) {
+        (globalThis as any).Filesystem = preloadFilesystem
       }
     }
+    
+    return true
   }
+  
+  return false
+}
 
-  // Verify the provide method is working
-  if (typeof (globalThis as any).Instance?.provide !== 'function') {
-    console.error("[global-test-setup] CRITICAL: Instance.provide still not working!")
-    // Last resort - force module reload
-    try {
-      delete require.cache[require.resolve("../src/project/instance")]
-      const { Instance: FreshInstance } = await import("../src/project/instance")
-      if (typeof FreshInstance?.provide === 'function') {
-        (globalThis as any).Instance = FreshInstance
-        console.error("[global-test-setup] Successfully reloaded Instance module")
-      }
-    } catch (e) {
-      console.error("[global-test-setup] Failed to reload Instance module:", e)
-    }
-  }
+beforeAll(() => {
+  console.log("[coordinated-protection] beforeAll: Ensuring preload coordination")
+  coordinatedProtection()
 })
 
-// Clean up after each test
+beforeEach(() => {
+  console.log("[coordinated-protection] beforeEach: Coordinating with preload")
+  coordinatedProtection()
+})
+
 afterEach(() => {
-  // Clean up any mocks that might have been left behind
+  console.log("[coordinated-protection] afterEach: Coordinated cleanup")
+  
+  // Clean up any mocks
   try {
-    if (typeof mock !== 'undefined' && mock.unmock) {
-      mock.unmock()
+    if (typeof (globalThis as any).mock !== 'undefined' && (globalThis as any).mock.unmock) {
+      (globalThis as any).mock.unmock()
     }
   } catch (e) {
     // Ignore mock cleanup errors
   }
+  
+  // Let preload handle restoration - don't interfere
+  coordinatedProtection()
 })
 
-// Export for potential use in individual tests
-export const savedInstance = globalSavedInstance
-export const savedFilesystem = globalSavedFilesystem
-export const savedProvide = originalProvide
+console.log("[coordinated-protection] Coordinated global test setup loaded")
