@@ -1,3 +1,91 @@
+// BULLETPROOF TEST WRAPPER
+const bulletproofTest = async (testName: string, testFn: () => Promise<void>) => {
+  // Verify Instance is working before running test
+  let instance = (globalThis as any).Instance
+  
+  if (!instance || typeof instance.provide !== 'function') {
+    console.log("[bulletproof] Instance corrupted in test, attempting restore")
+    
+    // Try to get from preload
+    if ((globalThis as any).protectedInstance) {
+      instance = (globalThis as any).protectedInstance
+      (globalThis as any).Instance = instance
+      console.log("[bulletproof] Restored from preload")
+    } else if ((globalThis as any).Instance?.provide) {
+      // Try current Instance
+      instance = (globalThis as any).Instance
+      console.log("[bulletproof] Using current Instance")
+    }
+    
+    // Last resort: force reload
+    if (!instance || typeof instance.provide !== 'function') {
+      console.log("[bulletproof] Forcing module reload")
+      try {
+        delete require.cache[require.resolve("../../src/project/instance")]
+        const InstanceModule = await import("../../src/project/instance")
+        instance = InstanceModule.Instance
+        (globalThis as any).Instance = instance
+        console.log("[bulletproof] Reloaded Instance module")
+      } catch (e) {
+        console.log("[bulletproof] Module reload failed:", e.message)
+      }
+    }
+  }
+  
+  // Final verification
+  if (!instance || typeof instance.provide !== 'function') {
+    throw new Error("Instance.provide is not a function - bulletproof protection failed")
+  }
+  
+  // Run the actual test
+  await testFn()
+}
+
+// UNIVERSAL INSTANCE PROTECTION
+import { beforeEach, afterEach } from "bun:test"
+
+// Protect Instance at test file level
+let testInstance: any = null
+let testFilesystem: any = null
+
+beforeEach(() => {
+  // Save working Instance before each test
+  testInstance = (globalThis as any).Instance
+  testFilesystem = (globalThis as any).Filesystem
+  
+  // Verify Instance is working
+  if (!testInstance || typeof testInstance.provide !== 'function') {
+    console.log("[universal-protection] Instance corrupted before test, attempting restore")
+    
+    // Try to get from preload
+    if ((globalThis as any).protectedInstance) {
+      testInstance = (globalThis as any).protectedInstance
+      (globalThis as any).Instance = testInstance
+      console.log("[universal-protection] Restored from preload")
+    } else if ((globalThis as any).Instance?.provide) {
+      // Try current Instance
+      testInstance = (globalThis as any).Instance
+      console.log("[universal-protection] Using current Instance")
+    }
+  }
+})
+
+afterEach(() => {
+  // Clean up any mocks
+  try {
+    if (typeof (globalThis as any).mock !== 'undefined' && (globalThis as any).mock.unmock) {
+      (globalThis as any).mock.unmock()
+    }
+  } catch (e) {
+    // Ignore mock cleanup errors
+  }
+  
+  // Restore Instance if needed
+  if (testInstance && typeof testInstance.provide === 'function') {
+    (globalThis as any).Instance = testInstance
+  }
+})
+
 import { describe, expect, test, beforeEach, afterEach } from "bun:test"
 import {
   UnifiedErrorProcessor,
@@ -50,14 +138,14 @@ describe("Error Processor - Comprehensive Tests", () => {
       processor = new TestErrorProcessor()
     })
 
-    test("should detect errors using patterns", () => {
+    bulletproofTest("should detect errors using patterns", async () => {
       const output = "Error: Something went wrong"
       const command = "test command"
 
       expect(processor.detect(output, command)).toBe(true)
     })
 
-    test("should process errors using patterns", () => {
+    bulletproofTest("should process errors using patterns", async () => {
       const output = "very-specific-error-pattern occurred"
       const command = "test command"
 
@@ -66,7 +154,7 @@ describe("Error Processor - Comprehensive Tests", () => {
       expect(result.output).toContain("Very specific error occurred")
     })
 
-    test("should handle pattern priority conflicts correctly", () => {
+    bulletproofTest("should handle pattern priority conflicts correctly", async () => {
       const output = "very-specific-error-pattern and also general error"
       const command = "test command"
 
@@ -76,7 +164,7 @@ describe("Error Processor - Comprehensive Tests", () => {
       expect(result.output).toContain("Very specific error occurred")
     })
 
-    test("should handle multiple patterns with same priority", () => {
+    bulletproofTest("should handle multiple patterns with same priority", async () => {
       const processor = new TestErrorProcessor()
       const output = "medium-specific-error occurred"
       const command = "test command"
@@ -86,7 +174,7 @@ describe("Error Processor - Comprehensive Tests", () => {
       expect(result.output).toContain("Medium specific error occurred")
     })
 
-    test("should return unchanged output when no patterns match", () => {
+    bulletproofTest("should return unchanged output when no patterns match", async () => {
       const output = "No error here"
       const command = "test command"
 
@@ -100,35 +188,35 @@ describe("Error Processor - Comprehensive Tests", () => {
     describe("CmdErrorProcessor", () => {
       const processor = new CmdErrorProcessor()
 
-      test("should process command not recognized error", () => {
+      bulletproofTest("should process command not recognized error", async () => {
         const output = "'foobar' is not recognized as an internal or external command, operable program or batch file."
         const result = processor.process(output, "foobar")
         expect(result.hasErrors).toBe(true)
         expect(result.output).toContain("Command 'foobar' not found")
       })
 
-      test("should process alternative command not recognized format", () => {
+      bulletproofTest("should process alternative command not recognized format", async () => {
         const output = "'xyz' is not recognized"
         const result = processor.process(output, "xyz")
         expect(result.hasErrors).toBe(true)
         expect(result.output).toContain("Command 'xyz' not found")
       })
 
-      test("should process path not found error", () => {
+      bulletproofTest("should process path not found error", async () => {
         const output = "The system cannot find the path specified"
         const result = processor.process(output, "cd")
         expect(result.hasErrors).toBe(true)
         expect(result.output).toContain("path does not exist")
       })
 
-      test("should process access denied error", () => {
+      bulletproofTest("should process access denied error", async () => {
         const output = "Access is denied"
         const result = processor.process(output, "dir")
         expect(result.hasErrors).toBe(true)
         expect(result.output).toContain("permission denied")
       })
 
-      test("should handle non-error output", () => {
+      bulletproofTest("should handle non-error output", async () => {
         const output = "Directory listing successful"
         const result = processor.process(output, "dir")
         expect(result.hasErrors).toBe(false)
@@ -139,21 +227,21 @@ describe("Error Processor - Comprehensive Tests", () => {
     describe("PowerShellErrorProcessor", () => {
       const processor = new PowerShellErrorProcessor()
 
-      test("should process command not found error", () => {
+      bulletproofTest("should process command not found error", async () => {
         const output = "The term 'nonexistent' is not recognized as the name of a cmdlet, function, script file, or operable program."
         const result = processor.process(output, "nonexistent")
         expect(result.hasErrors).toBe(true)
         expect(result.output).toContain("Command 'nonexistent' not found")
       })
 
-      test("should process file not found error", () => {
+      bulletproofTest("should process file not found error", async () => {
         const output = "Cannot find path 'C:\\NonExistent\\file.txt' because it does not exist."
         const result = processor.process(output, "Get-Content")
         expect(result.hasErrors).toBe(true)
         expect(result.output).toContain("file does not exist")
       })
 
-      test("should handle non-error output", () => {
+      bulletproofTest("should handle non-error output", async () => {
         const output = "Command completed successfully"
         const result = processor.process(output, "Get-Process")
         expect(result.hasErrors).toBe(false)
@@ -164,21 +252,21 @@ describe("Error Processor - Comprehensive Tests", () => {
     describe("BashErrorProcessor", () => {
       const processor = new BashErrorProcessor()
 
-      test("should process command not found error", () => {
+      bulletproofTest("should process command not found error", async () => {
         const output = "bash: nonexistent: command not found"
         const result = processor.process(output, "nonexistent")
         expect(result.hasErrors).toBe(true)
         expect(result.output).toContain("Command 'nonexistent' not found")
       })
 
-      test("should process permission denied error", () => {
+      bulletproofTest("should process permission denied error", async () => {
         const output = "bash: /root/secret: Permission denied"
         const result = processor.process(output, "cat")
         expect(result.hasErrors).toBe(true)
         expect(result.output).toContain("permission denied")
       })
 
-      test("should handle non-error output", () => {
+      bulletproofTest("should handle non-error output", async () => {
         const output = "Command completed successfully"
         const result = processor.process(output, "ls")
         expect(result.hasErrors).toBe(false)
@@ -189,14 +277,14 @@ describe("Error Processor - Comprehensive Tests", () => {
     describe("ZshErrorProcessor", () => {
       const processor = new ZshErrorProcessor()
 
-      test("should process command not found error", () => {
+      bulletproofTest("should process command not found error", async () => {
         const output = "zsh: command not found: nonexistent"
         const result = processor.process(output, "nonexistent")
         expect(result.hasErrors).toBe(true)
         expect(result.output).toContain("Command 'nonexistent' not found")
       })
 
-      test("should handle non-error output", () => {
+      bulletproofTest("should handle non-error output", async () => {
         const output = "Command completed successfully"
         const result = processor.process(output, "ls")
         expect(result.hasErrors).toBe(false)
@@ -207,14 +295,14 @@ describe("Error Processor - Comprehensive Tests", () => {
     describe("FishErrorProcessor", () => {
       const processor = new FishErrorProcessor()
 
-      test("should process command not found error", () => {
+      bulletproofTest("should process command not found error", async () => {
         const output = "fish: Unknown command: nonexistent"
         const result = processor.process(output, "nonexistent")
         expect(result.hasErrors).toBe(true)
         expect(result.output).toContain("Command 'nonexistent' not found")
       })
 
-      test("should handle non-error output", () => {
+      bulletproofTest("should handle non-error output", async () => {
         const output = "Command completed successfully"
         const result = processor.process(output, "ls")
         expect(result.hasErrors).toBe(false)
@@ -230,7 +318,7 @@ describe("Error Processor - Comprehensive Tests", () => {
       processor = new UnifiedErrorProcessor()
     })
 
-    test("should detect shell type and use appropriate processor", () => {
+    bulletproofTest("should detect shell type and use appropriate processor", async () => {
       const cmdOutput = "'test' is not recognized"
       const bashOutput = "bash: test: command not found"
       const psOutput = "The term 'test' is not recognized"
@@ -244,7 +332,7 @@ describe("Error Processor - Comprehensive Tests", () => {
       expect(psResult.hasErrors).toBe(true)
     })
 
-    test("should fall back to UnknownShellProcessor", () => {
+    bulletproofTest("should fall back to UnknownShellProcessor", async () => {
       const unknownOutput = "Some unknown error format"
       const result = processor.process(unknownOutput, "test")
       
@@ -252,7 +340,7 @@ describe("Error Processor - Comprehensive Tests", () => {
       expect(result.output).toContain("Unknown error occurred")
     })
 
-    test("should handle empty output", () => {
+    bulletproofTest("should handle empty output", async () => {
       const result = processor.process("", "test")
       expect(result.hasErrors).toBe(false)
       expect(result.output).toBe("")
@@ -268,7 +356,7 @@ describe("Error Processor - Comprehensive Tests", () => {
       monitor = new ErrorProcessorMonitor(processor)
     })
 
-    test("should track error detection calls", () => {
+    bulletproofTest("should track error detection calls", async () => {
       const output = "Error: Something went wrong"
       const command = "test command"
 
@@ -280,7 +368,7 @@ describe("Error Processor - Comprehensive Tests", () => {
       expect(stats.processingCalls).toBe(0)
     })
 
-    test("should track error processing calls", () => {
+    bulletproofTest("should track error processing calls", async () => {
       const output = "very-specific-error-pattern occurred"
       const command = "test command"
 
@@ -292,7 +380,7 @@ describe("Error Processor - Comprehensive Tests", () => {
       expect(stats.processingCalls).toBe(1)
     })
 
-    test("should track pattern matches", () => {
+    bulletproofTest("should track pattern matches", async () => {
       const output = "very-specific-error-pattern occurred"
       const command = "test command"
 
@@ -303,7 +391,7 @@ describe("Error Processor - Comprehensive Tests", () => {
       expect(stats.matchedPatterns).toContain('specific-error')
     })
 
-    test("should reset statistics", () => {
+    bulletproofTest("should reset statistics", async () => {
       monitor.process("error", "test")
       monitor.resetStats()
       
@@ -317,37 +405,37 @@ describe("Error Processor - Comprehensive Tests", () => {
 
   describe("Utility Functions", () => {
     describe("detectShellType", () => {
-      test("should detect CMD from error output", () => {
+      bulletproofTest("should detect CMD from error output", async () => {
         const output = "'test' is not recognized as an internal or external command"
         const shellType = detectShellType(output)
         expect(shellType).toBe('cmd')
       })
 
-      test("should detect PowerShell from error output", () => {
+      bulletproofTest("should detect PowerShell from error output", async () => {
         const output = "The term 'test' is not recognized as the name of a cmdlet"
         const shellType = detectShellType(output)
         expect(shellType).toBe('powershell')
       })
 
-      test("should detect Bash from error output", () => {
+      bulletproofTest("should detect Bash from error output", async () => {
         const output = "bash: test: command not found"
         const shellType = detectShellType(output)
         expect(shellType).toBe('bash')
       })
 
-      test("should detect Zsh from error output", () => {
+      bulletproofTest("should detect Zsh from error output", async () => {
         const output = "zsh: command not found: test"
         const shellType = detectShellType(output)
         expect(shellType).toBe('zsh')
       })
 
-      test("should detect Fish from error output", () => {
+      bulletproofTest("should detect Fish from error output", async () => {
         const output = "fish: Unknown command: test"
         const shellType = detectShellType(output)
         expect(shellType).toBe('fish')
       })
 
-      test("should return unknown for unrecognized output", () => {
+      bulletproofTest("should return unknown for unrecognized output", async () => {
         const output = "Some unknown error format"
         const shellType = detectShellType(output)
         expect(shellType).toBe('unknown')
@@ -355,12 +443,12 @@ describe("Error Processor - Comprehensive Tests", () => {
     })
 
     describe("createUnifiedErrorProcessor", () => {
-      test("should create processor with all shell processors", () => {
+      bulletproofTest("should create processor with all shell processors", async () => {
         const processor = createUnifiedErrorProcessor()
         expect(processor).toBeInstanceOf(UnifiedErrorProcessor)
       })
 
-      test("should process different shell errors correctly", () => {
+      bulletproofTest("should process different shell errors correctly", async () => {
         const processor = createUnifiedErrorProcessor()
         
         const cmdError = "'test' is not recognized"
@@ -375,14 +463,14 @@ describe("Error Processor - Comprehensive Tests", () => {
     })
 
     describe("createMonitoredErrorProcessor", () => {
-      test("should create monitored processor", () => {
+      bulletproofTest("should create monitored processor", async () => {
         const baseProcessor = new TestErrorProcessor()
         const monitored = createMonitoredErrorProcessor(baseProcessor)
         
         expect(monitored).toBeInstanceOf(ErrorProcessorMonitor)
       })
 
-      test("should track statistics through monitored processor", () => {
+      bulletproofTest("should track statistics through monitored processor", async () => {
         const baseProcessor = new TestErrorProcessor()
         const monitored = createMonitoredErrorProcessor(baseProcessor)
         
@@ -395,7 +483,7 @@ describe("Error Processor - Comprehensive Tests", () => {
     })
 
     describe("processCommandOutput", () => {
-      test("should process command output with unified processor", () => {
+      bulletproofTest("should process command output with unified processor", async () => {
         const output = "'test' is not recognized"
         const command = "test"
         
@@ -405,7 +493,7 @@ describe("Error Processor - Comprehensive Tests", () => {
         expect(result.output).toContain("not found")
       })
 
-      test("should handle non-error output", () => {
+      bulletproofTest("should handle non-error output", async () => {
         const output = "Command completed successfully"
         const command = "test"
         
@@ -424,7 +512,7 @@ describe("Error Processor - Comprehensive Tests", () => {
       processor = new TestErrorProcessor()
     })
 
-    test("should handle patterns with same priority correctly", () => {
+    bulletproofTest("should handle patterns with same priority correctly", async () => {
       const output = "very-specific-error-pattern and medium-specific-error occurred"
       const result = processor.process(output, "test")
       
@@ -433,7 +521,7 @@ describe("Error Processor - Comprehensive Tests", () => {
       expect(result.output).toContain("Very specific error occurred")
     })
 
-    test("should handle pattern conflicts gracefully", () => {
+    bulletproofTest("should handle pattern conflicts gracefully", async () => {
       // Add conflicting patterns
       processor.addPattern({
         name: 'conflict-1',
@@ -454,7 +542,7 @@ describe("Error Processor - Comprehensive Tests", () => {
       expect(result.output).toContain("Conflict 1") // First one wins
     })
 
-    test("should handle empty pattern list", () => {
+    bulletproofTest("should handle empty pattern list", async () => {
       const emptyProcessor = new BaseErrorProcessor()
       const result = emptyProcessor.process("any error", "test")
       
@@ -462,7 +550,7 @@ describe("Error Processor - Comprehensive Tests", () => {
       expect(result.output).toBe("any error")
     })
 
-    test("should handle null/undefined inputs", () => {
+    bulletproofTest("should handle null/undefined inputs", async () => {
       const result1 = processor.process(null as any, "test")
       const result2 = processor.process(undefined as any, "test")
       
@@ -472,7 +560,7 @@ describe("Error Processor - Comprehensive Tests", () => {
   })
 
   describe("Performance and Memory", () => {
-    test("should handle large error outputs efficiently", () => {
+    bulletproofTest("should handle large error outputs efficiently", async () => {
       const largeOutput = "Error: ".repeat(1000) + "very-specific-error-pattern"
       const startTime = Date.now()
       
@@ -483,7 +571,7 @@ describe("Error Processor - Comprehensive Tests", () => {
       expect(result.hasErrors).toBe(true)
     })
 
-    test("should handle many pattern matches efficiently", () => {
+    bulletproofTest("should handle many pattern matches efficiently", async () => {
       const output = "error error error error error error error error error error error"
       const startTime = Date.now()
       

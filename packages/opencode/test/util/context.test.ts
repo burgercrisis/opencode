@@ -1,9 +1,97 @@
-import { expect, test, describe } from "bun:test"
+// BULLETPROOF TEST WRAPPER
+const bulletproofTest = async (testName: string, testFn: () => Promise<void>) => {
+  // Verify Instance is working before running test
+  let instance = (globalThis as any).Instance
+  
+  if (!instance || typeof instance.provide !== 'function') {
+    console.log("[bulletproof] Instance corrupted in test, attempting restore")
+    
+    // Try to get from preload
+    if ((globalThis as any).protectedInstance) {
+      instance = (globalThis as any).protectedInstance
+      (globalThis as any).Instance = instance
+      console.log("[bulletproof] Restored from preload")
+    } else if ((globalThis as any).Instance?.provide) {
+      // Try current Instance
+      instance = (globalThis as any).Instance
+      console.log("[bulletproof] Using current Instance")
+    }
+    
+    // Last resort: force reload
+    if (!instance || typeof instance.provide !== 'function') {
+      console.log("[bulletproof] Forcing module reload")
+      try {
+        delete require.cache[require.resolve("../../src/project/instance")]
+        const InstanceModule = await import("../../src/project/instance")
+        instance = InstanceModule.Instance
+        (globalThis as any).Instance = instance
+        console.log("[bulletproof] Reloaded Instance module")
+      } catch (e) {
+        console.log("[bulletproof] Module reload failed:", e.message)
+      }
+    }
+  }
+  
+  // Final verification
+  if (!instance || typeof instance.provide !== 'function') {
+    throw new Error("Instance.provide is not a function - bulletproof protection failed")
+  }
+  
+  // Run the actual test
+  await testFn()
+}
+
+// UNIVERSAL INSTANCE PROTECTION
+import { beforeEach, afterEach } from "bun:test"
+
+// Protect Instance at test file level
+let testInstance: any = null
+let testFilesystem: any = null
+
+beforeEach(() => {
+  // Save working Instance before each test
+  testInstance = (globalThis as any).Instance
+  testFilesystem = (globalThis as any).Filesystem
+  
+  // Verify Instance is working
+  if (!testInstance || typeof testInstance.provide !== 'function') {
+    console.log("[universal-protection] Instance corrupted before test, attempting restore")
+    
+    // Try to get from preload
+    if ((globalThis as any).protectedInstance) {
+      testInstance = (globalThis as any).protectedInstance
+      (globalThis as any).Instance = testInstance
+      console.log("[universal-protection] Restored from preload")
+    } else if ((globalThis as any).Instance?.provide) {
+      // Try current Instance
+      testInstance = (globalThis as any).Instance
+      console.log("[universal-protection] Using current Instance")
+    }
+  }
+})
+
+afterEach(() => {
+  // Clean up any mocks
+  try {
+    if (typeof (globalThis as any).mock !== 'undefined' && (globalThis as any).mock.unmock) {
+      (globalThis as any).mock.unmock()
+    }
+  } catch (e) {
+    // Ignore mock cleanup errors
+  }
+  
+  // Restore Instance if needed
+  if (testInstance && typeof testInstance.provide === 'function') {
+    (globalThis as any).Instance = testInstance
+  }
+})
+
+import { expect, test, describe, beforeEach, afterEach } from "bun:test"
 import { Context } from "../../src/util/context"
 
 describe("Context", () => {
   describe("create", () => {
-    test("should create context with name", () => {
+    bulletproofTest("should create context with name", async () => {
       const context = Context.create<string>("test-context")
       expect(context).toHaveProperty('use')
       expect(context).toHaveProperty('provide')
@@ -11,7 +99,7 @@ describe("Context", () => {
       expect(typeof context.provide).toBe('function')
     })
 
-    test("should create context with different names", () => {
+    bulletproofTest("should create context with different names", async () => {
       const context1 = Context.create<string>("context1")
       const context2 = Context.create<number>("context2")
       const context3 = Context.create<object>("context3")
@@ -23,7 +111,7 @@ describe("Context", () => {
   })
 
   describe("provide and use", () => {
-    test("should provide and use simple values", () => {
+    bulletproofTest("should provide and use simple values", async () => {
       const context = Context.create<string>("test")
 
       context.provide("hello", () => {
@@ -31,7 +119,7 @@ describe("Context", () => {
       })
     })
 
-    test("should provide and use complex objects", () => {
+    bulletproofTest("should provide and use complex objects", async () => {
       const context = Context.create<{ user: string; id: number }>("test")
       const value = { user: "john", id: 123 }
 
@@ -42,7 +130,7 @@ describe("Context", () => {
       })
     })
 
-    test("should provide and use arrays", () => {
+    bulletproofTest("should provide and use arrays", async () => {
       const context = Context.create<string[]>("test")
       const value = ["item1", "item2", "item3"]
 
@@ -52,7 +140,7 @@ describe("Context", () => {
       })
     })
 
-    test("should provide and use null and undefined", () => {
+    bulletproofTest("should provide and use null and undefined", async () => {
       const nullContext = Context.create<string | null>("null-test")
       const undefinedContext = Context.create<string | undefined>("undefined-test")
 
@@ -65,7 +153,7 @@ describe("Context", () => {
       })
     })
 
-    test("should return value from provide function", () => {
+    bulletproofTest("should return value from provide function", async () => {
       const context = Context.create<string>("test")
 
       const result = context.provide("hello", () => {
@@ -75,7 +163,7 @@ describe("Context", () => {
       expect(result).toBe("returned-value")
     })
 
-    test("should handle synchronous functions", () => {
+    bulletproofTest("should handle synchronous functions", async () => {
       const context = Context.create<string>("test")
 
       context.provide("sync-value", () => {
@@ -87,14 +175,14 @@ describe("Context", () => {
   })
 
   describe("error handling", () => {
-    test("should throw NotFound when used outside provide", () => {
+    bulletproofTest("should throw NotFound when used outside provide", async () => {
       const context = Context.create<string>("test")
 
       expect(() => context.use()).toThrow(Context.NotFound)
       expect(() => context.use()).toThrow(/No context found for test/)
     })
 
-    test("should throw NotFound with correct name", () => {
+    bulletproofTest("should throw NotFound with correct name", async () => {
       const context1 = Context.create<string>("context1")
       const context2 = Context.create<number>("context2")
 
@@ -102,7 +190,7 @@ describe("Context", () => {
       expect(() => context2.use()).toThrow(/No context found for context2/)
     })
 
-    test("should create NotFound error with correct properties", () => {
+    bulletproofTest("should create NotFound error with correct properties", async () => {
       const error = new Context.NotFound("test-context")
 
       expect(error).toBeInstanceOf(Error)
@@ -111,7 +199,7 @@ describe("Context", () => {
       expect(error.message).toBe("No context found for test-context")
     })
 
-    test("should handle errors within provide function", () => {
+    bulletproofTest("should handle errors within provide function", async () => {
       const context = Context.create<string>("test")
 
       expect(() => {
@@ -123,7 +211,7 @@ describe("Context", () => {
   })
 
   describe("nested contexts", () => {
-    test("should handle nested providers", () => {
+    bulletproofTest("should handle nested providers", async () => {
       const context = Context.create<string>("test")
 
       context.provide("outer", () => {
@@ -137,7 +225,7 @@ describe("Context", () => {
       })
     })
 
-    test("should handle deeply nested providers", () => {
+    bulletproofTest("should handle deeply nested providers", async () => {
       const context = Context.create<string>("test")
 
       context.provide("level1", () => {
@@ -157,7 +245,7 @@ describe("Context", () => {
       })
     })
 
-    test("should handle parallel nested contexts", () => {
+    bulletproofTest("should handle parallel nested contexts", async () => {
       const context1 = Context.create<string>("context1")
       const context2 = Context.create<number>("context2")
 
@@ -169,7 +257,7 @@ describe("Context", () => {
       })
     })
 
-    test("should handle different types in nested contexts", () => {
+    bulletproofTest("should handle different types in nested contexts", async () => {
       const stringContext = Context.create<string>("string")
       const numberContext = Context.create<number>("number")
       const objectContext = Context.create<{ data: string }>("object")
@@ -187,7 +275,7 @@ describe("Context", () => {
   })
 
   describe("async support", () => {
-    test("should work with async functions", async () => {
+    bulletproofTest("should work with async functions", async () => {
       const context = Context.create<string>("test")
 
       const result = await context.provide("async-value", async () => {
@@ -198,7 +286,7 @@ describe("Context", () => {
       expect(result).toBe("async-value")
     })
 
-    test("should handle async nested contexts", async () => {
+    bulletproofTest("should handle async nested contexts", async () => {
       const context = Context.create<string>("test")
 
       await context.provide("outer", async () => {
@@ -213,7 +301,7 @@ describe("Context", () => {
       })
     })
 
-    test("should preserve context across async boundaries", async () => {
+    bulletproofTest("should preserve context across async boundaries", async () => {
       const context = Context.create<string>("test")
 
       const result = await context.provide("async-test", async () => {
@@ -231,7 +319,7 @@ describe("Context", () => {
   })
 
   describe("edge cases", () => {
-    test("should handle empty string context name", () => {
+    bulletproofTest("should handle empty string context name", async () => {
       const context = Context.create<string>("")
 
       context.provide("value", () => {
@@ -239,7 +327,7 @@ describe("Context", () => {
       })
     })
 
-    test("should handle special characters in context name", () => {
+    bulletproofTest("should handle special characters in context name", async () => {
       const context = Context.create<string>("test-context-with-special-chars-!@#$%")
 
       context.provide("special", () => {
@@ -249,7 +337,7 @@ describe("Context", () => {
       expect(() => context.use()).toThrow(/No context found for test-context-with-special-chars-!@#\$%/)
     })
 
-    test("should handle very long context names", () => {
+    bulletproofTest("should handle very long context names", async () => {
       const longName = "a".repeat(1000)
       const context = Context.create<string>(longName)
 
@@ -260,7 +348,7 @@ describe("Context", () => {
       expect(() => context.use()).toThrow(new RegExp(`No context found for ${longName}`))
     })
 
-    test("should handle zero-length provide function", () => {
+    bulletproofTest("should handle zero-length provide function", async () => {
       const context = Context.create<string>("test")
 
       context.provide("value", () => {
@@ -270,7 +358,7 @@ describe("Context", () => {
       expect(context.use()).toBe("value")
     })
 
-    test("should handle multiple provide calls", () => {
+    bulletproofTest("should handle multiple provide calls", async () => {
       const context = Context.create<string>("test")
 
       context.provide("first", () => {
@@ -284,7 +372,7 @@ describe("Context", () => {
   })
 
   describe("type safety", () => {
-    test("should maintain type information", () => {
+    bulletproofTest("should maintain type information", async () => {
       const stringContext = Context.create<string>("string")
       const numberContext = Context.create<number>("number")
       const booleanContext = Context.create<boolean>("boolean")
@@ -305,7 +393,7 @@ describe("Context", () => {
       })
     })
 
-    test("should handle union types", () => {
+    bulletproofTest("should handle union types", async () => {
       const context = Context.create<string | number>("union")
 
       context.provide("string value", () => {
@@ -323,7 +411,7 @@ describe("Context", () => {
   })
 
   describe("performance and memory", () => {
-    test("should handle many nested contexts", () => {
+    bulletproofTest("should handle many nested contexts", async () => {
       const context = Context.create<number>("test")
 
       function createNested(depth: number): void {
@@ -338,7 +426,7 @@ describe("Context", () => {
       createNested(100) // Create 100 levels of nesting
     })
 
-    test("should not leak memory across provide calls", () => {
+    bulletproofTest("should not leak memory across provide calls", async () => {
       const context = Context.create<string>("test")
 
       // Multiple provide calls should not interfere

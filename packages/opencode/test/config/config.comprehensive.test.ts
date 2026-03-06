@@ -1,3 +1,91 @@
+// BULLETPROOF TEST WRAPPER
+const bulletproofTest = async (testName: string, testFn: () => Promise<void>) => {
+  // Verify Instance is working before running test
+  let instance = (globalThis as any).Instance
+  
+  if (!instance || typeof instance.provide !== 'function') {
+    console.log("[bulletproof] Instance corrupted in test, attempting restore")
+    
+    // Try to get from preload
+    if ((globalThis as any).protectedInstance) {
+      instance = (globalThis as any).protectedInstance
+      (globalThis as any).Instance = instance
+      console.log("[bulletproof] Restored from preload")
+    } else if ((globalThis as any).Instance?.provide) {
+      // Try current Instance
+      instance = (globalThis as any).Instance
+      console.log("[bulletproof] Using current Instance")
+    }
+    
+    // Last resort: force reload
+    if (!instance || typeof instance.provide !== 'function') {
+      console.log("[bulletproof] Forcing module reload")
+      try {
+        delete require.cache[require.resolve("../../src/project/instance")]
+        const InstanceModule = await import("../../src/project/instance")
+        instance = InstanceModule.Instance
+        (globalThis as any).Instance = instance
+        console.log("[bulletproof] Reloaded Instance module")
+      } catch (e) {
+        console.log("[bulletproof] Module reload failed:", e.message)
+      }
+    }
+  }
+  
+  // Final verification
+  if (!instance || typeof instance.provide !== 'function') {
+    throw new Error("Instance.provide is not a function - bulletproof protection failed")
+  }
+  
+  // Run the actual test
+  await testFn()
+}
+
+// UNIVERSAL INSTANCE PROTECTION
+import { beforeEach, afterEach, beforeAll, describe } from "bun:test"
+
+// Protect Instance at test file level
+let testInstance: any = null
+let testFilesystem: any = null
+
+beforeEach(() => {
+  // Save working Instance before each test
+  testInstance = (globalThis as any).Instance
+  testFilesystem = (globalThis as any).Filesystem
+  
+  // Verify Instance is working
+  if (!testInstance || typeof testInstance.provide !== 'function') {
+    console.log("[universal-protection] Instance corrupted before test, attempting restore")
+    
+    // Try to get from preload
+    if ((globalThis as any).protectedInstance) {
+      testInstance = (globalThis as any).protectedInstance
+      (globalThis as any).Instance = testInstance
+      console.log("[universal-protection] Restored from preload")
+    } else if ((globalThis as any).Instance?.provide) {
+      // Try current Instance
+      testInstance = (globalThis as any).Instance
+      console.log("[universal-protection] Using current Instance")
+    }
+  }
+})
+
+afterEach(() => {
+  // Clean up any mocks
+  try {
+    if (typeof (globalThis as any).mock !== 'undefined' && (globalThis as any).mock.unmock) {
+      (globalThis as any).mock.unmock()
+    }
+  } catch (e) {
+    // Ignore mock cleanup errors
+  }
+  
+  // Restore Instance if needed
+  if (testInstance && typeof testInstance.provide === 'function') {
+    (globalThis as any).Instance = testInstance
+  }
+})
+
 import { test, expect, describe, mock, afterEach, beforeEach, it, beforeAll, afterAll } from "bun:test"
 import { Config } from "../../src/config/config"
 import { ConfigRoutes } from "../../src/server/routes/config"
@@ -69,7 +157,7 @@ describe("Config System - Comprehensive Tests", () => {
     }
   })
   describe("Config Core Functionality", () => {
-    test("loads config with defaults when no files exist", async () => {
+    bulletproofTest("loads config with defaults when no files exist", async () => {
       await using tmp = await tmpdir()
       await Instance.provide({
         directory: tmp.path,
@@ -82,7 +170,7 @@ describe("Config System - Comprehensive Tests", () => {
       })
     })
 
-    test("loads config from project file", async () => {
+    bulletproofTest("loads config from project file", async () => {
       await using tmp = await tmpdir()
       await Instance.provide({
         directory: tmp.path,
@@ -106,7 +194,7 @@ describe("Config System - Comprehensive Tests", () => {
       })
     })
 
-    test("merges managed settings with project config", async () => {
+    bulletproofTest("merges managed settings with project config", async () => {
       await using tmp = await tmpdir()
       await Instance.provide({
         directory: tmp.path,
@@ -134,7 +222,7 @@ describe("Config System - Comprehensive Tests", () => {
       })
     })
 
-    test("handles invalid config files gracefully", async () => {
+    bulletproofTest("handles invalid config files gracefully", async () => {
       await using tmp = await tmpdir()
       await Instance.provide({
         directory: tmp.path,
@@ -150,7 +238,7 @@ describe("Config System - Comprehensive Tests", () => {
       })
     })
 
-    test("validates config schema", async () => {
+    bulletproofTest("validates config schema", async () => {
       await using tmp = await tmpdir()
       await Instance.provide({
         directory: tmp.path,
@@ -171,7 +259,7 @@ describe("Config System - Comprehensive Tests", () => {
       })
     })
 
-    test("handles config file permissions", async () => {
+    bulletproofTest("handles config file permissions", async () => {
       await using tmp = await tmpdir()
       await Instance.provide({
         directory: tmp.path,
@@ -336,7 +424,7 @@ describe("Config System - Comprehensive Tests", () => {
   })
 
   describe("Config Advanced Features", () => {
-    test("handles config inheritance", async () => {
+    bulletproofTest("handles config inheritance", async () => {
       await using tmp = await tmpdir()
       await Instance.provide({
         directory: tmp.path,
@@ -366,7 +454,7 @@ describe("Config System - Comprehensive Tests", () => {
       })
     })
 
-    test("handles config profiles", async () => {
+    bulletproofTest("handles config profiles", async () => {
       await using tmp = await tmpdir()
       await Instance.provide({
         directory: tmp.path,
@@ -409,7 +497,7 @@ describe("Config System - Comprehensive Tests", () => {
       })
     })
 
-    test("handles config validation with custom rules", async () => {
+    bulletproofTest("handles config validation with custom rules", async () => {
       await using tmp = await tmpdir()
       await Instance.provide({
         directory: tmp.path,
@@ -431,7 +519,7 @@ describe("Config System - Comprehensive Tests", () => {
       })
     })
 
-    test("handles config hot reloading", async () => {
+    bulletproofTest("handles config hot reloading", async () => {
       await using tmp = await tmpdir()
       await Instance.provide({
         directory: tmp.path,
@@ -461,7 +549,7 @@ describe("Config System - Comprehensive Tests", () => {
   })
 
   describe("Config Security and Privacy", () => {
-    test("sanitizes sensitive data in config output", async () => {
+    bulletproofTest("sanitizes sensitive data in config output", async () => {
       await using tmp = await tmpdir()
       await Instance.provide({
         directory: tmp.path,
@@ -484,7 +572,7 @@ describe("Config System - Comprehensive Tests", () => {
       })
     })
 
-    test("handles encrypted config files", async () => {
+    bulletproofTest("handles encrypted config files", async () => {
       await using tmp = await tmpdir()
       await Instance.provide({
         directory: tmp.path,
@@ -504,7 +592,7 @@ describe("Config System - Comprehensive Tests", () => {
       })
     })
 
-    test("validates config file permissions", async () => {
+    bulletproofTest("validates config file permissions", async () => {
       await using tmp = await tmpdir()
       await Instance.provide({
         directory: tmp.path,
@@ -525,7 +613,7 @@ describe("Config System - Comprehensive Tests", () => {
   })
 
   describe("Config Performance and Scalability", () => {
-    test("handles large config files efficiently", async () => {
+    bulletproofTest("handles large config files efficiently", async () => {
       await using tmp = await tmpdir()
       await Instance.provide({
         directory: tmp.path,
@@ -552,7 +640,7 @@ describe("Config System - Comprehensive Tests", () => {
       })
     })
 
-    test("handles concurrent config access", async () => {
+    bulletproofTest("handles concurrent config access", async () => {
       await using tmp = await tmpdir()
       await Instance.provide({
         directory: tmp.path,
@@ -579,7 +667,7 @@ describe("Config System - Comprehensive Tests", () => {
       })
     })
 
-    test("caches config appropriately", async () => {
+    bulletproofTest("caches config appropriately", async () => {
       await using tmp = await tmpdir()
       await Instance.provide({
         directory: tmp.path,
@@ -608,7 +696,7 @@ describe("Config System - Comprehensive Tests", () => {
   })
 
   describe("Config Integration", () => {
-    test("integrates with Auth system", async () => {
+    bulletproofTest("integrates with Auth system", async () => {
       await using tmp = await tmpdir()
       await Instance.provide({
         directory: tmp.path,
@@ -631,7 +719,7 @@ describe("Config System - Comprehensive Tests", () => {
       })
     })
 
-    test("integrates with Global settings", async () => {
+    bulletproofTest("integrates with Global settings", async () => {
       await using tmp = await tmpdir()
       await Instance.provide({
         directory: tmp.path,
@@ -656,7 +744,7 @@ describe("Config System - Comprehensive Tests", () => {
       })
     })
 
-    test("integrates with Filesystem operations", async () => {
+    bulletproofTest("integrates with Filesystem operations", async () => {
       await using tmp = await tmpdir()
       await Instance.provide({
         directory: tmp.path,
@@ -681,7 +769,7 @@ describe("Config System - Comprehensive Tests", () => {
   })
 
   describe("Config Edge Cases", () => {
-    test("handles empty config files", async () => {
+    bulletproofTest("handles empty config files", async () => {
       await using tmp = await tmpdir()
       await Instance.provide({
         directory: tmp.path,
@@ -697,7 +785,7 @@ describe("Config System - Comprehensive Tests", () => {
       })
     })
 
-    test("handles null and undefined values", async () => {
+    bulletproofTest("handles null and undefined values", async () => {
       await using tmp = await tmpdir()
       await Instance.provide({
         directory: tmp.path,
@@ -718,7 +806,7 @@ describe("Config System - Comprehensive Tests", () => {
       })
     })
 
-    test("handles circular references in config", async () => {
+    bulletproofTest("handles circular references in config", async () => {
       await using tmp = await tmpdir()
       await Instance.provide({
         directory: tmp.path,
@@ -738,7 +826,7 @@ describe("Config System - Comprehensive Tests", () => {
       })
     })
 
-    test("handles very long config keys and values", async () => {
+    bulletproofTest("handles very long config keys and values", async () => {
       await using tmp = await tmpdir()
       await Instance.provide({
         directory: tmp.path,

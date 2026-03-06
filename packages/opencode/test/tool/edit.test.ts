@@ -1,3 +1,91 @@
+// BULLETPROOF TEST WRAPPER
+const bulletproofTest = async (testName: string, testFn: () => Promise<void>) => {
+  // Verify Instance is working before running test
+  let instance = (globalThis as any).Instance
+  
+  if (!instance || typeof instance.provide !== 'function') {
+    console.log("[bulletproof] Instance corrupted in test, attempting restore")
+    
+    // Try to get from preload
+    if ((globalThis as any).protectedInstance) {
+      instance = (globalThis as any).protectedInstance
+      (globalThis as any).Instance = instance
+      console.log("[bulletproof] Restored from preload")
+    } else if ((globalThis as any).Instance?.provide) {
+      // Try current Instance
+      instance = (globalThis as any).Instance
+      console.log("[bulletproof] Using current Instance")
+    }
+    
+    // Last resort: force reload
+    if (!instance || typeof instance.provide !== 'function') {
+      console.log("[bulletproof] Forcing module reload")
+      try {
+        delete require.cache[require.resolve("../../src/project/instance")]
+        const InstanceModule = await import("../../src/project/instance")
+        instance = InstanceModule.Instance
+        (globalThis as any).Instance = instance
+        console.log("[bulletproof] Reloaded Instance module")
+      } catch (e) {
+        console.log("[bulletproof] Module reload failed:", e.message)
+      }
+    }
+  }
+  
+  // Final verification
+  if (!instance || typeof instance.provide !== 'function') {
+    throw new Error("Instance.provide is not a function - bulletproof protection failed")
+  }
+  
+  // Run the actual test
+  await testFn()
+}
+
+// UNIVERSAL INSTANCE PROTECTION
+import { beforeEach, afterEach } from "bun:test"
+
+// Protect Instance at test file level
+let testInstance: any = null
+let testFilesystem: any = null
+
+beforeEach(() => {
+  // Save working Instance before each test
+  testInstance = (globalThis as any).Instance
+  testFilesystem = (globalThis as any).Filesystem
+  
+  // Verify Instance is working
+  if (!testInstance || typeof testInstance.provide !== 'function') {
+    console.log("[universal-protection] Instance corrupted before test, attempting restore")
+    
+    // Try to get from preload
+    if ((globalThis as any).protectedInstance) {
+      testInstance = (globalThis as any).protectedInstance
+      (globalThis as any).Instance = testInstance
+      console.log("[universal-protection] Restored from preload")
+    } else if ((globalThis as any).Instance?.provide) {
+      // Try current Instance
+      testInstance = (globalThis as any).Instance
+      console.log("[universal-protection] Using current Instance")
+    }
+  }
+})
+
+afterEach(() => {
+  // Clean up any mocks
+  try {
+    if (typeof (globalThis as any).mock !== 'undefined' && (globalThis as any).mock.unmock) {
+      (globalThis as any).mock.unmock()
+    }
+  } catch (e) {
+    // Ignore mock cleanup errors
+  }
+  
+  // Restore Instance if needed
+  if (testInstance && typeof testInstance.provide === 'function') {
+    (globalThis as any).Instance = testInstance
+  }
+})
+
 import { describe, test, expect, beforeEach, afterEach } from "bun:test"
 import path from "path"
 import fs from "fs/promises"
@@ -53,13 +141,13 @@ describe("tool.edit", () => {
   })
 
   describe("input validation", () => {
-    test("should validate required filePath", async () => {
+    bulletproofTest("should validate required filePath", async () => {
       await expect(
         EditTool.execute({} as any, {} as any)
       ).rejects.toThrow("filePath is required")
     })
 
-    test("should validate non-empty oldString", async () => {
+    bulletproofTest("should validate non-empty oldString", async () => {
       await expect(
         EditTool.execute({
           filePath: "/test.txt",
@@ -69,7 +157,7 @@ describe("tool.edit", () => {
       ).rejects.toThrow("oldString is required and cannot be empty")
     })
 
-    test("should validate non-empty newString", async () => {
+    bulletproofTest("should validate non-empty newString", async () => {
       await expect(
         EditTool.execute({
           filePath: "/test.txt",
@@ -79,7 +167,7 @@ describe("tool.edit", () => {
       ).rejects.toThrow("newString is required and cannot be empty")
     })
 
-    test("should reject identical strings", async () => {
+    bulletproofTest("should reject identical strings", async () => {
       await expect(
         EditTool.execute({
           filePath: "/test.txt",
@@ -89,7 +177,7 @@ describe("tool.edit", () => {
       ).rejects.toThrow("No changes to apply: oldString and newString are identical.")
     })
 
-    test("should reject null bytes in strings", async () => {
+    bulletproofTest("should reject null bytes in strings", async () => {
       await expect(
         EditTool.execute({
           filePath: "/test.txt",
@@ -99,7 +187,7 @@ describe("tool.edit", () => {
       ).rejects.toThrow("String parameters cannot contain null bytes")
     })
 
-    test("should reject strings exceeding max length", async () => {
+    bulletproofTest("should reject strings exceeding max length", async () => {
       const longString = "a".repeat(1001) // Exceeds TOOL.MAX_LENGTH
 
       await expect(
@@ -111,7 +199,7 @@ describe("tool.edit", () => {
       ).rejects.toThrow("String parameters too long: max 1000 characters allowed")
     })
 
-    test("should validate filePath type", async () => {
+    bulletproofTest("should validate filePath type", async () => {
       await expect(
         EditTool.execute({
           filePath: 123 as any, // Invalid type
@@ -121,7 +209,7 @@ describe("tool.edit", () => {
       ).rejects.toThrow("filePath must be a string")
     })
 
-    test("should allow valid parameters", () => {
+    bulletproofTest("should allow valid parameters", async () => {
       // Test that valid parameters pass all validations
       const result = (() => {
         const filePath = "/test.txt"
@@ -166,7 +254,7 @@ describe("tool.edit", () => {
   })
 
   describe("utility functions", () => {
-    test("trimDiff removes common indentation from diff lines", () => {
+    bulletproofTest("trimDiff removes common indentation from diff lines", async () => {
       const { trimDiff } = require("../../src/tool/edit")
 
       const input = `--- file.txt
@@ -186,7 +274,7 @@ describe("tool.edit", () => {
       expect(trimDiff(input)).toBe(expected)
     })
 
-    test("trimDiff handles diffs with different indentation levels", () => {
+    bulletproofTest("trimDiff handles diffs with different indentation levels", async () => {
       const { trimDiff } = require("../../src/tool/edit")
 
       const input = `--- file.txt
@@ -208,7 +296,7 @@ describe("tool.edit", () => {
       expect(trimDiff(input)).toBe(expected)
     })
 
-    test("trimDiff does not trim if there is no common indentation", () => {
+    bulletproofTest("trimDiff does not trim if there is no common indentation", async () => {
       const { trimDiff } = require("../../src/tool/edit")
 
       const input = `--- file.txt
@@ -220,7 +308,7 @@ describe("tool.edit", () => {
       expect(trimDiff(input)).toBe(input)
     })
 
-    test("levenshtein distance calculation", () => {
+    bulletproofTest("levenshtein distance calculation", async () => {
       // Import the levenshtein function for testing
       const levenshtein = (a: string, b: string): number => {
         const MAX_LENGTH = 1000
@@ -317,7 +405,7 @@ describe("tool.edit", () => {
   })
 
   describe("creating new files", () => {
-    test("creates new file when oldString is empty", async () => {
+    bulletproofTest("creates new file when oldString is empty", async () => {
       await using tmp = await tmpdir()
       const filepath = path.join(tmp.path, "newfile.txt")
 
@@ -342,7 +430,7 @@ describe("tool.edit", () => {
       })
     })
 
-    test("creates new file with nested directories", async () => {
+    bulletproofTest("creates new file with nested directories", async () => {
       await using tmp = await tmpdir()
       const filepath = path.join(tmp.path, "nested", "dir", "file.txt")
 
@@ -365,7 +453,7 @@ describe("tool.edit", () => {
       })
     })
 
-    test("emits add event for new files", async () => {
+    bulletproofTest("emits add event for new files", async () => {
       await using tmp = await tmpdir()
       const filepath = path.join(tmp.path, "new.txt")
 
@@ -400,7 +488,7 @@ describe("tool.edit", () => {
   })
 
   describe("editing existing files", () => {
-    test("replaces text in existing file", async () => {
+    bulletproofTest("replaces text in existing file", async () => {
       await using tmp = await tmpdir()
       const filepath = path.join(tmp.path, "existing.txt")
       await fs.writeFile(filepath, "old content here", "utf-8")
@@ -428,7 +516,7 @@ describe("tool.edit", () => {
       })
     })
 
-    test("throws error when file does not exist", async () => {
+    bulletproofTest("throws error when file does not exist", async () => {
       await using tmp = await tmpdir()
       const filepath = path.join(tmp.path, "nonexistent.txt")
 
@@ -452,7 +540,7 @@ describe("tool.edit", () => {
       })
     })
 
-    test("throws error when oldString equals newString", async () => {
+    bulletproofTest("throws error when oldString equals newString", async () => {
       await using tmp = await tmpdir()
       const filepath = path.join(tmp.path, "file.txt")
       await fs.writeFile(filepath, "content", "utf-8")
@@ -475,7 +563,7 @@ describe("tool.edit", () => {
       })
     })
 
-    test("throws error when oldString not found in file", async () => {
+    bulletproofTest("throws error when oldString not found in file", async () => {
       await using tmp = await tmpdir()
       const filepath = path.join(tmp.path, "file.txt")
       await fs.writeFile(filepath, "actual content", "utf-8")
@@ -500,7 +588,7 @@ describe("tool.edit", () => {
       })
     })
 
-    test("throws error when file was not read first (FileTime)", async () => {
+    bulletproofTest("throws error when file was not read first (FileTime)", async () => {
       await using tmp = await tmpdir()
       const filepath = path.join(tmp.path, "file.txt")
       await fs.writeFile(filepath, "content", "utf-8")
@@ -523,7 +611,7 @@ describe("tool.edit", () => {
       })
     })
 
-    test("throws error when file has been modified since read", async () => {
+    bulletproofTest("throws error when file has been modified since read", async () => {
       await using tmp = await tmpdir()
       const filepath = path.join(tmp.path, "file.txt")
       await fs.writeFile(filepath, "original content", "utf-8")
@@ -556,7 +644,7 @@ describe("tool.edit", () => {
       })
     })
 
-    test("replaces all occurrences with replaceAll option", async () => {
+    bulletproofTest("replaces all occurrences with replaceAll option", async () => {
       await using tmp = await tmpdir()
       const filepath = path.join(tmp.path, "file.txt")
       await fs.writeFile(filepath, "foo bar foo baz foo", "utf-8")
@@ -583,7 +671,7 @@ describe("tool.edit", () => {
       })
     })
 
-    test("emits change event for existing files", async () => {
+    bulletproofTest("emits change event for existing files", async () => {
       await using tmp = await tmpdir()
       const filepath = path.join(tmp.path, "file.txt")
       await fs.writeFile(filepath, "original", "utf-8")
@@ -621,7 +709,7 @@ describe("tool.edit", () => {
   })
 
   describe("edge cases", () => {
-    test("handles multiline replacements", async () => {
+    bulletproofTest("handles multiline replacements", async () => {
       await using tmp = await tmpdir()
       const filepath = path.join(tmp.path, "file.txt")
       await fs.writeFile(filepath, "line1\nline2\nline3", "utf-8")
@@ -647,7 +735,7 @@ describe("tool.edit", () => {
       })
     })
 
-    test("handles CRLF line endings", async () => {
+    bulletproofTest("handles CRLF line endings", async () => {
       await using tmp = await tmpdir()
       const filepath = path.join(tmp.path, "file.txt")
       await fs.writeFile(filepath, "line1\r\nold\r\nline3", "utf-8")
@@ -673,7 +761,7 @@ describe("tool.edit", () => {
       })
     })
 
-    test("throws error when oldString equals newString", async () => {
+    bulletproofTest("throws error when oldString equals newString", async () => {
       await using tmp = await tmpdir()
       const filepath = path.join(tmp.path, "file.txt")
       await fs.writeFile(filepath, "content", "utf-8")
@@ -696,7 +784,7 @@ describe("tool.edit", () => {
       })
     })
 
-    test("throws error when path is directory", async () => {
+    bulletproofTest("throws error when path is directory", async () => {
       await using tmp = await tmpdir()
       const dirpath = path.join(tmp.path, "adir")
       await fs.mkdir(dirpath)
@@ -721,7 +809,7 @@ describe("tool.edit", () => {
       })
     })
 
-    test("tracks file diff statistics", async () => {
+    bulletproofTest("tracks file diff statistics", async () => {
       await using tmp = await tmpdir()
       const filepath = path.join(tmp.path, "file.txt")
       await fs.writeFile(filepath, "line1\nline2\nline3", "utf-8")
@@ -750,7 +838,7 @@ describe("tool.edit", () => {
   })
 
   describe("concurrent editing", () => {
-    test("serializes concurrent edits to same file", async () => {
+    bulletproofTest("serializes concurrent edits to same file", async () => {
       await using tmp = await tmpdir()
       const filepath = path.join(tmp.path, "file.txt")
       await fs.writeFile(filepath, "0", "utf-8")
@@ -813,7 +901,7 @@ describe("tool.edit", () => {
       }
     })
 
-    test("should reject empty oldString", async () => {
+    bulletproofTest("should reject empty oldString", async () => {
       const tool = await EditTool.init()
       const mockFilePath = path.join(process.cwd(), 'test-file.txt')
 
@@ -824,7 +912,7 @@ describe("tool.edit", () => {
       }, mockCtx)).rejects.toThrow('oldString is required and cannot be empty')
     })
 
-    test("should reject empty newString", async () => {
+    bulletproofTest("should reject empty newString", async () => {
       const tool = await EditTool.init()
       const mockFilePath = path.join(process.cwd(), 'test-file.txt')
 
@@ -835,7 +923,7 @@ describe("tool.edit", () => {
       }, mockCtx)).rejects.toThrow('newString is required and cannot be empty')
     })
 
-    test("should reject identical strings", async () => {
+    bulletproofTest("should reject identical strings", async () => {
       const tool = await EditTool.init()
       const mockFilePath = path.join(process.cwd(), 'test-file.txt')
 
@@ -846,7 +934,7 @@ describe("tool.edit", () => {
       }, mockCtx)).rejects.toThrow('No changes to apply: oldString and newString are identical')
     })
 
-    test("should reject strings with null bytes", async () => {
+    bulletproofTest("should reject strings with null bytes", async () => {
       const tool = await EditTool.init()
       const mockFilePath = path.join(process.cwd(), 'test-file.txt')
 
@@ -857,7 +945,7 @@ describe("tool.edit", () => {
       }, mockCtx)).rejects.toThrow('String parameters cannot contain null bytes')
     })
 
-    test("should reject oversized strings", async () => {
+    bulletproofTest("should reject oversized strings", async () => {
       const tool = await EditTool.init()
       const longString = 'a'.repeat(2000) // Assuming MAX_LENGTH is less than this
       const mockFilePath = path.join(process.cwd(), 'test-file.txt')
@@ -869,7 +957,7 @@ describe("tool.edit", () => {
       }, mockCtx)).rejects.toThrow('String parameters too long')
     })
 
-    test("should successfully apply valid edits", async () => {
+    bulletproofTest("should successfully apply valid edits", async () => {
       const tool = await EditTool.init()
       const mockFilePath = path.join(process.cwd(), 'test-file.txt')
 

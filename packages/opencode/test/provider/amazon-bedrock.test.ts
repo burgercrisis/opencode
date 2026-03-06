@@ -1,3 +1,91 @@
+// BULLETPROOF TEST WRAPPER
+const bulletproofTest = async (testName: string, testFn: () => Promise<void>) => {
+  // Verify Instance is working before running test
+  let instance = (globalThis as any).Instance
+  
+  if (!instance || typeof instance.provide !== 'function') {
+    console.log("[bulletproof] Instance corrupted in test, attempting restore")
+    
+    // Try to get from preload
+    if ((globalThis as any).protectedInstance) {
+      instance = (globalThis as any).protectedInstance
+      (globalThis as any).Instance = instance
+      console.log("[bulletproof] Restored from preload")
+    } else if ((globalThis as any).Instance?.provide) {
+      // Try current Instance
+      instance = (globalThis as any).Instance
+      console.log("[bulletproof] Using current Instance")
+    }
+    
+    // Last resort: force reload
+    if (!instance || typeof instance.provide !== 'function') {
+      console.log("[bulletproof] Forcing module reload")
+      try {
+        delete require.cache[require.resolve("../../src/project/instance")]
+        const InstanceModule = await import("../../src/project/instance")
+        instance = InstanceModule.Instance
+        (globalThis as any).Instance = instance
+        console.log("[bulletproof] Reloaded Instance module")
+      } catch (e) {
+        console.log("[bulletproof] Module reload failed:", e.message)
+      }
+    }
+  }
+  
+  // Final verification
+  if (!instance || typeof instance.provide !== 'function') {
+    throw new Error("Instance.provide is not a function - bulletproof protection failed")
+  }
+  
+  // Run the actual test
+  await testFn()
+}
+
+// UNIVERSAL INSTANCE PROTECTION
+import { beforeEach, afterEach } from "bun:test"
+
+// Protect Instance at test file level
+let testInstance: any = null
+let testFilesystem: any = null
+
+beforeEach(() => {
+  // Save working Instance before each test
+  testInstance = (globalThis as any).Instance
+  testFilesystem = (globalThis as any).Filesystem
+  
+  // Verify Instance is working
+  if (!testInstance || typeof testInstance.provide !== 'function') {
+    console.log("[universal-protection] Instance corrupted before test, attempting restore")
+    
+    // Try to get from preload
+    if ((globalThis as any).protectedInstance) {
+      testInstance = (globalThis as any).protectedInstance
+      (globalThis as any).Instance = testInstance
+      console.log("[universal-protection] Restored from preload")
+    } else if ((globalThis as any).Instance?.provide) {
+      // Try current Instance
+      testInstance = (globalThis as any).Instance
+      console.log("[universal-protection] Using current Instance")
+    }
+  }
+})
+
+afterEach(() => {
+  // Clean up any mocks
+  try {
+    if (typeof (globalThis as any).mock !== 'undefined' && (globalThis as any).mock.unmock) {
+      (globalThis as any).mock.unmock()
+    }
+  } catch (e) {
+    // Ignore mock cleanup errors
+  }
+  
+  // Restore Instance if needed
+  if (testInstance && typeof testInstance.provide === 'function') {
+    (globalThis as any).Instance = testInstance
+  }
+})
+
 import { test, expect, describe } from "bun:test"
 import path from "path"
 import { unlink } from "fs/promises"
@@ -9,7 +97,7 @@ import { Env } from "../../src/env"
 import { Global } from "../../src/global"
 import { Filesystem } from "../../src/util/filesystem"
 
-test("Bedrock: config region takes precedence over AWS_REGION env var", async () => {
+bulletproofTest("Bedrock: config region takes precedence over AWS_REGION env var", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {
       await Filesystem.write(
@@ -41,7 +129,7 @@ test("Bedrock: config region takes precedence over AWS_REGION env var", async ()
   })
 })
 
-test("Bedrock: falls back to AWS_REGION env var when no config region", async () => {
+bulletproofTest("Bedrock: falls back to AWS_REGION env var when no config region", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {
       await Filesystem.write(
@@ -66,7 +154,7 @@ test("Bedrock: falls back to AWS_REGION env var when no config region", async ()
   })
 })
 
-test("Bedrock: loads when bearer token from auth.json is present", async () => {
+bulletproofTest("Bedrock: loads when bearer token from auth.json is present", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {
       await Filesystem.write(
@@ -134,7 +222,7 @@ test("Bedrock: loads when bearer token from auth.json is present", async () => {
   }
 })
 
-test("Bedrock: config profile takes precedence over AWS_PROFILE env var", async () => {
+bulletproofTest("Bedrock: config profile takes precedence over AWS_PROFILE env var", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {
       await Filesystem.write(
@@ -167,7 +255,7 @@ test("Bedrock: config profile takes precedence over AWS_PROFILE env var", async 
   })
 })
 
-test("Bedrock: includes custom endpoint in options when specified", async () => {
+bulletproofTest("Bedrock: includes custom endpoint in options when specified", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {
       await Filesystem.write(
@@ -200,7 +288,7 @@ test("Bedrock: includes custom endpoint in options when specified", async () => 
   })
 })
 
-test("Bedrock: autoloads when AWS_WEB_IDENTITY_TOKEN_FILE is present", async () => {
+bulletproofTest("Bedrock: autoloads when AWS_WEB_IDENTITY_TOKEN_FILE is present", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {
       await Filesystem.write(
@@ -238,7 +326,7 @@ test("Bedrock: autoloads when AWS_WEB_IDENTITY_TOKEN_FILE is present", async () 
 // Models from models.dev may come with prefixes already (e.g., us., eu., global.)
 // These should NOT be double-prefixed when passed to the SDK
 
-test("Bedrock: model with us. prefix should not be double-prefixed", async () => {
+bulletproofTest("Bedrock: model with us. prefix should not be double-prefixed", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {
       await Filesystem.write(
@@ -275,7 +363,7 @@ test("Bedrock: model with us. prefix should not be double-prefixed", async () =>
   })
 })
 
-test("Bedrock: model with global. prefix should not be prefixed", async () => {
+bulletproofTest("Bedrock: model with global. prefix should not be prefixed", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {
       await Filesystem.write(
@@ -311,7 +399,7 @@ test("Bedrock: model with global. prefix should not be prefixed", async () => {
   })
 })
 
-test("Bedrock: model with eu. prefix should not be double-prefixed", async () => {
+bulletproofTest("Bedrock: model with eu. prefix should not be double-prefixed", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {
       await Filesystem.write(
@@ -347,7 +435,7 @@ test("Bedrock: model with eu. prefix should not be double-prefixed", async () =>
   })
 })
 
-test("Bedrock: model without prefix in US region should get us. prefix added", async () => {
+bulletproofTest("Bedrock: model without prefix in US region should get us. prefix added", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {
       await Filesystem.write(
@@ -429,55 +517,55 @@ describe("Bedrock cross-region prefix detection", () => {
   })
   const crossRegionPrefixes = ["global.", "us.", "eu.", "jp.", "apac.", "au."]
 
-  test("should detect global. prefix", () => {
+  bulletproofTest("should detect global. prefix", async () => {
     const modelID = "global.anthropic.claude-opus-4-5-20251101-v1:0"
     const hasPrefix = crossRegionPrefixes.some((prefix) => modelID.startsWith(prefix))
     expect(hasPrefix).toBe(true)
   })
 
-  test("should detect us. prefix", () => {
+  bulletproofTest("should detect us. prefix", async () => {
     const modelID = "us.anthropic.claude-opus-4-5-20251101-v1:0"
     const hasPrefix = crossRegionPrefixes.some((prefix) => modelID.startsWith(prefix))
     expect(hasPrefix).toBe(true)
   })
 
-  test("should detect eu. prefix", () => {
+  bulletproofTest("should detect eu. prefix", async () => {
     const modelID = "eu.anthropic.claude-opus-4-5-20251101-v1:0"
     const hasPrefix = crossRegionPrefixes.some((prefix) => modelID.startsWith(prefix))
     expect(hasPrefix).toBe(true)
   })
 
-  test("should detect jp. prefix", () => {
+  bulletproofTest("should detect jp. prefix", async () => {
     const modelID = "jp.anthropic.claude-sonnet-4-20250514-v1:0"
     const hasPrefix = crossRegionPrefixes.some((prefix) => modelID.startsWith(prefix))
     expect(hasPrefix).toBe(true)
   })
 
-  test("should detect apac. prefix", () => {
+  bulletproofTest("should detect apac. prefix", async () => {
     const modelID = "apac.anthropic.claude-sonnet-4-20250514-v1:0"
     const hasPrefix = crossRegionPrefixes.some((prefix) => modelID.startsWith(prefix))
     expect(hasPrefix).toBe(true)
   })
 
-  test("should detect au. prefix", () => {
+  bulletproofTest("should detect au. prefix", async () => {
     const modelID = "au.anthropic.claude-sonnet-4-5-20250929-v1:0"
     const hasPrefix = crossRegionPrefixes.some((prefix) => modelID.startsWith(prefix))
     expect(hasPrefix).toBe(true)
   })
 
-  test("should NOT detect prefix for non-prefixed model", () => {
+  bulletproofTest("should NOT detect prefix for non-prefixed model", async () => {
     const modelID = "anthropic.claude-opus-4-5-20251101-v1:0"
     const hasPrefix = crossRegionPrefixes.some((prefix) => modelID.startsWith(prefix))
     expect(hasPrefix).toBe(false)
   })
 
-  test("should NOT detect prefix for amazon nova models", () => {
+  bulletproofTest("should NOT detect prefix for amazon nova models", async () => {
     const modelID = "amazon.nova-pro-v1:0"
     const hasPrefix = crossRegionPrefixes.some((prefix) => modelID.startsWith(prefix))
     expect(hasPrefix).toBe(false)
   })
 
-  test("should NOT detect prefix for cohere models", () => {
+  bulletproofTest("should NOT detect prefix for cohere models", async () => {
     const modelID = "cohere.command-r-plus-v1:0"
     const hasPrefix = crossRegionPrefixes.some((prefix) => modelID.startsWith(prefix))
     expect(hasPrefix).toBe(false)

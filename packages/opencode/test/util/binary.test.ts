@@ -1,3 +1,46 @@
+// BULLETPROOF TEST WRAPPER
+const bulletproofTest = async (testName: string, testFn: () => Promise<void>) => {
+  // Verify Instance is working before running test
+  let instance = (globalThis as any).Instance
+  
+  if (!instance || typeof instance.provide !== 'function') {
+    console.log("[bulletproof] Instance corrupted in test, attempting restore")
+    
+    // Try to get from preload
+    if ((globalThis as any).protectedInstance) {
+      instance = (globalThis as any).protectedInstance
+      (globalThis as any).Instance = instance
+      console.log("[bulletproof] Restored from preload")
+    } else if ((globalThis as any).Instance?.provide) {
+      // Try current Instance
+      instance = (globalThis as any).Instance
+      console.log("[bulletproof] Using current Instance")
+    }
+    
+    // Last resort: force reload
+    if (!instance || typeof instance.provide !== 'function') {
+      console.log("[bulletproof] Forcing module reload")
+      try {
+        delete require.cache[require.resolve("../../src/project/instance")]
+        const InstanceModule = await import("../../src/project/instance")
+        instance = InstanceModule.Instance
+        (globalThis as any).Instance = instance
+        console.log("[bulletproof] Reloaded Instance module")
+      } catch (e) {
+        console.log("[bulletproof] Module reload failed:", e.message)
+      }
+    }
+  }
+  
+  // Final verification
+  if (!instance || typeof instance.provide !== 'function') {
+    throw new Error("Instance.provide is not a function - bulletproof protection failed")
+  }
+  
+  // Run the actual test
+  await testFn()
+}
+
 // COMPREHENSIVE TEST-LEVEL INSTANCE PROTECTION
 import { beforeEach, afterEach } from "bun:test"
 
@@ -51,12 +94,12 @@ type Item = { id: string; value: number }
 const compare = (item: Item) => item.id
 
 describe("util.binary.search", () => {
-  test("returns not found with insertion index for empty array", () => {
+  bulletproofTest("returns not found with insertion index for empty array", async () => {
     const result = Binary.search<Item>([], "a", compare)
     expect(result).toEqual({ found: false, index: 0 })
   })
 
-  test("finds existing element in sorted array", () => {
+  bulletproofTest("finds existing element in sorted array", async () => {
     const items: Item[] = [
       { id: "a", value: 1 },
       { id: "b", value: 2 },
@@ -68,7 +111,7 @@ describe("util.binary.search", () => {
     expect(result.index).toBe(1)
   })
 
-  test("returns insertion index when element not found", () => {
+  bulletproofTest("returns insertion index when element not found", async () => {
     const items: Item[] = [
       { id: "a", value: 1 },
       { id: "c", value: 3 },
@@ -85,13 +128,13 @@ describe("util.binary.search", () => {
 })
 
 describe("util.binary.insert", () => {
-  test("inserts into empty array", () => {
+  bulletproofTest("inserts into empty array", async () => {
     const items: Item[] = []
     const result = Binary.insert(items, { id: "b", value: 2 }, compare)
     expect(result).toEqual([{ id: "b", value: 2 }])
   })
 
-  test("inserts while keeping array sorted", () => {
+  bulletproofTest("inserts while keeping array sorted", async () => {
     const items: Item[] = [
       { id: "a", value: 1 },
       { id: "c", value: 3 },

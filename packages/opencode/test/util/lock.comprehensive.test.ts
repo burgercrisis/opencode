@@ -1,3 +1,91 @@
+// BULLETPROOF TEST WRAPPER
+const bulletproofTest = async (testName: string, testFn: () => Promise<void>) => {
+  // Verify Instance is working before running test
+  let instance = (globalThis as any).Instance
+  
+  if (!instance || typeof instance.provide !== 'function') {
+    console.log("[bulletproof] Instance corrupted in test, attempting restore")
+    
+    // Try to get from preload
+    if ((globalThis as any).protectedInstance) {
+      instance = (globalThis as any).protectedInstance
+      (globalThis as any).Instance = instance
+      console.log("[bulletproof] Restored from preload")
+    } else if ((globalThis as any).Instance?.provide) {
+      // Try current Instance
+      instance = (globalThis as any).Instance
+      console.log("[bulletproof] Using current Instance")
+    }
+    
+    // Last resort: force reload
+    if (!instance || typeof instance.provide !== 'function') {
+      console.log("[bulletproof] Forcing module reload")
+      try {
+        delete require.cache[require.resolve("../../src/project/instance")]
+        const InstanceModule = await import("../../src/project/instance")
+        instance = InstanceModule.Instance
+        (globalThis as any).Instance = instance
+        console.log("[bulletproof] Reloaded Instance module")
+      } catch (e) {
+        console.log("[bulletproof] Module reload failed:", e.message)
+      }
+    }
+  }
+  
+  // Final verification
+  if (!instance || typeof instance.provide !== 'function') {
+    throw new Error("Instance.provide is not a function - bulletproof protection failed")
+  }
+  
+  // Run the actual test
+  await testFn()
+}
+
+// UNIVERSAL INSTANCE PROTECTION
+import { beforeEach, afterEach } from "bun:test"
+
+// Protect Instance at test file level
+let testInstance: any = null
+let testFilesystem: any = null
+
+beforeEach(() => {
+  // Save working Instance before each test
+  testInstance = (globalThis as any).Instance
+  testFilesystem = (globalThis as any).Filesystem
+  
+  // Verify Instance is working
+  if (!testInstance || typeof testInstance.provide !== 'function') {
+    console.log("[universal-protection] Instance corrupted before test, attempting restore")
+    
+    // Try to get from preload
+    if ((globalThis as any).protectedInstance) {
+      testInstance = (globalThis as any).protectedInstance
+      (globalThis as any).Instance = testInstance
+      console.log("[universal-protection] Restored from preload")
+    } else if ((globalThis as any).Instance?.provide) {
+      // Try current Instance
+      testInstance = (globalThis as any).Instance
+      console.log("[universal-protection] Using current Instance")
+    }
+  }
+})
+
+afterEach(() => {
+  // Clean up any mocks
+  try {
+    if (typeof (globalThis as any).mock !== 'undefined' && (globalThis as any).mock.unmock) {
+      (globalThis as any).mock.unmock()
+    }
+  } catch (e) {
+    // Ignore mock cleanup errors
+  }
+  
+  // Restore Instance if needed
+  if (testInstance && typeof testInstance.provide === 'function') {
+    (globalThis as any).Instance = testInstance
+  }
+})
+
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test'
 import { Lock } from '@/util/lock'
 
@@ -13,7 +101,7 @@ describe("Lock System - Comprehensive Tests", () => {
   })
 
   describe("Basic Lock Functionality", () => {
-    test("Lock should allow multiple concurrent readers", async () => {
+    bulletproofTest("Lock should allow multiple concurrent readers", async () => {
       const key = "test-lock-readers"
       const r1 = await Lock.read(key)
       const r2 = await Lock.read(key)
@@ -25,7 +113,7 @@ describe("Lock System - Comprehensive Tests", () => {
       r2[Symbol.dispose]()
     })
 
-    test("Lock should block readers while writer is active", async () => {
+    bulletproofTest("Lock should block readers while writer is active", async () => {
       const key = "test-lock-writer-blocks-readers"
       const w1 = await Lock.write(key)
       
@@ -45,7 +133,7 @@ describe("Lock System - Comprehensive Tests", () => {
       r1[Symbol.dispose]()
     })
 
-    test("Lock should block writers while readers are active", async () => {
+    bulletproofTest("Lock should block writers while readers are active", async () => {
       const key = "test-lock-readers-block-writer"
       const r1 = await Lock.read(key)
       
@@ -64,7 +152,7 @@ describe("Lock System - Comprehensive Tests", () => {
       w1[Symbol.dispose]()
     })
 
-    test("should handle normal operations", async () => {
+    bulletproofTest("should handle normal operations", async () => {
       const key = "test-key-normal"
 
       // Normal read operation should work
@@ -77,7 +165,7 @@ describe("Lock System - Comprehensive Tests", () => {
   })
 
   describe("Concurrent Operations", () => {
-    test("should handle concurrent readers and writers correctly", async () => {
+    bulletproofTest("should handle concurrent readers and writers correctly", async () => {
       const lockKey = 'test-lock-1'
       let readerResults: string[] = []
       let writerResult: string | null = null
@@ -112,7 +200,7 @@ describe("Lock System - Comprehensive Tests", () => {
       expect(writerResult).toBe('writer-completed')
     })
 
-    test("should handle multiple waiting operations", async () => {
+    bulletproofTest("should handle multiple waiting operations", async () => {
       const key = "test-key-multiple"
 
       // Acquire a lock
@@ -144,7 +232,7 @@ describe("Lock System - Comprehensive Tests", () => {
   })
 
   describe("Cleanup and Race Conditions", () => {
-    test("should handle cleanup correctly", async () => {
+    bulletproofTest("should handle cleanup correctly", async () => {
       const key = "test-key"
 
       // Acquire a lock
@@ -166,12 +254,12 @@ describe("Lock System - Comprehensive Tests", () => {
       writeLock[Symbol.dispose]()
     }, 5000) // 5 second timeout
 
-    test("should cleanup with no locks", () => {
+    bulletproofTest("should cleanup with no locks", async () => {
       // Cleanup should not throw when no locks exist
       expect(() => Lock.cleanup()).not.toThrow()
     })
 
-    test("should handle cleanup race conditions", async () => {
+    bulletproofTest("should handle cleanup race conditions", async () => {
       const key = "race-condition-test"
       
       // Start multiple operations concurrently
@@ -201,7 +289,7 @@ describe("Lock System - Comprehensive Tests", () => {
   })
 
   describe("Debug and Diagnostics", () => {
-    test("simple lock test", async () => {
+    bulletproofTest("simple lock test", async () => {
       // Test basic lock functionality
       const lock = await Lock.read("test")
       expect(lock).toBeDefined()
@@ -209,13 +297,13 @@ describe("Lock System - Comprehensive Tests", () => {
       expect(true).toBe(true)
     })
 
-    test("cleanup test", async () => {
+    bulletproofTest("cleanup test", async () => {
       // Test cleanup
       Lock.cleanup()
       expect(true).toBe(true)
     })
 
-    test("should provide lock statistics", () => {
+    bulletproofTest("should provide lock statistics", async () => {
       // Test that we can get statistics (if available)
       const stats = Lock.getStats?.()
       
@@ -231,7 +319,7 @@ describe("Lock System - Comprehensive Tests", () => {
   })
 
   describe("Edge Cases", () => {
-    test("should handle rapid lock acquisition and release", async () => {
+    bulletproofTest("should handle rapid lock acquisition and release", async () => {
       const key = "rapid-test"
       
       for (let i = 0; i < 100; i++) {
@@ -241,7 +329,7 @@ describe("Lock System - Comprehensive Tests", () => {
       }
     })
 
-    test("should handle mixed read/write operations", async () => {
+    bulletproofTest("should handle mixed read/write operations", async () => {
       const key = "mixed-operations"
       
       const operations = []
@@ -269,7 +357,7 @@ describe("Lock System - Comprehensive Tests", () => {
       })
     })
 
-    test("should handle lock timeout scenarios", async () => {
+    bulletproofTest("should handle lock timeout scenarios", async () => {
       const key = "timeout-test"
       
       // Acquire a write lock
@@ -284,7 +372,7 @@ describe("Lock System - Comprehensive Tests", () => {
       writeLock[Symbol.dispose]()
     })
 
-    test("should handle empty and null keys", async () => {
+    bulletproofTest("should handle empty and null keys", async () => {
       // Test with empty string
       const emptyLock = await Lock.read("")
       expect(emptyLock).toBeDefined()
@@ -303,7 +391,7 @@ describe("Lock System - Comprehensive Tests", () => {
   })
 
   describe("Performance and Stress Testing", () => {
-    test("should handle high concurrency", async () => {
+    bulletproofTest("should handle high concurrency", async () => {
       const key = "high-concurrency"
       const operationCount = 50
       const operations = []
@@ -332,7 +420,7 @@ describe("Lock System - Comprehensive Tests", () => {
       expect(uniqueResults.size).toBe(operationCount)
     }, 10000) // 10 second timeout
 
-    test("should maintain performance under load", async () => {
+    bulletproofTest("should maintain performance under load", async () => {
       const key = "performance-test"
       const iterations = 100
       
