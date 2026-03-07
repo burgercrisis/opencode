@@ -1,16 +1,17 @@
 import "@/index.css"
+import { File } from "@opencode-ai/ui/file"
+import { Diff } from "@opencode-ai/ui/diff"
 import { Code } from "@opencode-ai/ui/code"
 import { I18nProvider } from "@opencode-ai/ui/context"
-import { CodeComponentProvider } from "@opencode-ai/ui/context/code"
 import { DialogProvider } from "@opencode-ai/ui/context/dialog"
-import { DiffComponentProvider } from "@opencode-ai/ui/context/diff"
+import { FileComponentProvider } from "@opencode-ai/ui/context/file"
 import { MarkedProvider } from "@opencode-ai/ui/context/marked"
-import { Diff } from "@opencode-ai/ui/diff"
+import { DiffComponentProvider, CodeComponentProvider } from "@opencode-ai/ui/context"
 import { Font } from "@opencode-ai/ui/font"
 import { ThemeProvider } from "@opencode-ai/ui/theme"
 import { MetaProvider } from "@solidjs/meta"
-import { Navigate, Route, Router } from "@solidjs/router"
-import { ErrorBoundary, type JSX, lazy, type ParentProps, Show, Suspense } from "solid-js"
+import { BaseRouterProps, Navigate, Route, Router } from "@solidjs/router"
+import { Component, ErrorBoundary, type JSX, lazy, type ParentProps, Show, Suspense } from "solid-js"
 import { CommandProvider } from "@/context/command"
 import { CommentsProvider } from "@/context/comments"
 import { FileProvider } from "@/context/file"
@@ -31,6 +32,7 @@ import { Logo } from "@opencode-ai/ui/logo"
 import DirectoryLayout from "@/pages/directory-layout"
 import Layout from "@/pages/layout"
 import { ErrorPage } from "./pages/error"
+import { Dynamic } from "solid-js/web"
 
 const Home = lazy(() => import("@/pages/home"))
 const Session = lazy(() => import("@/pages/session"))
@@ -142,7 +144,9 @@ export function AppBaseProviders(props: ParentProps) {
                 <DialogProvider>
                   <MarkedProviderWithNativeParser>
                     <DiffComponentProvider component={Diff}>
-                      <CodeComponentProvider component={Code}>{props.children}</CodeComponentProvider>
+                      <CodeComponentProvider component={Code}>
+                        <FileComponentProvider component={File}>{props.children}</FileComponentProvider>
+                      </CodeComponentProvider>
                     </DiffComponentProvider>
                   </MarkedProviderWithNativeParser>
                 </DialogProvider>
@@ -168,6 +172,7 @@ export function AppInterface(props: {
   children?: JSX.Element
   defaultServer: ServerConnection.Key
   servers?: Array<ServerConnection.Any>
+  router?: Component<BaseRouterProps>
 }) {
   return (
     <ServerProvider defaultServer={props.defaultServer} servers={props.servers}>

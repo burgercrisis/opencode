@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "OpenCode-Dev",
+  "productName": "OpenCode Dev",
   "identifier": "ai.opencode.desktop.dev",
   "mainBinaryName": "OpenCode",
   "version": "../package.json",
@@ -14,22 +14,12 @@
     "windows": [
       {
         "label": "main",
-        "create": false,
-        "devtools": true
+        "create": false
       }
     ],
     "withGlobalTauri": true,
     "security": {
-      "csp": {
-        "default-src": "'self'",
-        "script-src": "'self' 'unsafe-inline'",
-        "style-src": "'self' 'unsafe-inline' https://fonts.googleapis.com",
-        "font-src": "'self' https://fonts.gstatic.com",
-        "img-src": "'self' asset: http://asset.localhost blob: data:",
-        "connect-src": "'self' ipc: http://ipc.localhost https: wss:",
-        "object-src": "'none'",
-        "base-uri": "'self'"
-      }
+      "csp": null
     },
     "macOSPrivateApi": true
   },
@@ -42,12 +32,8 @@
       "icons/dev/icon.ico"
     ],
     "active": true,
-    "targets": [
-      "nsis"
-    ],
-    "externalBin": [
-      "sidecars/opencode-cli"
-    ],
+    "targets": ["deb", "rpm", "dmg", "nsis", "app"],
+    "externalBin": ["sidecars/opencode-cli"],
     "linux": {
       "rpm": {
         "compression": {
@@ -69,9 +55,7 @@
   "plugins": {
     "deep-link": {
       "desktop": {
-        "schemes": [
-          "opencode"
-        ]
+        "schemes": ["opencode"]
       }
     }
   }

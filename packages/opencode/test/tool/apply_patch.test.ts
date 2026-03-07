@@ -25,14 +25,48 @@ describe("ApplyPatchTool", () => {
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const tool = await ApplyPatchTool.init()
-        expect(tool.execute({ patchText: "" } as any, ctx)).rejects.toThrow("patchText is required")
-      }
+        const modifyPath = path.join(fixture.path, "modify.txt")
+        const deletePath = path.join(fixture.path, "delete.txt")
+        await fs.writeFile(modifyPath, "line1\nline2\n", "utf-8")
+        await fs.writeFile(deletePath, "obsolete\n", "utf-8")
+
+        const patchText =
+          "*** Begin Patch\n*** Add File: nested/new.txt\n+created\n*** Delete File: delete.txt\n*** Update File: modify.txt\n@@\n-line2\n+changed\n*** End Patch"
+
+        const result = await execute({ patchText }, ctx)
+
+        expect(result.title).toContain("Success. Updated the following files")
+        expect(result.output).toContain("Success. Updated the following files")
+        expect(result.metadata.diff).toContain("Index:")
+        expect(calls.length).toBe(1)
+
+        // Verify permission metadata includes files array for UI rendering
+        const permissionCall = calls[0]
+        expect(permissionCall.metadata.files).toHaveLength(3)
+        expect(permissionCall.metadata.files.map((f) => f.type).sort()).toEqual(["add", "delete", "update"])
+
+        const addFile = permissionCall.metadata.files.find((f) => f.type === "add")
+        expect(addFile).toBeDefined()
+        expect(addFile!.relativePath).toBe("nested/new.txt")
+        expect(addFile!.after).toBe("created\n")
+
+        const updateFile = permissionCall.metadata.files.find((f) => f.type === "update")
+        expect(updateFile).toBeDefined()
+        expect(updateFile!.before).toContain("line2")
+        expect(updateFile!.after).toContain("changed")
+
+        const added = await fs.readFile(path.join(fixture.path, "nested", "new.txt"), "utf-8")
+        expect(added).toBe("created\n")
+        expect(await fs.readFile(modifyPath, "utf-8")).toBe("line1\nchanged\n")
+        await expect(fs.readFile(deletePath, "utf-8")).rejects.toThrow()
+      },
     })
   })
 
-  it("throws error if patch parsing fails", async () => {
-    await using tmp = await tmpdir()
+  test("permission metadata includes move file info", async () => {
+    await using fixture = await tmpdir({ git: true })
+    const { ctx, calls } = makeCtx()
+
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
@@ -53,7 +87,7 @@ describe("ApplyPatchTool", () => {
 *** Add File: new.txt
 +new content
 *** End Patch`
-        
+
         const tool = await ApplyPatchTool.init()
         const result = await tool.execute({ patchText }, ctx)
 
@@ -79,7 +113,7 @@ describe("ApplyPatchTool", () => {
         const patchText = `*** Begin Patch
 *** Delete File: old.txt
 *** End Patch`
-        
+
         const tool = await ApplyPatchTool.init()
         const result = await tool.execute({ patchText }, ctx)
 
@@ -105,7 +139,7 @@ describe("ApplyPatchTool", () => {
 -original content
 +modified content
 *** End Patch`
-        
+
         const tool = await ApplyPatchTool.init()
         const result = await tool.execute({ patchText }, ctx)
 
@@ -137,7 +171,7 @@ describe("ApplyPatchTool", () => {
 -content2
 +updated2
 *** End Patch`
-        
+
         const tool = await ApplyPatchTool.init()
         const result = await tool.execute({ patchText }, ctx)
 
@@ -160,7 +194,7 @@ describe("ApplyPatchTool", () => {
 +  return <button>Click</button>
 +}
 *** End Patch`
-        
+
         const tool = await ApplyPatchTool.init()
         const result = await tool.execute({ patchText }, ctx)
 
@@ -188,7 +222,7 @@ describe("ApplyPatchTool", () => {
 -original content
 +modified content
 *** End Patch`
-        
+
         const tool = await ApplyPatchTool.init()
         // Should throw because file wasn't read first
         expect(tool.execute({ patchText }, ctx)).rejects.toThrow()
@@ -207,7 +241,7 @@ describe("ApplyPatchTool", () => {
 +line 2
 +line 3
 *** End Patch`
-        
+
         const tool = await ApplyPatchTool.init()
         const result = await tool.execute({ patchText }, ctx)
 

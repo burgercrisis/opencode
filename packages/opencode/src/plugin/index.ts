@@ -81,34 +81,42 @@ export namespace Plugin {
           })
           Bus.publish(Session.Event.Error, {
             error: new NamedError.Unknown({
-              message: `Failed to install built-in plugin ${pkg}@${version}: ${message}`,
+              message: `Failed to install plugin ${pkg}@${version}: ${message}`,
             }).toObject(),
           })
-
           return ""
         })
       })()
 
-      return !plugin
-        ? acc
-        : await (async () => {
-            const mod = await import(plugin)
-            // Prevent duplicate initialization when plugins export the same function
-            // as both a named export and default export (e.g., `export const X` and `export default X`).
-            const pluginInits = await Object.entries<PluginInstance>(mod).reduce(
-              async (innerAccPromise, [_name, fn]) => {
-                const innerAcc = await innerAccPromise
-                return innerAcc.seen.has(fn)
-                  ? innerAcc
-                  : {
-                      seen: new Set([...innerAcc.seen, fn]),
-                      hooks: [...innerAcc.hooks, await fn(input)],
-                    }
-              },
-              Promise.resolve({ seen: new Set<PluginInstance>(), hooks: [] as Hooks[] }),
-            )
-            return [...acc, ...pluginInits.hooks]
-          })()
+      if (!plugin) return acc
+
+      const mod = await import(plugin).catch((err) => {
+        const message = err instanceof Error ? err.message : String(err)
+        log.error("failed to load plugin", { path: plugin, error: message })
+        Bus.publish(Session.Event.Error, {
+          error: new NamedError.Unknown({
+            message: `Failed to load plugin ${plugin}: ${message}`,
+          }).toObject(),
+        })
+        return null
+      })
+      if (!mod) return acc
+
+      // Prevent duplicate initialization when plugins export the same function
+      // as both a named export and default export (e.g., `export const X` and `export default X`).
+      const pluginInits = await Object.entries<PluginInstance>(mod).reduce(
+        async (innerAccPromise, [_name, fn]) => {
+          const innerAcc = await innerAccPromise
+          return innerAcc.seen.has(fn)
+            ? innerAcc
+            : {
+                seen: new Set([...innerAcc.seen, fn]),
+                hooks: [...innerAcc.hooks, await fn(input)],
+              }
+        },
+        Promise.resolve({ seen: new Set<PluginInstance>(), hooks: [] as Hooks[] }),
+      )
+      return [...acc, ...pluginInits.hooks]
     }, Promise.resolve([] as Hooks[]))
 
     return {

@@ -21,7 +21,7 @@ export namespace ConfigMarkdown {
     const match = content.match(/^(---\r?\n)([\s\S]*?)(\r?\n---)/)
     if (!match) return content
 
-    const [full, prefix, frontmatter, suffix] = match
+    const frontmatter = match[1]
     const lines = frontmatter.split(/\r?\n/)
     const result: string[] = []
 

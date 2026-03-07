@@ -56,7 +56,7 @@ Instructions here.
         const testSkill = skills.find((s) => s.name === "test-skill")
         expect(testSkill).toBeDefined()
         expect(testSkill!.description).toBe("A test skill for verification.")
-        expect(testSkill!.location).toContain("skill/test-skill/SKILL.md")
+        expect(testSkill!.location).toContain(path.join("skill", "test-skill", "SKILL.md"))
       },
     })
   } finally {
@@ -215,7 +215,7 @@ description: A skill in the .claude/skills directory.
         expect(skills.length).toBe(1)
         const claudeSkill = skills.find((s) => s.name === "claude-skill")
         expect(claudeSkill).toBeDefined()
-        expect(claudeSkill!.location).toContain(".claude/skills/claude-skill/SKILL.md")
+        expect(claudeSkill!.location).toContain(path.join(".claude", "skills", "claude-skill", "SKILL.md"))
       },
     })
   } finally {

@@ -4,6 +4,7 @@ import os from "os"
 import path from "path"
 import fs from "fs/promises"
 import fsSync from "fs"
+import { setTimeout as sleep } from "node:timers/promises"
 import { afterAll, afterEach as bunAfterEach, beforeEach as bunBeforeEach } from "bun:test"
 
 // Store the real Instance reference
@@ -49,20 +50,24 @@ const sanitize = (p: string) => {
 const dir = path.join(os.tmpdir(), "opencode-test-data-" + process.pid)
 await fs.mkdir(dir, { recursive: true })
 afterAll(async () => {
-  // Retry cleanup a few times to handle Windows EBUSY errors
-  for (let i = 0; i < 5; i++) {
-    try {
-      await fs.rm(dir, { recursive: true, force: true })
-      break
-    } catch (err: any) {
-      if (err.code === "EBUSY" || err.code === "EPERM") {
-        if (i === 4) console.warn(`Failed to cleanup test dir ${dir}: ${err.message}`)
-        await new Promise((resolve) => setTimeout(resolve, 100 * (i + 1)))
-      } else {
-        throw err
-      }
-    }
+  const { Database } = await import("../src/storage/db")
+  Database.close()
+  const busy = (error: unknown) =>
+    typeof error === "object" && error !== null && "code" in error && error.code === "EBUSY"
+  const rm = async (left: number): Promise<void> => {
+    Bun.gc(true)
+    await sleep(100)
+    return fs.rm(dir, { recursive: true, force: true }).catch((error) => {
+      if (!busy(error)) throw error
+      if (left <= 1) throw error
+      return rm(left - 1)
+    })
   }
+
+  // Windows can keep SQLite WAL handles alive until GC finalizers run, so we
+  // force GC and retry teardown to avoid flaky EBUSY in test cleanup.
+  // Retry cleanup a few times to handle Windows EBUSY errors
+  await rm(30)
 })
 
 process.env["XDG_DATA_HOME"] = path.join(dir, "share")

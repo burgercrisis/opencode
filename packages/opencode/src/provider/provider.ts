@@ -6,9 +6,10 @@ import { mapValues, mergeDeep, omit, pickBy, sortBy } from "remeda"
 import { NoSuchModelError, type Provider as SDK } from "ai"
 import { Log } from "../util/log"
 import { BunProc } from "../bun"
+import { Hash } from "../util/hash"
 import { Plugin } from "../plugin"
-import { ModelsDev } from "./models"
 import { NamedError } from "@opencode-ai/util/error"
+import { ModelsDev } from "./models"
 import { Auth } from "../auth"
 import { Env } from "../env"
 import { Instance } from "../project/instance"
@@ -566,7 +567,28 @@ export namespace Provider {
       const { createAiGateway } = await import("ai-gateway-provider")
       const { createUnified } = await import("ai-gateway-provider/providers/unified")
 
-      const aigateway = createAiGateway({ accountId, gateway, apiKey: apiToken })
+      const metadata = iife(() => {
+        if (input.options?.metadata) return input.options.metadata
+        try {
+          return JSON.parse(input.options?.headers?.["cf-aig-metadata"])
+        } catch {
+          return undefined
+        }
+      })
+      const opts = {
+        metadata,
+        cacheTtl: input.options?.cacheTtl,
+        cacheKey: input.options?.cacheKey,
+        skipCache: input.options?.skipCache,
+        collectLog: input.options?.collectLog,
+      }
+
+      const aigateway = createAiGateway({
+        accountId,
+        gateway,
+        apiKey: apiToken,
+        ...(Object.values(opts).some((v) => v !== undefined) ? { options: opts } : {}),
+      })
       const unified = createUnified()
 
       return {
@@ -834,7 +856,10 @@ export namespace Provider {
     }
 
     const languages = new Map<string, LanguageModelV2>()
-    const sdk = new Map<number, SDK>()
+    let modelLoaders: {
+      [providerID: string]: CustomModelLoader
+    } = {}
+    const sdk = new Map<string, SDK>()
 
     log.info("init")
 
@@ -1036,7 +1061,7 @@ export namespace Provider {
       }
     }, finalProvidersWithLoaders)
 
-    const modelLoaders = await Object.entries(CUSTOM_LOADERS).reduce(async (accPromise, [providerID, fn]) => {
+    modelLoaders = await Object.entries(CUSTOM_LOADERS).reduce(async (accPromise, [providerID, fn]) => {
       const acc = await accPromise
       if (disabled.has(providerID)) return acc
       const data = database[providerID]
@@ -1131,7 +1156,7 @@ export namespace Provider {
           ...model.headers,
         }
 
-      const key = Bun.hash.xxHash32(JSON.stringify({ providerID: model.providerID, npm: model.api.npm, options }))
+      const key = Hash.fast(JSON.stringify({ providerID: model.providerID, npm: model.api.npm, options }))
       const existing = s.sdk.get(key)
       if (existing) return existing
 

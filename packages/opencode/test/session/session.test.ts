@@ -5,6 +5,8 @@ import { Bus } from "../../src/bus"
 import { Log } from "../../src/util/log"
 import { Instance } from "../../src/project/instance"
 import { pipe, filter, sortBy } from "remeda"
+import { MessageV2 } from "../../src/session/message-v2"
+import { Identifier } from "../../src/id/id"
 
 const projectRoot = path.join(__dirname, "../..")
 Log.init({ print: false })
@@ -81,9 +83,7 @@ describe("session.list", () => {
         const session2 = await Session.create({})
 
         // Archive session1
-        await Session.update(session1.id, (s) => {
-          s.time.archived = Date.now()
-        })
+        await Session.setArchived({ sessionID: session1.id, time: Date.now() })
 
         // Verify Session.list returns both (no filtering at source)
         const allSessions = await Array.fromAsync(Session.list())
@@ -122,9 +122,7 @@ describe("session.list", () => {
         expect(sessions.map((s) => s.id)).toContain(session.id)
 
         // Archive the session
-        await Session.update(session.id, (s) => {
-          s.time.archived = Date.now()
-        })
+        await Session.setArchived({ sessionID: session.id, time: Date.now() })
 
         // Verify session is no longer in the filtered list
         sessions = pipe(
@@ -138,4 +136,73 @@ describe("session.list", () => {
       },
     })
   })
+})
+
+describe("step-finish token propagation via Bus event", () => {
+  test(
+    "non-zero tokens propagate through PartUpdated event",
+    async () => {
+      await Instance.provide({
+        directory: projectRoot,
+        fn: async () => {
+          const session = await Session.create({})
+
+          const messageID = Identifier.ascending("message")
+          await Session.updateMessage({
+            id: messageID,
+            sessionID: session.id,
+            role: "user",
+            time: { created: Date.now() },
+            agent: "user",
+            model: { providerID: "test", modelID: "test" },
+            tools: {},
+            mode: "",
+          } as unknown as MessageV2.Info)
+
+          let received: MessageV2.Part | undefined
+          const unsub = Bus.subscribe(MessageV2.Event.PartUpdated, (event) => {
+            received = event.properties.part
+          })
+
+          const tokens = {
+            total: 1500,
+            input: 500,
+            output: 800,
+            reasoning: 200,
+            cache: { read: 100, write: 50 },
+          }
+
+          const partInput = {
+            id: Identifier.ascending("part"),
+            messageID,
+            sessionID: session.id,
+            type: "step-finish" as const,
+            reason: "stop",
+            cost: 0.005,
+            tokens,
+          }
+
+          await Session.updatePart(partInput)
+
+          await new Promise((resolve) => setTimeout(resolve, 100))
+
+          expect(received).toBeDefined()
+          expect(received!.type).toBe("step-finish")
+          const finish = received as MessageV2.StepFinishPart
+          expect(finish.tokens.input).toBe(500)
+          expect(finish.tokens.output).toBe(800)
+          expect(finish.tokens.reasoning).toBe(200)
+          expect(finish.tokens.total).toBe(1500)
+          expect(finish.tokens.cache.read).toBe(100)
+          expect(finish.tokens.cache.write).toBe(50)
+          expect(finish.cost).toBe(0.005)
+          expect(received).not.toBe(partInput)
+
+          unsub()
+          await Session.remove(session.id)
+        },
+      })
+    },
+    { timeout: 30000 },
+  )
 })

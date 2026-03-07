@@ -10,7 +10,6 @@ import { useSettings } from "@/context/settings"
 export function DialogReleaseNotes(props: { highlights: Highlight[] }) {
   const language = useLanguage()
   const dialog = useDialog()
-  // BEST OF BOTH WORLDS: Use settings and pagination from incoming
   const settings = useSettings()
   const [index, setIndex] = createSignal(0)
 
@@ -78,16 +77,16 @@ export function DialogReleaseNotes(props: { highlights: Highlight[] }) {
             <div class="flex flex-col items-start gap-3">
               {isLast() ? (
                 <Button variant="primary" size="large" onClick={handleClose}>
-                  Get started
+                  {language.t("dialog.releaseNotes.action.getStarted")}
                 </Button>
               ) : (
                 <Button variant="secondary" size="large" onClick={handleNext}>
-                  Next
+                  {language.t("dialog.releaseNotes.action.next")}
                 </Button>
               )}
 
               <Button variant="ghost" size="small" onClick={handleDisable}>
-                Don't show these in the future
+                {language.t("dialog.releaseNotes.action.hideFuture")}
               </Button>
             </div>
 
@@ -132,11 +131,6 @@ export function DialogReleaseNotes(props: { highlights: Highlight[] }) {
             )}
           </div>
         </div>
-      </div>
-      <div class="flex justify-end gap-2 pt-4 border-t">
-        <Button onClick={() => dialog.close()}>
-          {language.t("common.dismiss")}
-        </Button>
       </div>
     </Dialog>
   )

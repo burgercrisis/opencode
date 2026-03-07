@@ -4,20 +4,21 @@ import { Log } from "../util/log"
 import path from "path"
 import { Filesystem } from "../util/filesystem"
 import { NamedError } from "@opencode-ai/util/error"
-import { readableStreamToText } from "bun"
+import { text } from "node:stream/consumers"
 import { Lock } from "../util/lock"
 import { PackageRegistry } from "./registry"
 import { proxied } from "@/util/proxied"
+import { Process } from "../util/process"
 
 export namespace BunProc {
   const log = Log.create({ service: "bun" })
 
-  export async function run(cmd: string[], options?: Bun.SpawnOptions.OptionsObject<any, any, any>) {
+  export async function run(cmd: string[], options?: Process.Options) {
     log.info("running", {
       cmd: [which(), ...cmd],
       ...options,
     })
-    const result = Bun.spawn([which(), ...cmd], {
+    const result = Process.spawn([which(), ...cmd], {
       ...options,
       stdout: "pipe",
       stderr: "pipe",

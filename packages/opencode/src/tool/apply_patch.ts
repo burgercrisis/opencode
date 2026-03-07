@@ -216,13 +216,13 @@ export const ApplyPatchTool = Tool.define<
     const diagnostics = await LSP.diagnostics()
     const summaryLines = fileChanges.map((change) => {
       if (change.type === "add") {
-        return `A ${path.relative(Instance.worktree, change.filePath)}`
+        return `A ${path.relative(Instance.worktree, change.filePath).replaceAll("\\", "/")}`
       }
       if (change.type === "delete") {
-        return `D ${path.relative(Instance.worktree, change.filePath)}`
+        return `D ${path.relative(Instance.worktree, change.filePath).replaceAll("\\", "/")}`
       }
       const target = change.movePath ?? change.filePath
-      return `M ${path.relative(Instance.worktree, target)}`
+      return `M ${path.relative(Instance.worktree, target).replaceAll("\\", "/")}`
     })
     let output = `Success. Updated the following files:\n${summaryLines.join("\n")}`
 
@@ -236,7 +236,7 @@ export const ApplyPatchTool = Tool.define<
         const limited = errors.slice(0, TOOL.MAX_DIAGNOSTICS_PER_FILE)
         const suffix =
           errors.length > TOOL.MAX_DIAGNOSTICS_PER_FILE ? `\n... and ${errors.length - TOOL.MAX_DIAGNOSTICS_PER_FILE} more` : ""
-        output += `\n\nLSP errors detected in ${path.relative(Instance.worktree, target)}, please fix:\n<diagnostics file="${target}">\n${limited.map(LSP.Diagnostic.pretty).join("\n")}${suffix}\n</diagnostics>`
+        output += `\n\nLSP errors detected in ${path.relative(Instance.worktree, target).replaceAll("\\", "/")}, please fix:\n<diagnostics file="${target}">\n${limited.map(LSP.Diagnostic.pretty).join("\n")}${suffix}\n</diagnostics>`
       }
     }
 
