@@ -3,10 +3,16 @@ function truthy(key: string) {
   return value === "true" || value === "1"
 }
 
+function falsy(key: string) {
+  const value = process.env[key]?.toLowerCase()
+  return value === "false" || value === "0"
+}
+
 export namespace Flag {
   export const OPENCODE_AUTO_SHARE = truthy("OPENCODE_AUTO_SHARE")
-  export const OPENCODE_GIT_BASH_PATH = process.env["OPENCODE_GIT_BASH_PATH"]?.replace(/\0/g, "").trim()
-  export const OPENCODE_CONFIG = process.env["OPENCODE_CONFIG"]?.replace(/\0/g, "").trim()
+  export const OPENCODE_GIT_BASH_PATH = process.env["OPENCODE_GIT_BASH_PATH"]
+  export const OPENCODE_CONFIG = process.env["OPENCODE_CONFIG"]
+  export declare const OPENCODE_TUI_CONFIG: string | undefined
   export declare const OPENCODE_CONFIG_DIR: string | undefined
   export const OPENCODE_CONFIG_CONTENT = process.env["OPENCODE_CONFIG_CONTENT"]
   export const OPENCODE_DISABLE_AUTOUPDATE = truthy("OPENCODE_DISABLE_AUTOUPDATE")
@@ -48,15 +54,16 @@ export namespace Flag {
   export const OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX = number("OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX")
   export const OPENCODE_EXPERIMENTAL_OXFMT = OPENCODE_EXPERIMENTAL || truthy("OPENCODE_EXPERIMENTAL_OXFMT")
   export const OPENCODE_EXPERIMENTAL_LSP_TY = truthy("OPENCODE_EXPERIMENTAL_LSP_TY")
-  export declare const OPENCODE_EXPERIMENTAL_LSP_TOOL: boolean
+  export const OPENCODE_EXPERIMENTAL_LSP_TOOL = OPENCODE_EXPERIMENTAL || truthy("OPENCODE_EXPERIMENTAL_LSP_TOOL")
   export const OPENCODE_DISABLE_FILETIME_CHECK = truthy("OPENCODE_DISABLE_FILETIME_CHECK")
-  export declare const OPENCODE_EXPERIMENTAL_PLAN_MODE: boolean
-  export const OPENCODE_EXPERIMENTAL_MSYS_PATHS = truthy("OPENCODE_EXPERIMENTAL_MSYS_PATHS")
-  export const OPENCODE_EXPERIMENTAL_NO_BOOTSTRAP = truthy("OPENCODE_EXPERIMENTAL_NO_BOOTSTRAP")
-  export const OPENCODE_EXPERIMENTAL_MARKDOWN = truthy("OPENCODE_EXPERIMENTAL_MARKDOWN")
+  export const OPENCODE_EXPERIMENTAL_PLAN_MODE = OPENCODE_EXPERIMENTAL || truthy("OPENCODE_EXPERIMENTAL_PLAN_MODE")
+  export const OPENCODE_EXPERIMENTAL_WORKSPACES = OPENCODE_EXPERIMENTAL || truthy("OPENCODE_EXPERIMENTAL_WORKSPACES")
+  export const OPENCODE_EXPERIMENTAL_MARKDOWN = !falsy("OPENCODE_EXPERIMENTAL_MARKDOWN")
   export const OPENCODE_MODELS_URL = process.env["OPENCODE_MODELS_URL"]
-  export const OPENCODE_DEBUG_SHELL = truthy("OPENCODE_DEBUG_SHELL")
   export const OPENCODE_MODELS_PATH = process.env["OPENCODE_MODELS_PATH"]
+  export const OPENCODE_DISABLE_CHANNEL_DB = truthy("OPENCODE_DISABLE_CHANNEL_DB")
+  export const OPENCODE_SKIP_MIGRATIONS = truthy("OPENCODE_SKIP_MIGRATIONS")
+  export const OPENCODE_STRICT_CONFIG_DEPS = truthy("OPENCODE_STRICT_CONFIG_DEPS")
 
   function number(key: string) {
     const value = process.env[key]
@@ -66,24 +73,6 @@ export namespace Flag {
   }
 }
 
-// Dynamic getter for OPENCODE_EXPERIMENTAL_PLAN_MODE
-Object.defineProperty(Flag, "OPENCODE_EXPERIMENTAL_PLAN_MODE", {
-  get() {
-    return Flag.OPENCODE_EXPERIMENTAL || truthy("OPENCODE_EXPERIMENTAL_PLAN_MODE")
-  },
-  enumerable: true,
-  configurable: true,
-})
-
-// Dynamic getter for OPENCODE_EXPERIMENTAL_LSP_TOOL
-Object.defineProperty(Flag, "OPENCODE_EXPERIMENTAL_LSP_TOOL", {
-  get() {
-    return Flag.OPENCODE_EXPERIMENTAL || truthy("OPENCODE_EXPERIMENTAL_LSP_TOOL")
-  },
-  enumerable: true,
-  configurable: true,
-})
-
 // Dynamic getter for OPENCODE_DISABLE_PROJECT_CONFIG
 // This must be evaluated at access time, not module load time,
 // because external tooling may set this env var at runtime
@@ -92,7 +81,18 @@ Object.defineProperty(Flag, "OPENCODE_DISABLE_PROJECT_CONFIG", {
     return truthy("OPENCODE_DISABLE_PROJECT_CONFIG")
   },
   enumerable: true,
-  configurable: true,
+  configurable: false,
+})
+
+// Dynamic getter for OPENCODE_TUI_CONFIG
+// This must be evaluated at access time, not module load time,
+// because tests and external tooling may set this env var at runtime
+Object.defineProperty(Flag, "OPENCODE_TUI_CONFIG", {
+  get() {
+    return process.env["OPENCODE_TUI_CONFIG"]
+  },
+  enumerable: true,
+  configurable: false,
 })
 
 // Dynamic getter for OPENCODE_CONFIG_DIR
@@ -100,10 +100,10 @@ Object.defineProperty(Flag, "OPENCODE_DISABLE_PROJECT_CONFIG", {
 // because external tooling may set this env var at runtime
 Object.defineProperty(Flag, "OPENCODE_CONFIG_DIR", {
   get() {
-    return process.env["OPENCODE_CONFIG_DIR"]?.replace(/\0/g, "").trim()
+    return process.env["OPENCODE_CONFIG_DIR"]
   },
   enumerable: true,
-  configurable: true,
+  configurable: false,
 })
 
 // Dynamic getter for OPENCODE_CLIENT
@@ -114,5 +114,5 @@ Object.defineProperty(Flag, "OPENCODE_CLIENT", {
     return process.env["OPENCODE_CLIENT"] ?? "cli"
   },
   enumerable: true,
-  configurable: true,
+  configurable: false,
 })

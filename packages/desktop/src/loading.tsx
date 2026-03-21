@@ -6,11 +6,10 @@ import { Progress } from "@opencode-ai/ui/progress"
 import { createEffect, createMemo, createSignal, onCleanup, onMount, ErrorBoundary } from "solid-js"
 import { commands, events, InitStep } from "./bindings"
 import { Channel } from "@tauri-apps/api/core"
+import { initI18n, t } from "./i18n"
 
 // Debug logging helper
 function logDebug(message: string): void {
-  // In desktop environment, always log debug info
-  // Production builds can be configured to suppress debug logs
   console.log(message)
 }
 
@@ -32,22 +31,17 @@ const FALLBACK_LOGO = {
   right: ["OpenCode"]
 }
 
-// Error fallback component with proper reset logic and sanitized error display
+// Error fallback component with proper reset logic
 function ErrorFallback(props: { error: any; reset: () => void }) {
   const [retryCount, setRetryCount] = createSignal(0)
 
   const handleReset = () => {
-    // Increment retry count to track attempts
     setRetryCount(prev => prev + 1)
-    // Call the reset function provided by ErrorBoundary
     props.reset()
   }
 
-  // Sanitize error message for user display - avoid leaking internal details
   const getDisplayError = () => {
     if (!props.error) return "Unknown error occurred"
-
-    // Only show generic messages for known error types, otherwise show generic message
     const message = props.error.message || String(props.error)
     if (message.includes("Failed to import") || message.includes("network") || message.includes("timeout")) {
       return "Loading failed. Please check your connection and try again."
@@ -55,8 +49,6 @@ function ErrorFallback(props: { error: any; reset: () => void }) {
     if (message.includes("Channel") || message.includes("initialization")) {
       return "Application initialization failed. Please restart the application."
     }
-
-    // For any other errors, show a generic message to avoid information leakage
     return "An unexpected error occurred. Please try again."
   }
 
@@ -85,17 +77,15 @@ function ErrorFallback(props: { error: any; reset: () => void }) {
   )
 }
 
+const root = document.getElementById("root")!
+const lines = [
+  t("desktop.loading.status.initial"),
+  t("desktop.loading.status.migrating"),
+  t("desktop.loading.status.waiting"),
+]
+const delays = [3000, 9000]
 
-// UI timing constants for better maintainability
-const LOADING_DELAYS_MS = [3000, 9000] as const
-const LOADING_STATUS_MESSAGES = ["Just a moment...", "Migrating your database", "This may take a couple of minutes"] as const
-
-const root = document.getElementById("root")
-if (!root) {
-  throw new Error("Root element not found - unable to initialize loading component")
-}
-const lines = LOADING_STATUS_MESSAGES
-const delays = LOADING_DELAYS_MS
+void initI18n()
 
 render(() => {
   return (
@@ -271,14 +261,9 @@ function LoadingComponent() {
   })
 
   const status = createMemo(() => {
-    try {
-      if (phase() === "done") return "All done"
-      if (phase() === "sqlite_waiting") return lines[line()]
-      return "Just a moment..."
-    } catch (error) {
-      console.error('Error determining status:', error)
-      return "Initializing..."
-    }
+    if (phase() === "done") return t("desktop.loading.status.done")
+    if (phase() === "sqlite_waiting") return lines[line()]
+    return t("desktop.loading.status.initial")
   })
 
   return (
@@ -304,8 +289,8 @@ function LoadingComponent() {
           <Progress
             value={value()}
             class="w-20 [&_[data-slot='progress-track']]:h-1 [&_[data-slot='progress-track']]:border-0 [&_[data-slot='progress-track']]:rounded-none [&_[data-slot='progress-track']]:bg-surface-weak [&_[data-slot='progress-fill']]:rounded-none [&_[data-slot='progress-fill']]:bg-icon-warning-base"
-            aria-label="Database migration progress"
-            getValueLabel={({ value }: { value: number }) => `${Math.round(value)}%`}
+            aria-label={t("desktop.loading.progressAria")}
+            getValueLabel={({ value }) => `${Math.round(value)}%`}
           />
         </div>
       </div>

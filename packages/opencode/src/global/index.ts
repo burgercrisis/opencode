@@ -6,10 +6,21 @@ import { Filesystem } from "../util/filesystem"
 
 const app = "opencode"
 
-const data = path.join(xdgData!, app)
-const cache = path.join(xdgCache!, app)
-const config = path.join(xdgConfig!, app)
-const state = path.join(xdgState!, app)
+// Use Tauri-style path on Windows to match production OpenCode
+// This makes dev version share data with production installation
+const isWindows = process.platform === "win32"
+const data = isWindows
+  ? path.join(process.env.APPDATA || xdgData!, "ai.opencode.desktop")
+  : path.join(xdgData!, app)
+const cache = isWindows
+  ? path.join(process.env.LOCALAPPDATA || xdgCache!, "ai.opencode.desktop")
+  : path.join(xdgCache!, app)
+const config = isWindows
+  ? path.join(process.env.APPDATA || xdgConfig!, "ai.opencode.desktop")
+  : path.join(xdgConfig!, app)
+const state = isWindows
+  ? path.join(process.env.LOCALAPPDATA || xdgState!, "ai.opencode.desktop")
+  : path.join(xdgState!, app)
 
 export namespace Global {
   export const Path = {

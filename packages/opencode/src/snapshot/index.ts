@@ -1,48 +1,23 @@
-import { $ } from "bun"
 import path from "path"
 import fs from "fs/promises"
+import { Filesystem } from "../util/filesystem"
 import { Log } from "../util/log"
 import { Flag } from "../flag/flag"
 import { Global } from "../global"
 import z from "zod"
 import { Config } from "../config/config"
 import { Instance } from "../project/instance"
-import { Filesystem } from "../util/filesystem"
 import { Scheduler } from "../scheduler"
-import { SNAPSHOT } from "../constants"
-
-/**
- * Snapshot System - Cross-Platform Implementation
- * 
- * This module provides snapshot, undo, and redo functionality across all platforms:
- * - Windows: Handles backslash paths, long paths, and UNC paths
- * - Linux: Standard Unix paths with case sensitivity considerations
- * - Mac: Case-insensitive filesystem compatibility
- * 
- * // cross-platform: All path operations use Filesystem for consistency utilities
- * // Consistent project ID: Uses canonical paths for ID generation
- * // Windows path handling: Separators converted via normalizeGitPath and normalizeNativePath
- * // process.platform checks: Platform detection for OS-specific behavior
- * 
- * Key Features:
- * - Retry logic with exponential backoff for transient git failures
- * - Validation caching for performance optimization
- * - Graceful degradation for repos without commits
- * - Comprehensive security measures for path validation
- * - Scheduled cleanup for repository maintenance
- */
+import { Process } from "@/util/process"
 
 export namespace Snapshot {
   const log = Log.create({ service: "snapshot" })
   const hour = 60 * 60 * 1000
   const prune = "7.days"
 
-  // Performance optimization: cache recent snapshot validations
-  // Prevents redundant git cat-file calls for recently validated snapshots
-  // Cross-platform: Works consistently on Windows, Linux, and Mac
-  const validationCache = new Map<string, { valid: boolean; reason?: string; timestamp: number }>()
-  const VALIDATION_CACHE_TTL = SNAPSHOT.VALIDATION_CACHE_TTL
-  const MAX_CACHE_SIZE = SNAPSHOT.MAX_CACHE_SIZE
+  function args(git: string, cmd: string[]) {
+    return ["--git-dir", git, "--work-tree", Instance.worktree, ...cmd]
+  }
 
   export function init() {
     Scheduler.register({
@@ -53,12 +28,8 @@ export namespace Snapshot {
     })
   }
 
-  export function resetForTest() {
-    validationCache.clear()
-  }
-
   export async function cleanup() {
-    if (Instance.project.vcs !== "git" || Flag.OPENCODE_CLIENT === "acp") return
+    if (Instance.project.vcs !== "git") return
     const cfg = await Config.get()
     if (cfg.snapshot === false) return
     const git = gitdir()
@@ -67,13 +38,13 @@ export namespace Snapshot {
       .then(() => true)
       .catch(() => false)
     if (!exists) return
-    const result = await $`git --git-dir ${git} --work-tree ${Instance.worktree} gc --prune=${prune}`
-      .quiet()
-      .cwd(Instance.directory)
-      .nothrow()
-    if (result.exitCode !== 0) {
+    const result = await Process.run(["git", ...args(git, ["gc", `--prune=${prune}`])], {
+      cwd: Instance.directory,
+      nothrow: true,
+    })
+    if (result.code !== 0) {
       log.warn("cleanup failed", {
-        exitCode: result.exitCode,
+        exitCode: result.code,
         stderr: result.stderr.toString(),
         stdout: result.stdout.toString(),
       })
@@ -82,223 +53,35 @@ export namespace Snapshot {
     log.info("cleanup", { prune })
   }
 
-  /**
-   * Execute a git command with retry logic for transient failures.
-   * Uses exponential backoff for retry attempts.
-   */
-  async function gitWithRetry(
-    args: string[],
-    options: {
-      maxRetries?: number
-      baseDelay?: number
-      cwd?: string
-      timeout?: number
-      env?: Record<string, string>
-    } = {}
-  ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-    const { maxRetries = 3, baseDelay = 100, cwd, timeout = 30000 } = options
-
-    const execute = async (attempt: number): Promise<{ exitCode: number; stdout: string; stderr: string }> => {
-      const controller = new AbortController()
-      const timeoutId = setTimeout(() => controller.abort(), timeout)
-
-      return $`git ${args}`
-        .env({
-          ...process.env,
-          ...options.env,
-          GIT_TERMINAL_PROMPT: "0",
-          GIT_ASKPASS: "echo",
-        })
-        .cwd(cwd || Instance.directory)
-        .quiet()
-        .nothrow()
-        .then((result) => {
-          clearTimeout(timeoutId)
-          return {
-            exitCode: result.exitCode,
-            stdout: result.stdout.toString(),
-            stderr: result.stderr.toString(),
-          }
-        })
-        .catch(async (error) => {
-          clearTimeout(timeoutId)
-          if (error instanceof Error) {
-            if (error.name === "AbortError") {
-              log.warn(`git command timed out on attempt ${attempt}/${maxRetries}`)
-            } else if (error.message.includes("not a git repository") || error.message.includes("permission denied")) {
-              throw error
-            }
-          }
-
-          if (attempt >= maxRetries) {
-            log.error(`git command failed after ${maxRetries} attempts`, {
-              error: String(error),
-            })
-            throw error
-          }
-
-          const delay = baseDelay * Math.pow(2, attempt - 1)
-          log.warn(`git command failed on attempt ${attempt}/${maxRetries}, retrying in ${delay}ms`, {
-            error: String(error),
-          })
-          await new Promise((resolve) => setTimeout(resolve, delay))
-          return execute(attempt + 1)
-        })
-    }
-
-    return execute(1)
-  }
-
   export async function track() {
-    if (Instance.project.vcs !== "git" || Flag.OPENCODE_CLIENT === "acp") return
+    if (Instance.project.vcs !== "git") return
     const cfg = await Config.get()
     if (cfg.snapshot === false) return
     const git = gitdir()
-    const gitNormalized = Filesystem.normalizeGitPath(git, true)
-    const worktreeNormalized = Filesystem.normalizeGitPath(Instance.worktree, true)
-
-    await fs.mkdir(git, { recursive: true }).catch((error) => {
-      log.error("failed to create snapshot directory", { git, error: String(error) })
-      return undefined
-    })
-
-    const gitInitialized = await fs
-      .access(path.join(git, "HEAD"))
-      .then(() => true)
-      .catch(() => false)
-
-    if (!gitInitialized) {
-      // Create the directory if it doesn't exist
-      await fs.mkdir(git, { recursive: true }).catch(() => { })
-
-      // Use absolute path for git init to avoid cwd/env issues on Windows
-      const initResult = await gitWithRetry(["init", "--bare", gitNormalized], {
-        cwd: git,
-      }).catch((error) => {
-        log.error("failed to initialize git for snapshot", { error: String(error) })
-        return undefined
+    if (await fs.mkdir(git, { recursive: true })) {
+      await Process.run(["git", "init"], {
+        env: {
+          ...process.env,
+          GIT_DIR: git,
+          GIT_WORK_TREE: Instance.worktree,
+        },
+        nothrow: true,
       })
 
-      if (!initResult || initResult.exitCode !== 0) {
-        if (initResult) {
-          log.error("failed to initialize git for snapshot", {
-            exitCode: initResult.exitCode,
-            stderr: initResult.stderr,
-          })
-        }
-        return
-      }
-
-      await gitWithRetry(["--git-dir", gitNormalized, "config", "core.autocrlf", "false"], { cwd: Instance.worktree }).catch((error) => {
-        log.warn("failed to set core.autocrlf config", { error: String(error) })
-      })
-      log.info("initialized", { git: gitNormalized })
+      // Configure git to not convert line endings on Windows
+      await Process.run(["git", "--git-dir", git, "config", "core.autocrlf", "false"], { nothrow: true })
+      await Process.run(["git", "--git-dir", git, "config", "core.longpaths", "true"], { nothrow: true })
+      await Process.run(["git", "--git-dir", git, "config", "core.symlinks", "true"], { nothrow: true })
+      await Process.run(["git", "--git-dir", git, "config", "core.fsmonitor", "false"], { nothrow: true })
+      log.info("initialized")
     }
-
-    // Always run add and write-tree from the worktree root to ensure consistent behavior
-    await gitWithRetry(["--git-dir", gitNormalized, "--work-tree", worktreeNormalized, "add", "-A"], { cwd: Instance.worktree }).catch((error) => {
-      log.warn("git add failed with exception", { error: String(error) })
-    })
-
-    const writeTreeResult = await gitWithRetry(["--git-dir", gitNormalized, "--work-tree", worktreeNormalized, "write-tree"], {
-      cwd: Instance.worktree,
-      timeout: 30000,
-    }).catch((error) => {
-      log.error("failed to create snapshot", { error: String(error) })
-      return undefined
-    })
-
-    if (!writeTreeResult || writeTreeResult.exitCode !== 0) {
-      if (writeTreeResult) {
-        log.error("failed to create snapshot", {
-          exitCode: writeTreeResult.exitCode,
-          stderr: writeTreeResult.stderr,
-          stdout: writeTreeResult.stdout,
-        })
-      }
-      return
-    }
-
-    const hash = writeTreeResult.stdout.trim()
-    if (!hash || hash.length < 40) {
-      log.error("invalid snapshot hash", { hash, length: hash?.length })
-      return
-    }
-
-    log.info("tracking", { hash, cwd: Instance.directory, git: gitNormalized })
-    return hash
-  }
-
-  /**
-   * Validate that a snapshot hash exists and is valid.
-   * Prevents restore operations from using corrupted or non-existent snapshots.
-   */
-  export async function validateSnapshot(hash: string): Promise<{ valid: boolean; reason?: string }> {
-    if (!hash || typeof hash !== 'string') {
-      return { valid: false, reason: 'Invalid hash format' }
-    }
-
-    if (hash.length < 40) {
-      return { valid: false, reason: 'Hash too short' }
-    }
-
-    // Check cache first for performance
-    const cached = validationCache.get(hash)
-    if (cached && Date.now() - cached.timestamp < VALIDATION_CACHE_TTL) {
-      log.debug("using cached snapshot validation", { hash })
-      return { valid: cached.valid, reason: cached.reason }
-    }
-
-    const git = gitdir()
-    const gitNormalized = Filesystem.normalizeGitPath(git, true)
-    const worktreeNormalized = Filesystem.normalizeGitPath(Instance.worktree, true)
-
-    try {
-      // Check if the hash exists in the git repository
-      const catResult = await gitWithRetry(["--git-dir", gitNormalized, "--work-tree", worktreeNormalized, "cat-file", "-t", hash], {
-        cwd: Instance.directory,
-        maxRetries: 1
-      })
-
-      if (catResult.exitCode !== 0) {
-        const result = { valid: false, reason: 'Snapshot hash not found in repository' }
-        cacheValidation(hash, result)
-        return result
-      }
-
-      // Verify it's actually a tree object (snapshots are trees)
-      const objectType = catResult.stdout.trim()
-      if (objectType !== 'tree') {
-        const result = { valid: false, reason: `Invalid object type: ${objectType}, expected tree` }
-        cacheValidation(hash, result)
-        return result
-      }
-
-      const result = { valid: true }
-      cacheValidation(hash, result)
-      return result
-    } catch (error) {
-      const result = { valid: false, reason: `Validation failed: ${String(error)}` }
-      cacheValidation(hash, result)
-      return result
-    }
-  }
-
-  /**
-   * Cache a snapshot validation result for performance optimization.
-   */
-  function cacheValidation(hash: string, result: { valid: boolean; reason?: string }): void {
-    // Prevent memory leaks by limiting cache size
-    if (validationCache.size >= MAX_CACHE_SIZE) {
-      // Remove oldest entry
-      const oldestKey = validationCache.keys().next().value as string
-      validationCache.delete(oldestKey)
-    }
-
-    validationCache.set(hash, {
-      ...result,
-      timestamp: Date.now()
-    })
+    await add(git)
+    const hash = await Process.text(["git", ...args(git, ["write-tree"])], {
+      cwd: Instance.directory,
+      nothrow: true,
+    }).then((x) => x.text)
+    log.info("tracking", { hash, cwd: Instance.directory, git })
+    return hash.trim()
   }
 
   export const Patch = z.object({
@@ -309,216 +92,164 @@ export namespace Snapshot {
 
   export async function patch(hash: string): Promise<Patch> {
     const git = gitdir()
-    const gitNormalized = Filesystem.normalizeGitPath(git, true)
-    const worktreeNormalized = Filesystem.normalizeGitPath(Instance.worktree, true)
+    await add(git)
+    const result = await Process.text(
+      [
+        "git",
+        "-c",
+        "core.autocrlf=false",
+        "-c",
+        "core.longpaths=true",
+        "-c",
+        "core.symlinks=true",
+        "-c",
+        "core.quotepath=false",
+        ...args(git, ["diff", "--no-ext-diff", "--name-only", hash, "--", "."]),
+      ],
+      {
+        cwd: Instance.directory,
+        nothrow: true,
+      },
+    )
 
-    const addResult = await gitWithRetry(["--git-dir", gitNormalized, "--work-tree", worktreeNormalized, "add", "."], {
-      cwd: Instance.directory,
-    }).catch((error) => {
-      log.warn("git add failed in patch with exception", { error: String(error) })
-      return { exitCode: 1, stdout: "", stderr: String(error) }
-    })
-
-    if (addResult.exitCode !== 0) {
-      log.warn("git add failed in patch", { exitCode: addResult.exitCode })
+    // If git diff fails, return empty patch
+    if (result.code !== 0) {
+      log.warn("failed to get diff", { hash, exitCode: result.code })
+      return { hash, files: [] }
     }
 
-    // For repos without commits, git diff <hash> won't work
-    // Instead, we need to check what files are different from the snapshot state
-    // Use git ls-tree to check if the file existed in the snapshot
-    const result = await gitWithRetry(["-c", "core.autocrlf=false", "-c", "core.quotepath=false", "--git-dir", gitNormalized, "--work-tree", worktreeNormalized, "diff", "--no-ext-diff", "--name-only", hash, "--", "."], {
-      cwd: Instance.directory
-    }).catch(() => ({ exitCode: 1, stdout: "", stderr: "" }))
-
-    // If git diff fails (common in repos without commits), fall back to checking what files exist
-    if (result.exitCode !== 0 || !result.stdout.trim()) {
-      log.warn("git diff failed or returned empty, checking file changes differently", {
-        hash,
-        exitCode: result.exitCode,
-        stdout: result.stdout.substring(0, 200)
-      })
-
-      // For repos without commits, we need to check which files are new or modified
-      // by comparing against what was in the snapshot tree
-      try {
-        // Get list of all files in current worktree
-        const lsFilesResult = await gitWithRetry(["--git-dir", gitNormalized, "--work-tree", worktreeNormalized, "ls-files", "--others", "--exclude-standard", "."], {
-          cwd: Instance.directory
-        }).catch(() => ({ exitCode: 1, stdout: "", stderr: "" }))
-
-        const untrackedFiles = lsFilesResult.stdout.trim().split("\n").filter(Boolean)
-
-        // Get list of modified tracked files  
-        const diffIndexResult = await gitWithRetry(["--git-dir", gitNormalized, "--work-tree", worktreeNormalized, "diff", "--name-only", "."], {
-          cwd: Instance.directory
-        }).catch(() => ({ exitCode: 1, stdout: "", stderr: "" }))
-
-        const modifiedFiles = diffIndexResult.stdout.trim().split("\n").filter(Boolean)
-
-        // Combine untracked and modified files
-        const allChangedFiles = [...new Set([...untrackedFiles, ...modifiedFiles])]
-
-        const normalizedFiles = allChangedFiles.map((x) => {
-          // Normalize path separators for Windows using unified utility
-          const withWorktree = Filesystem.normalizeGitPath(path.join(Instance.worktree, x), true)
-          return withWorktree
-        })
-
-        return {
-          hash,
-          files: normalizedFiles,
-        }
-      } catch (error) {
-        log.error("failed to get file changes by alternative method", { error: String(error) })
-        return { hash, files: [] }
-      }
-    }
-
-    const files = result.stdout
-    const normalizedFiles = files
-      .trim()
-      .split("\n")
-      .map((x) => x.trim())
-      .filter(Boolean)
-      .map((x) => {
-        // Normalize path separators for Windows using unified utility
-        const withWorktree = Filesystem.normalizeGitPath(path.join(Instance.worktree, x), true)
-        return withWorktree
-      })
-
+    const files = result.text
     return {
       hash,
-      files: normalizedFiles,
+      files: files
+        .trim()
+        .split("\n")
+        .map((x) => x.trim())
+        .filter(Boolean)
+        .map((x) => path.join(Instance.worktree, x).replaceAll("\\", "/")),
     }
   }
 
   export async function restore(snapshot: string) {
     log.info("restore", { commit: snapshot })
-
-    // Validate snapshot hash and existence
-    const validation = await validateSnapshot(snapshot)
-    if (!validation.valid) {
-      log.error("snapshot validation failed", {
-        snapshot,
-        reason: validation.reason
-      })
-      return
-    }
-
     const git = gitdir()
-    const gitNormalized = Filesystem.normalizeGitPath(git, true)
-    const worktreeNormalized = Filesystem.normalizeGitPath(Instance.worktree, true)
-
-    const result =
-      await gitWithRetry(["--git-dir", gitNormalized, "--work-tree", worktreeNormalized, "read-tree", snapshot], {
-        cwd: worktreeNormalized
-      })
-
-    if (result.exitCode !== 0) {
-      log.error("failed to read snapshot", {
+    const result = await Process.run(
+      ["git", "-c", "core.longpaths=true", "-c", "core.symlinks=true", ...args(git, ["read-tree", snapshot])],
+      {
+        cwd: Instance.worktree,
+        nothrow: true,
+      },
+    )
+    if (result.code === 0) {
+      const checkout = await Process.run(
+        ["git", "-c", "core.longpaths=true", "-c", "core.symlinks=true", ...args(git, ["checkout-index", "-a", "-f"])],
+        {
+          cwd: Instance.worktree,
+          nothrow: true,
+        },
+      )
+      if (checkout.code === 0) return
+      log.error("failed to restore snapshot", {
         snapshot,
-        exitCode: result.exitCode,
-        stderr: result.stderr,
-        stdout: result.stdout,
+        exitCode: checkout.code,
+        stderr: checkout.stderr.toString(),
+        stdout: checkout.stdout.toString(),
       })
       return
     }
 
-    const checkoutResult =
-      await gitWithRetry(["--git-dir", gitNormalized, "--work-tree", worktreeNormalized, "checkout-index", "-a", "-f"], {
-        cwd: worktreeNormalized
-      })
-
-    if (checkoutResult.exitCode !== 0) {
-      log.error("failed to checkout files from snapshot", {
-        snapshot,
-        exitCode: checkoutResult.exitCode,
-        stderr: checkoutResult.stderr,
-      })
-    }
+    log.error("failed to restore snapshot", {
+      snapshot,
+      exitCode: result.code,
+      stderr: result.stderr.toString(),
+      stdout: result.stdout.toString(),
+    })
   }
 
   export async function revert(patches: Patch[]) {
+    const files = new Set<string>()
     const git = gitdir()
-    const gitNormalized = Filesystem.normalizeGitPath(git, true)
-    const worktreeNormalized = Filesystem.normalizeGitPath(Instance.worktree, true)
-
-    // Use a sequential reduction to avoid concurrent git operations on the same worktree
-    // and to handle the 'files' Set immutably (though Set.add is fine for local tracking)
-    await patches.reduce(async (promise, item) => {
-      await promise
-      const filesSeen = new Set<string>()
-
-      await item.files.reduce(async (filePromise, file) => {
-        await filePromise
-        if (filesSeen.has(file)) return
-        filesSeen.add(file)
-
-        const normalizedFile = Filesystem.normalizeNativePath(file)
-        log.info("reverting", { file: normalizedFile, hash: item.hash })
-
-        const result = await gitWithRetry(["--git-dir", gitNormalized, "--work-tree", worktreeNormalized, "checkout", item.hash, "--", normalizedFile], {
-          cwd: worktreeNormalized
-        }).catch(() => ({ exitCode: 1, stdout: "", stderr: "" }))
-
-        if (result.exitCode !== 0) {
-          const relativePath = path.relative(Instance.worktree, normalizedFile)
-          const normalizedRelative = Filesystem.normalizeNativePath(relativePath)
-
-          const checkTree = await gitWithRetry(["--git-dir", gitNormalized, "--work-tree", worktreeNormalized, "ls-tree", item.hash, "--", normalizedRelative], {
-            cwd: worktreeNormalized
-          }).catch(() => ({ exitCode: 1, stdout: "", stderr: "" }))
-
-          if (checkTree.exitCode === 0 && checkTree.stdout.trim()) {
+    for (const item of patches) {
+      for (const file of item.files) {
+        if (files.has(file)) continue
+        log.info("reverting", { file, hash: item.hash })
+        const result = await Process.run(
+          [
+            "git",
+            "-c",
+            "core.longpaths=true",
+            "-c",
+            "core.symlinks=true",
+            ...args(git, ["checkout", item.hash, "--", file]),
+          ],
+          {
+            cwd: Instance.worktree,
+            nothrow: true,
+          },
+        )
+        if (result.code !== 0) {
+          const relativePath = path.relative(Instance.worktree, file)
+          const checkTree = await Process.text(
+            [
+              "git",
+              "-c",
+              "core.longpaths=true",
+              "-c",
+              "core.symlinks=true",
+              ...args(git, ["ls-tree", item.hash, "--", relativePath]),
+            ],
+            {
+              cwd: Instance.worktree,
+              nothrow: true,
+            },
+          )
+          if (checkTree.code === 0 && checkTree.text.trim()) {
             log.info("file existed in snapshot but checkout failed, keeping", {
-              file: normalizedFile,
+              file,
             })
           } else {
-            log.info("file did not exist in snapshot, deleting", { file: normalizedFile })
-            await fs.unlink(normalizedFile).catch((error) => {
-              log.error("failed to delete file during revert", {
-                file: normalizedFile,
-                error: String(error),
-              })
-            })
+            log.info("file did not exist in snapshot, deleting", { file })
+            await fs.unlink(file).catch(() => {})
           }
         }
-      }, Promise.resolve())
-    }, Promise.resolve())
+        files.add(file)
+      }
+    }
   }
 
   export async function diff(hash: string) {
     const git = gitdir()
-    const gitNormalized = Filesystem.normalizeGitPath(git, true)
-    const worktreeNormalized = Filesystem.normalizeGitPath(Instance.worktree, true)
+    await add(git)
+    const result = await Process.text(
+      [
+        "git",
+        "-c",
+        "core.autocrlf=false",
+        "-c",
+        "core.longpaths=true",
+        "-c",
+        "core.symlinks=true",
+        "-c",
+        "core.quotepath=false",
+        ...args(git, ["diff", "--no-ext-diff", hash, "--", "."]),
+      ],
+      {
+        cwd: Instance.worktree,
+        nothrow: true,
+      },
+    )
 
-    try {
-      const addResult = await gitWithRetry(["--git-dir", gitNormalized, "--work-tree", worktreeNormalized, "add", "."], {
-        cwd: Instance.directory
-      }).catch(() => ({ exitCode: 1, stdout: "", stderr: "" }))
-
-      if (addResult.exitCode !== 0) {
-        log.warn("git add failed in diff", { exitCode: addResult.exitCode })
-      }
-    } catch (error) {
-      log.warn("git add failed in diff with exception", { error: String(error) })
-    }
-
-    const result = await gitWithRetry(["-c", "core.autocrlf=false", "--git-dir", gitNormalized, "--work-tree", worktreeNormalized, "diff", "--no-ext-diff", hash, "--", "."], {
-      cwd: worktreeNormalized
-    }).catch(() => ({ exitCode: 1, stdout: "", stderr: "" }))
-
-    if (result.exitCode !== 0) {
+    if (result.code !== 0) {
       log.warn("failed to get diff", {
         hash,
-        exitCode: result.exitCode,
-        stderr: result.stderr,
-        stdout: result.stdout,
+        exitCode: result.code,
+        stderr: result.stderr.toString(),
+        stdout: result.stdout.toString(),
       })
       return ""
     }
 
-    return result.stdout.trim()
+    return result.text.trim()
   }
 
   export const FileDiff = z
@@ -534,111 +265,152 @@ export namespace Snapshot {
       ref: "FileDiff",
     })
   export type FileDiff = z.infer<typeof FileDiff>
-
   export async function diffFull(from: string, to: string): Promise<FileDiff[]> {
     const git = gitdir()
-    const show = async (hash: string, file: string) => {
-      const response = await gitWithRetry(["-c", "core.autocrlf=false", "-c", "core.quotepath=false", "--git-dir", git, "--work-tree", Instance.worktree, "show", `${hash}:${file}`], {
-        maxRetries: 1
-      }).catch(() => ({ exitCode: 1, stdout: "", stderr: "" }))
+    const result: FileDiff[] = []
+    const status = new Map<string, "added" | "deleted" | "modified">()
 
-      if (response.exitCode === 0) return response.stdout
-      const stderr = response.stderr
-      if (stderr.toLowerCase().includes("does not exist in")) return ""
-      return `[DEBUG ERROR] git show ${hash}:${file} failed: ${stderr}`
-    }
+    const statuses = await Process.text(
+      [
+        "git",
+        "-c",
+        "core.autocrlf=false",
+        "-c",
+        "core.longpaths=true",
+        "-c",
+        "core.symlinks=true",
+        "-c",
+        "core.quotepath=false",
+        ...args(git, ["diff", "--no-ext-diff", "--name-status", "--no-renames", from, to, "--", "."]),
+      ],
+      {
+        cwd: Instance.directory,
+        nothrow: true,
+      },
+    ).then((x) => x.text)
 
-    const statusMap = new Map<string, "added" | "deleted" | "modified">()
-    const statusResult = await gitWithRetry(["-c", "core.autocrlf=false", "-c", "core.quotepath=false", "--git-dir", git, "--work-tree", Instance.worktree, "diff", "--name-status", "--no-renames", from, to, "--", "."], {
-      cwd: Instance.directory
-    }).catch(() => ({ exitCode: 1, stdout: "", stderr: "" }))
-
-    for (const line of statusResult.stdout.trim().split("\n")) {
+    for (const line of statuses.trim().split("\n")) {
       if (!line) continue
-      const [code, rawFile] = line.split("\t")
-      if (!code || !rawFile) continue
-      const file = unquote(rawFile)
+      const [code, file] = line.split("\t")
+      if (!code || !file) continue
       const kind = code.startsWith("A") ? "added" : code.startsWith("D") ? "deleted" : "modified"
-      statusMap.set(file, kind)
+      status.set(file, kind)
     }
 
-    const numstatResult = await gitWithRetry(["-c", "core.autocrlf=false", "-c", "core.quotepath=false", "--git-dir", git, "--work-tree", Instance.worktree, "diff", "--no-ext-diff", "--no-renames", "--numstat", from, to, "--", "."], {
-      cwd: Instance.directory
-    }).catch(() => ({ exitCode: 1, stdout: "", stderr: "" }))
-
-    const lines = numstatResult.stdout.trim().split("\n")
-
-    const results: FileDiff[] = []
-    const batchSize = 10
-    for (let i = 0; i < lines.length; i += batchSize) {
-      const batch = lines.slice(i, i + batchSize)
-      const batchResults = await Promise.all(
-        batch
-          .filter((l) => l.trim().length > 0)
-          .map(async (line) => {
-            const [add, del, rawFile] = line.split("\t")
-            const file = unquote(rawFile).replace(/\\/g, "/")
-            const status = statusMap.get(file) || "modified"
-            const before = status === "added" ? "" : await show(from, file)
-            const after = status === "deleted" ? "" : await show(to, file)
-
-            return {
-              file,
-              status,
-              before,
-              after,
-              additions: parseInt(add) || 0,
-              deletions: parseInt(del) || 0,
-            }
-          }),
-      )
-      results.push(...batchResults)
+    for (const line of await Process.lines(
+      [
+        "git",
+        "-c",
+        "core.autocrlf=false",
+        "-c",
+        "core.longpaths=true",
+        "-c",
+        "core.symlinks=true",
+        "-c",
+        "core.quotepath=false",
+        ...args(git, ["diff", "--no-ext-diff", "--no-renames", "--numstat", from, to, "--", "."]),
+      ],
+      {
+        cwd: Instance.directory,
+        nothrow: true,
+      },
+    )) {
+      if (!line) continue
+      const [additions, deletions, file] = line.split("\t")
+      const isBinaryFile = additions === "-" && deletions === "-"
+      const before = isBinaryFile
+        ? ""
+        : await Process.text(
+            [
+              "git",
+              "-c",
+              "core.autocrlf=false",
+              "-c",
+              "core.longpaths=true",
+              "-c",
+              "core.symlinks=true",
+              ...args(git, ["show", `${from}:${file}`]),
+            ],
+            { nothrow: true },
+          ).then((x) => x.text)
+      const after = isBinaryFile
+        ? ""
+        : await Process.text(
+            [
+              "git",
+              "-c",
+              "core.autocrlf=false",
+              "-c",
+              "core.longpaths=true",
+              "-c",
+              "core.symlinks=true",
+              ...args(git, ["show", `${to}:${file}`]),
+            ],
+            { nothrow: true },
+          ).then((x) => x.text)
+      const added = isBinaryFile ? 0 : parseInt(additions)
+      const deleted = isBinaryFile ? 0 : parseInt(deletions)
+      result.push({
+        file,
+        before,
+        after,
+        additions: Number.isFinite(added) ? added : 0,
+        deletions: Number.isFinite(deleted) ? deleted : 0,
+        status: status.get(file) ?? "modified",
+      })
     }
-    return results
-  }
-
-  export function unquote(path: string): string {
-    if (!path.startsWith('"') || !path.endsWith('"')) return path
-    const quoted = path.slice(1, -1)
-
-    const process = (index: number, buffer: number[]): number[] => {
-      if (index >= quoted.length) return buffer
-
-      if (quoted[index] === "\\") {
-        const next = index + 1
-        if (next + 2 < quoted.length && /^[0-7]{3}$/.test(quoted.slice(next, next + 3))) {
-          const octal = quoted.slice(next, next + 3)
-          return process(index + 4, [...buffer, parseInt(octal, 8)])
-        }
-
-        const escapeMap: Record<string, number> = {
-          b: 8,
-          t: 9,
-          n: 10,
-          v: 11,
-          f: 12,
-          r: 13,
-          '"': 34,
-          "\\": 92,
-        }
-        const char = quoted[next]
-        return process(index + 2, [...buffer, escapeMap[char] ?? quoted.charCodeAt(next)])
-      }
-
-      const charCode = quoted.charCodeAt(index)
-      if (charCode < 128) {
-        return process(index + 1, [...buffer, charCode])
-      }
-
-      const charBuffer = Buffer.from(quoted[index])
-      return process(index + 1, [...buffer, ...Array.from(charBuffer)])
-    }
-
-    return Buffer.from(process(0, [])).toString("utf8")
+    return result
   }
 
   function gitdir() {
     const project = Instance.project
     return path.join(Global.Path.data, "snapshot", project.id)
+  }
+
+  async function add(git: string) {
+    await syncExclude(git)
+    await Process.run(
+      [
+        "git",
+        "-c",
+        "core.autocrlf=false",
+        "-c",
+        "core.longpaths=true",
+        "-c",
+        "core.symlinks=true",
+        ...args(git, ["add", "."]),
+      ],
+      {
+        cwd: Instance.directory,
+        nothrow: true,
+      },
+    )
+  }
+
+  async function syncExclude(git: string) {
+    const file = await excludes()
+    const target = path.join(git, "info", "exclude")
+    await fs.mkdir(path.join(git, "info"), { recursive: true })
+    if (!file) {
+      await Filesystem.write(target, "")
+      return
+    }
+    const text = await Filesystem.readText(file).catch(() => "")
+
+    await Filesystem.write(target, text)
+  }
+
+  async function excludes() {
+    const file = await Process.text(["git", "rev-parse", "--path-format=absolute", "--git-path", "info/exclude"], {
+      cwd: Instance.worktree,
+      nothrow: true,
+    }).then((x) => x.text)
+    if (!file.trim()) return
+    const exists = await fs
+      .stat(file.trim())
+      .then(() => true)
+      .catch(() => false)
+    if (!exists) return
+    return file.trim()
   }
 }

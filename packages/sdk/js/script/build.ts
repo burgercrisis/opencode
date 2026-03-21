@@ -1,11 +1,13 @@
 #!/usr/bin/env bun
+import { fileURLToPath } from "url"
 
-import path from "path"
-import { $ } from "bun"
-import { createClient } from "@hey-api/openapi-ts"
-
-const dir = path.resolve(import.meta.dir, "..")
+const dir = fileURLToPath(new URL("..", import.meta.url))
 process.chdir(dir)
+
+import { $ } from "bun"
+import path from "path"
+
+import { createClient } from "@hey-api/openapi-ts"
 
 await $`bun dev generate > ${dir}/openapi.json`.cwd(path.resolve(dir, "../../opencode"))
 

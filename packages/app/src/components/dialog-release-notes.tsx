@@ -1,16 +1,23 @@
 import { createSignal } from "solid-js"
 import { Dialog } from "@opencode-ai/ui/dialog"
-import { useLanguage } from "@/context/language"
-import { type Highlight } from "@/context/highlights"
-import { For, Show } from "solid-js"
 import { Button } from "@opencode-ai/ui/button"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
+import { useLanguage } from "@/context/language"
 import { useSettings } from "@/context/settings"
 
+export type Highlight = {
+  title: string
+  description: string
+  media?: {
+    type: "image" | "video"
+    src: string
+    alt?: string
+  }
+}
+
 export function DialogReleaseNotes(props: { highlights: Highlight[] }) {
-  const language = useLanguage()
   const dialog = useDialog()
-  // BEST OF BOTH WORLDS: Use settings and pagination from incoming
+  const language = useLanguage()
   const settings = useSettings()
   const [index, setIndex] = createSignal(0)
 
@@ -55,10 +62,10 @@ export function DialogReleaseNotes(props: { highlights: Highlight[] }) {
 
   return (
     <Dialog
-      title={language.t("dialog.releaseNotes.title")}
       size="large"
+      fit
+      class="w-[min(calc(100vw-40px),720px)] h-[min(calc(100vh-40px),400px)] -mt-20 min-h-0 overflow-hidden"
     >
-      {/* BEST OF BOTH WORLDS: Combined layout with keyboard navigation from incoming */}
       <div class="flex flex-1 min-w-0 min-h-0" tabIndex={0} autofocus onKeyDown={handleKeyDown}>
         {/* Left side - Text content */}
         <div class="flex flex-col flex-1 min-w-0 p-8">
@@ -78,16 +85,16 @@ export function DialogReleaseNotes(props: { highlights: Highlight[] }) {
             <div class="flex flex-col items-start gap-3">
               {isLast() ? (
                 <Button variant="primary" size="large" onClick={handleClose}>
-                  Get started
+                  {language.t("dialog.releaseNotes.action.getStarted")}
                 </Button>
               ) : (
                 <Button variant="secondary" size="large" onClick={handleNext}>
-                  Next
+                  {language.t("dialog.releaseNotes.action.next")}
                 </Button>
               )}
 
               <Button variant="ghost" size="small" onClick={handleDisable}>
-                Don't show these in the future
+                {language.t("dialog.releaseNotes.action.hideFuture")}
               </Button>
             </div>
 
@@ -103,40 +110,34 @@ export function DialogReleaseNotes(props: { highlights: Highlight[] }) {
                     }}
                     onClick={() => setIndex(i)}
                   >
-                    <Show when={props.highlights[i]?.media}>
-                      {(media) => (
-                        <Show
-                          when={media().type === "image"}
-                          fallback={
-                            <video
-                              src={media().src}
-                              autoplay
-                              loop
-                              muted
-                              playsinline
-                              class="rounded-lg border bg-muted"
-                            />
-                          }
-                        >
-                          <img
-                            src={media().src}
-                            alt={media().alt}
-                            class="rounded-lg border bg-muted"
-                          />
-                        </Show>
-                      )}
-                    </Show>
+                    <div
+                      class="w-full h-0.5 rounded-[1px] transition-colors duration-200"
+                      classList={{
+                        "bg-icon-strong-base": i === index(),
+                        "bg-icon-weak-base": i !== index(),
+                      }}
+                    />
                   </button>
                 ))}
               </div>
             )}
           </div>
         </div>
-      </div>
-      <div class="flex justify-end gap-2 pt-4 border-t">
-        <Button onClick={() => dialog.close()}>
-          {language.t("common.dismiss")}
-        </Button>
+
+        {/* Right side - Media content (edge to edge) */}
+        {feature()?.media && (
+          <div class="flex-1 min-w-0 bg-surface-base overflow-hidden rounded-r-xl">
+            {feature()!.media!.type === "image" ? (
+              <img
+                src={feature()!.media!.src}
+                alt={feature()!.media!.alt ?? feature()?.title ?? language.t("dialog.releaseNotes.media.alt")}
+                class="w-full h-full object-cover"
+              />
+            ) : (
+              <video src={feature()!.media!.src} autoplay loop muted playsinline class="w-full h-full object-cover" />
+            )}
+          </div>
+        )}
       </div>
     </Dialog>
   )

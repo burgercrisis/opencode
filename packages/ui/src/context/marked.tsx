@@ -1,11 +1,10 @@
 import { marked } from "marked"
 import markedKatex from "marked-katex-extension"
 import markedShiki from "marked-shiki"
+import katex from "katex"
 import { bundledLanguages, type BundledLanguage } from "shiki"
 import { createSimpleContext } from "./helper"
 import { getSharedHighlighter, registerCustomTheme, ThemeRegistrationResolved } from "@pierre/diffs"
-import MarkedWorkerUrl from "./marked-worker?worker&url"
-import { WorkerMessage, WorkerResponse, WorkerState, WorkerMetrics, MarkdownConfig, validateWorkerResponse } from "./marked-types"
 
 registerCustomTheme("OpenCode", () => {
   return Promise.resolve({
@@ -377,371 +376,98 @@ registerCustomTheme("OpenCode", () => {
   } as unknown as ThemeRegistrationResolved)
 })
 
+function renderMathInText(text: string): string {
+  let result = text
+
+  // Display math: $$...$$
+  const displayMathRegex = /\$\$([\s\S]*?)\$\$/g
+  result = result.replace(displayMathRegex, (_, math) => {
+    try {
+      return katex.renderToString(math, {
+        displayMode: true,
+        throwOnError: false,
+      })
+    } catch {
+      return `$$${math}$$`
+    }
+  })
+
+  // Inline math: $...$
+  const inlineMathRegex = /(?<!\$)\$(?!\$)((?:[^$\\]|\\.)+?)\$(?!\$)/g
+  result = result.replace(inlineMathRegex, (_, math) => {
+    try {
+      return katex.renderToString(math, {
+        displayMode: false,
+        throwOnError: false,
+      })
+    } catch {
+      return `$${math}$`
+    }
+  })
+
+  return result
+}
+
+function renderMathExpressions(html: string): string {
+  // Split on code/pre/kbd tags to avoid processing their contents
+  const codeBlockPattern = /(<(?:pre|code|kbd)[^>]*>[\s\S]*?<\/(?:pre|code|kbd)>)/gi
+  const parts = html.split(codeBlockPattern)
+
+  return parts
+    .map((part, i) => {
+      // Odd indices are the captured code blocks - leave them alone
+      if (i % 2 === 1) return part
+      // Process math only in non-code parts
+      return renderMathInText(part)
+    })
+    .join("")
+}
+
+async function highlightCodeBlocks(html: string): Promise<string> {
+  const codeBlockRegex = /<pre><code(?:\s+class="language-([^"]*)")?>([\s\S]*?)<\/code><\/pre>/g
+  const matches = [...html.matchAll(codeBlockRegex)]
+  if (matches.length === 0) return html
+
+  const highlighter = await getSharedHighlighter({
+    themes: ["OpenCode"],
+    langs: [],
+    preferredHighlighter: "shiki-wasm",
+  })
+
+  let result = html
+  for (const match of matches) {
+    const [fullMatch, lang, escapedCode] = match
+    const code = escapedCode
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&amp;/g, "&")
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+
+    let language = lang || "text"
+    if (!(language in bundledLanguages)) {
+      language = "text"
+    }
+    if (!highlighter.getLoadedLanguages().includes(language)) {
+      await highlighter.loadLanguage(language as BundledLanguage)
+    }
+
+    const highlighted = highlighter.codeToHtml(code, {
+      lang: language,
+      theme: "OpenCode",
+      tabindex: false,
+    })
+    result = result.replace(fullMatch, () => highlighted)
+  }
+
+  return result
+}
+
 export type NativeMarkdownParser = (markdown: string) => Promise<string>
 
-export interface MarkedContextValue {
-  parse(markdown: string): Promise<string>
-  fastParse?(markdown: string): Promise<string>
-  enhance?(html: string): Promise<string>
-}
-
-
-/**
- * Manages Web Worker lifecycle for markdown processing with proper state management,
- * error handling, and performance monitoring.
- * 
- * State Machine:
- * - INITIALIZING: Worker is being created and initialized
- * - READY: Worker is ready to process requests
- * - ERROR: Worker encountered an error and needs reset
- * - TERMINATED: Worker has been terminated and cannot be used
- */
-class WorkerManager {
-  private config: MarkdownConfig = {
-    maxHtmlSize: 1000000, // 1MB default
-    workerTimeout: 10000, // 10 seconds default
-    enableMetrics: true
-  }
-
-  private metrics: WorkerMetrics = {
-    totalOperations: 0,
-    averageEnhancementTime: 0,
-    errorCount: 0
-  }
-
-  private worker: Worker | undefined
-  private pending = new Map<number, { resolve: (value: any) => void; reject: (err: any) => void }>()
-  private nextId = 0
-  private state: WorkerState = WorkerState.INITIALIZING
-  private initializationPromise: Promise<void> | null = null
-  private isShuttingDown = false
-  private stateLock = false
-
-  /**
-   * Get current worker metrics
-   */
-  getMetrics(): WorkerMetrics {
-    return { ...this.metrics }
-  }
-
-  /**
-   * Update worker configuration
-   */
-  updateConfig(newConfig: Partial<MarkdownConfig>): void {
-    this.config = { ...this.config, ...newConfig }
-  }
-
-  getState(): WorkerState {
-    return this.state
-  }
-
-  /**
-   * Atomic state transition with proper locking
-   */
-  private setState(newState: WorkerState): void {
-    if (this.stateLock) return
-    this.stateLock = true
-    this.state = newState
-    this.stateLock = false
-  }
-
-  /**
-   * Reset worker to ERROR state and clean up resources
-   */
-  reset(): void {
-    this.isShuttingDown = true
-
-    if (this.worker) {
-      try {
-        this.worker.terminate()
-      } catch (e) {
-        console.warn('Failed to terminate worker:', e)
-      }
-    }
-    this.worker = undefined
-    this.setState(WorkerState.INITIALIZING)
-    this.initializationPromise = null
-
-    // Clear all pending requests immediately to avoid memory leaks
-    this.pending.forEach((promise, id) => {
-      try {
-        promise.reject(new Error('Worker reset'))
-      } catch (e) {
-        console.warn(`Failed to reject pending promise ${id}:`, e)
-      }
-    })
-    this.pending.clear()
-    this.isShuttingDown = false
-  }
-
-  /**
-   * Initialize worker with proper timeout and state management
-   */
-  async initialize(): Promise<void> {
-    if (this.isShuttingDown) {
-      throw new Error('Worker is shutting down')
-    }
-
-    if (this.state === WorkerState.READY) {
-      return Promise.resolve()
-    }
-
-    if (this.state === WorkerState.INITIALIZING && this.initializationPromise) {
-      return this.initializationPromise
-    }
-
-    if (this.state === WorkerState.ERROR) {
-      this.reset()
-    }
-
-    // Set promise immediately to prevent race conditions
-    this.initializationPromise = new Promise((resolve, reject) => {
-      this.setState(WorkerState.INITIALIZING)
-
-      const initId = this.nextId++
-      const startTime = performance.now()
-
-      const timeout = setTimeout(() => {
-        if (this.isShuttingDown) return
-
-        const promise = this.pending.get(initId)
-        if (promise) {
-          this.pending.delete(initId)
-          this.setState(WorkerState.ERROR)
-          this.initializationPromise = null
-          if (this.config.enableMetrics) {
-            this.metrics.errorCount++
-          }
-          reject(new Error('Worker initialization timeout'))
-        }
-      }, this.config.workerTimeout)
-
-      this.pending.set(initId, {
-        resolve: () => {
-          if (this.isShuttingDown) return
-
-          clearTimeout(timeout)
-          this.pending.delete(initId)
-          this.setState(WorkerState.READY)
-          this.initializationPromise = null
-
-          // Record initialization metrics
-          if (this.config.enableMetrics) {
-            this.metrics.initializationTime = performance.now() - startTime
-          }
-
-          resolve()
-        },
-        reject: (err) => {
-          if (this.isShuttingDown) return
-
-          clearTimeout(timeout)
-          this.pending.delete(initId)
-          this.setState(WorkerState.ERROR)
-          this.initializationPromise = null
-          reject(err)
-        }
-      })
-
-      const w = this.getWorker()
-      if (w) {
-        w.postMessage({ type: "init", id: initId, theme: null })
-      } else {
-        clearTimeout(timeout)
-        this.pending.delete(initId)
-        this.setState(WorkerState.ERROR)
-        this.initializationPromise = null
-        reject(new Error('Failed to create worker'))
-      }
-    })
-
-    return this.initializationPromise
-  }
-
-  private getWorker(): Worker | undefined {
-    if (typeof window === "undefined") return undefined
-    if (!this.worker) {
-      this.worker = new Worker(MarkedWorkerUrl, { type: "module" })
-      this.worker.onmessage = (e) => {
-        if (!validateWorkerResponse(e.data)) {
-          console.error('Invalid worker response received:', e.data)
-          return
-        }
-
-        const { id, type, html, error } = e.data
-        const promise = this.pending.get(id)
-        if (!promise) return
-
-        // Remove promise before processing to prevent race conditions
-        this.pending.delete(id)
-
-        if (type === "enhanced") {
-          promise.resolve(html || "")
-        } else if (type === "theme-initialized") {
-          // Don't set state here - let initializeWorker handle state changes
-          promise.resolve(html || "")
-        } else if (type === "error") {
-          const errorMessage = typeof error === 'string' ? error :
-            (error && typeof error === 'object' && 'message' in error) ? String(error.message) :
-              'Unknown worker error'
-          promise.reject(new Error(errorMessage))
-        }
-      }
-
-      this.worker.onerror = (error) => {
-        console.error('Worker error:', error)
-        this.setState(WorkerState.ERROR)
-
-        // Clean up all pending promises on worker error
-        const pendingPromises = Array.from(this.pending.entries())
-        this.pending.clear()
-
-        pendingPromises.forEach(([id, promise]) => {
-          try {
-            promise.reject(new Error('Worker encountered an error'))
-          } catch (e) {
-            console.warn(`Failed to reject pending promise ${id}:`, e)
-          }
-        })
-      }
-    }
-    return this.worker
-  }
-
-  /**
-   * Terminate worker and clean up all resources
-   */
-  terminate(): void {
-    this.reset()
-    this.setState(WorkerState.TERMINATED)
-  }
-
-  /**
-   * Send message to worker with timeout and metrics collection
-   */
-  async sendMessageWithTimeout<T>(message: Omit<WorkerMessage, 'id'>, timeoutMs?: number): Promise<T> {
-    if (this.isShuttingDown) {
-      throw new Error('Worker is shutting down')
-    }
-
-    const id = this.nextId++
-    const messageType = message.type
-    const startTime = performance.now()
-    const actualTimeout = timeoutMs || this.config.workerTimeout
-
-    const cleanup = () => {
-      if (this.pending.has(id)) {
-        this.pending.delete(id)
-      }
-    }
-
-    const mainPromise = new Promise<T>((resolve, reject) => {
-      this.pending.set(id, {
-        resolve: (value) => {
-          cleanup()
-
-          // Record metrics for enhancement operations (throttled)
-          if (this.config.enableMetrics && messageType === 'enhance') {
-            const duration = performance.now() - startTime
-            this.metrics.totalOperations++
-            this.metrics.averageEnhancementTime = this.metrics.totalOperations === 1 ?
-              duration :
-              (this.metrics.averageEnhancementTime * (this.metrics.totalOperations - 1) + duration) / this.metrics.totalOperations
-          }
-
-          resolve(value)
-        },
-        reject: (err) => {
-          cleanup()
-          if (this.config.enableMetrics) {
-            this.metrics.errorCount++
-          }
-          reject(err)
-        }
-      })
-
-      const w = this.getWorker()
-      if (w) {
-        w.postMessage({ ...message, id })
-      } else {
-        cleanup()
-        reject(new Error('Worker not available'))
-      }
-    })
-
-    // Only create timeout promise if actual timeout is valid and greater than 0
-    if (actualTimeout > 0) {
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => {
-          if (this.pending.has(id)) {
-            cleanup()
-            if (this.config.enableMetrics) {
-              this.metrics.errorCount++
-            }
-            reject(new Error(`Worker request timeout: ${messageType}`))
-          }
-        }, actualTimeout)
-      })
-      return Promise.race([mainPromise, timeoutPromise])
-    }
-
-    // No timeout needed - return main promise directly for performance
-    return mainPromise
-  }
-}
-
-// Global worker manager instance
-const workerManager = new WorkerManager()
-
-// Performance monitoring for main thread syntax highlighting
-const syntaxHighlightingMetrics = {
-  totalOperations: 0,
-  totalTime: 0,
-  averageTime: 0,
-  errorCount: 0
-}
-
-/**
- * Get performance metrics for both worker and main thread operations
- */
-export function getMarkdownMetrics() {
-  return {
-    worker: workerManager.getMetrics(),
-    syntaxHighlighting: { ...syntaxHighlightingMetrics }
-  }
-}
-
-/**
- * Update markdown processing configuration
- */
-export function updateMarkdownConfig(config: Partial<MarkdownConfig>) {
-  workerManager.updateConfig(config)
-}
-
-async function enhanceInWorker(html: string): Promise<string> {
-  try {
-    await workerManager.initialize()
-    return await workerManager.sendMessageWithTimeout<string>({
-      type: "enhance",
-      html,
-      config: workerManager['config'] // Pass current configuration to worker
-    })
-  } catch (error) {
-    console.error('Worker enhancement failed:', error)
-    // Only fallback if it's a worker error, not for validation errors
-    if (error instanceof Error &&
-      (error.message.includes('Worker') ||
-        error.message.includes('timeout') ||
-        error.message.includes('initialization'))) {
-      return html // Fallback to original HTML
-    }
-    throw error // Re-throw validation and other errors
-  }
-}
-
-const context = createSimpleContext<MarkedContextValue, { nativeParser?: NativeMarkdownParser }>({
+export const { use: useMarked, provider: MarkedProvider } = createSimpleContext({
   name: "Marked",
-  init: (props) => {
+  init: (props: { nativeParser?: NativeMarkdownParser }) => {
     const jsParser = marked.use(
       {
         renderer: {
@@ -757,36 +483,22 @@ const context = createSimpleContext<MarkedContextValue, { nativeParser?: NativeM
       }),
       markedShiki({
         async highlight(code, lang) {
-          const startTime = performance.now()
-
-          try {
-            const highlighter = await getSharedHighlighter({ themes: ["OpenCode"], langs: [] })
-            if (!(lang in bundledLanguages)) {
-              lang = "text"
-            }
-            if (!highlighter.getLoadedLanguages().includes(lang)) {
-              await highlighter.loadLanguage(lang as BundledLanguage)
-            }
-
-            const result = highlighter.codeToHtml(code, {
-              lang: lang || "text",
-              theme: "OpenCode",
-              tabindex: false,
-            })
-
-            // Record performance metrics
-            const duration = performance.now() - startTime
-            syntaxHighlightingMetrics.totalOperations++
-            syntaxHighlightingMetrics.totalTime += duration
-            syntaxHighlightingMetrics.averageTime =
-              syntaxHighlightingMetrics.totalTime / syntaxHighlightingMetrics.totalOperations
-
-            return result
-          } catch (error) {
-            syntaxHighlightingMetrics.errorCount++
-            console.error('Syntax highlighting failed:', error)
-            throw error
+          const highlighter = await getSharedHighlighter({
+            themes: ["OpenCode"],
+            langs: [],
+            preferredHighlighter: "shiki-wasm",
+          })
+          if (!(lang in bundledLanguages)) {
+            lang = "text"
           }
+          if (!highlighter.getLoadedLanguages().includes(lang)) {
+            await highlighter.loadLanguage(lang as BundledLanguage)
+          }
+          return highlighter.codeToHtml(code, {
+            lang: lang || "text",
+            theme: "OpenCode",
+            tabindex: false,
+          })
         },
       }),
     )
@@ -796,24 +508,12 @@ const context = createSimpleContext<MarkedContextValue, { nativeParser?: NativeM
       return {
         async parse(markdown: string): Promise<string> {
           const html = await nativeParser(markdown)
-          return enhanceInWorker(html)
-        },
-        async fastParse(markdown: string): Promise<string> {
-          return nativeParser(markdown)
-        },
-        async enhance(html: string): Promise<string> {
-          return enhanceInWorker(html)
+          const withMath = renderMathExpressions(html)
+          return highlightCodeBlocks(withMath)
         },
       }
     }
 
-    return {
-      async parse(markdown: string) {
-        return jsParser.parse(markdown)
-      },
-    }
+    return jsParser
   },
 })
-
-export const { use: useMarked, provider: MarkedProvider, ctx: MarkedContext } = context
-

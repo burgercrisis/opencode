@@ -6,9 +6,10 @@ import { mapValues, mergeDeep, omit, pickBy, sortBy } from "remeda"
 import { NoSuchModelError, type Provider as SDK } from "ai"
 import { Log } from "../util/log"
 import { BunProc } from "../bun"
+import { Hash } from "../util/hash"
 import { Plugin } from "../plugin"
-import { ModelsDev } from "./models"
 import { NamedError } from "@opencode-ai/util/error"
+import { ModelsDev } from "./models"
 import { Auth } from "../auth"
 import { Env } from "../env"
 import { Instance } from "../project/instance"
@@ -44,76 +45,104 @@ import { fromNodeProviderChain } from "@aws-sdk/credential-providers"
 import { GoogleAuth } from "google-auth-library"
 import { ProviderTransform } from "./transform"
 import { Installation } from "../installation"
+import { ModelID, ProviderID } from "./schema"
+
+const DEFAULT_CHUNK_TIMEOUT = 300_000
 
 export namespace Provider {
   const log = Log.create({ service: "provider" })
 
-  function isGpt5OrLater(modelID: string): boolean {
-    const match = /^gpt-(\d+)/.exec(modelID)
-    if (!match) {
-      return false
-    }
-    return Number(match[1]) >= 5
-  }
-
   function shouldUseCopilotResponsesApi(modelID: string): boolean {
-    return isGpt5OrLater(modelID) && !modelID.startsWith("gpt-5-mini")
+    const match = /^gpt-(\d+)/.exec(modelID)
+    if (!match) return false
+    return Number(match[1]) >= 5 && !modelID.startsWith("gpt-5-mini")
   }
 
-  function googleVertexVars(options: Record<string, any>) {
-    const project =
-      options["project"] ?? Env.get("GOOGLE_CLOUD_PROJECT") ?? Env.get("GCP_PROJECT") ?? Env.get("GCLOUD_PROJECT")
-    const location =
-      options["location"] ?? Env.get("GOOGLE_CLOUD_LOCATION") ?? Env.get("VERTEX_LOCATION") ?? "us-central1"
-    const endpoint = location === "global" ? "aiplatform.googleapis.com" : `${location}-aiplatform.googleapis.com`
+  function wrapSSE(res: Response, ms: number, ctl: AbortController) {
+    if (typeof ms !== "number" || ms <= 0) return res
+    if (!res.body) return res
+    if (!res.headers.get("content-type")?.includes("text/event-stream")) return res
 
-    return {
-      GOOGLE_VERTEX_PROJECT: project,
-      GOOGLE_VERTEX_LOCATION: location,
-      GOOGLE_VERTEX_ENDPOINT: endpoint,
-    }
-  }
+    const reader = res.body.getReader()
+    const body = new ReadableStream<Uint8Array>({
+      async pull(ctrl) {
+        const part = await new Promise<Awaited<ReturnType<typeof reader.read>>>((resolve, reject) => {
+          const id = setTimeout(() => {
+            const err = new Error("SSE read timed out")
+            ctl.abort(err)
+            void reader.cancel(err)
+            reject(err)
+          }, ms)
 
-  function loadBaseURL(model: Model, options: Record<string, any>) {
-    const raw = options["baseURL"] ?? model.api.url
-    if (typeof raw !== "string") return raw
-    const vars = model.providerID === "google-vertex" ? googleVertexVars(options) : undefined
-    return raw.replace(/\$\{([^}]+)\}/g, (match, key) => {
-      const val = Env.get(String(key)) ?? vars?.[String(key) as keyof typeof vars]
-      return val ?? match
+          reader.read().then(
+            (part) => {
+              clearTimeout(id)
+              resolve(part)
+            },
+            (err) => {
+              clearTimeout(id)
+              reject(err)
+            },
+          )
+        })
+
+        if (part.done) {
+          ctrl.close()
+          return
+        }
+
+        ctrl.enqueue(part.value)
+      },
+      async cancel(reason) {
+        ctl.abort(reason)
+        await reader.cancel(reason)
+      },
+    })
+
+    return new Response(body, {
+      headers: new Headers(res.headers),
+      status: res.status,
+      statusText: res.statusText,
     })
   }
 
   const BUNDLED_PROVIDERS: Record<string, (options: any) => SDK> = {
-    "@ai-sdk/amazon-bedrock": (options) => createAmazonBedrock(options),
-    "@ai-sdk/anthropic": (options) => createAnthropic(options),
-    "@ai-sdk/azure": (options) => createAzure(options),
-    "@ai-sdk/google": (options) => createGoogleGenerativeAI(options),
-    "@ai-sdk/google-vertex": (options) => createVertex(options),
-    "@ai-sdk/google-vertex/anthropic": (options) => createVertexAnthropic(options),
-    "@ai-sdk/openai": (options) => createOpenAI(options),
-    "@ai-sdk/openai-compatible": (options) => createOpenAICompatible(options),
-    "@openrouter/ai-sdk-provider": (options) => createOpenRouter(options),
-    "@ai-sdk/xai": (options) => createXai(options),
-    "@ai-sdk/mistral": (options) => createMistral(options),
-    "@ai-sdk/groq": (options) => createGroq(options),
-    "@ai-sdk/deepinfra": (options) => createDeepInfra(options),
-    "@ai-sdk/cerebras": (options) => createCerebras(options),
-    "@ai-sdk/cohere": (options) => createCohere(options),
-    "@ai-sdk/gateway": (options) => createGateway(options),
-    "@ai-sdk/togetherai": (options) => createTogetherAI(options),
-    "@ai-sdk/perplexity": (options) => createPerplexity(options),
-    "@ai-sdk/vercel": (options) => createVercel(options),
-    "@gitlab/gitlab-ai-provider": (options) => createGitLab(options),
-    "@ai-sdk/github-copilot": (options) => (createGitHubCopilotOpenAICompatible as any)(options),
+    "@ai-sdk/amazon-bedrock": createAmazonBedrock,
+    "@ai-sdk/anthropic": createAnthropic,
+    "@ai-sdk/azure": createAzure,
+    "@ai-sdk/google": createGoogleGenerativeAI,
+    "@ai-sdk/google-vertex": createVertex,
+    "@ai-sdk/google-vertex/anthropic": createVertexAnthropic,
+    "@ai-sdk/openai": createOpenAI,
+    "@ai-sdk/openai-compatible": createOpenAICompatible,
+    "@openrouter/ai-sdk-provider": createOpenRouter,
+    "@ai-sdk/xai": createXai,
+    "@ai-sdk/mistral": createMistral,
+    "@ai-sdk/groq": createGroq,
+    "@ai-sdk/deepinfra": createDeepInfra,
+    "@ai-sdk/cerebras": createCerebras,
+    "@ai-sdk/cohere": createCohere,
+    "@ai-sdk/gateway": createGateway,
+    "@ai-sdk/togetherai": createTogetherAI,
+    "@ai-sdk/perplexity": createPerplexity,
+    "@ai-sdk/vercel": createVercel,
+    "@gitlab/gitlab-ai-provider": createGitLab,
+    // @ts-ignore (TODO: kill this code so we dont have to maintain it)
+    "@ai-sdk/github-copilot": createGitHubCopilotOpenAICompatible,
   }
 
-  type CustomModelLoader = (sdk: any, model: Model, options?: Record<string, any>) => Promise<any>
+  type CustomModelLoader = (sdk: any, modelID: string, options?: Record<string, any>) => Promise<any>
+  type CustomVarsLoader = (options: Record<string, any>) => Record<string, string>
   type CustomLoader = (provider: Info) => Promise<{
     autoload: boolean
     getModel?: CustomModelLoader
+    vars?: CustomVarsLoader
     options?: Record<string, any>
   }>
+
+  function useLanguageModel(sdk: any) {
+    return sdk.responses === undefined && sdk.chat === undefined
+  }
 
   const CUSTOM_LOADERS: Record<string, CustomLoader> = {
     async anthropic() {
@@ -128,28 +157,32 @@ export namespace Provider {
       }
     },
     async opencode(input) {
-      const env = Env.all()
-      const config = await Config.get()
-      const hasKey =
-        input.env.some((item) => env[item]) ||
-        !!(await Auth.get(input.id)) ||
-        !!config.provider?.["opencode"]?.options?.apiKey
+      const hasKey = await (async () => {
+        const env = Env.all()
+        if (input.env.some((item) => env[item])) return true
+        if (await Auth.get(input.id)) return true
+        const config = await Config.get()
+        if (config.provider?.["opencode"]?.options?.apiKey) return true
+        return false
+      })()
 
-      const models = hasKey ? input.models : pickBy(input.models, (m) => m.cost?.input === 0)
+      if (!hasKey) {
+        for (const [key, value] of Object.entries(input.models)) {
+          if (value.cost.input === 0) continue
+          delete input.models[key]
+        }
+      }
 
       return {
-        autoload: Object.keys(models).length > 0,
+        autoload: Object.keys(input.models).length > 0,
         options: hasKey ? {} : { apiKey: "public" },
       }
     },
     openai: async () => {
       return {
         autoload: false,
-        async getModel(sdk: any, model: Model, _options?: Record<string, any>) {
-          if (model && model.api.npm !== "@ai-sdk/openai") {
-            return sdk.languageModel(model.api.id)
-          }
-          return sdk.responses(model.api.id)
+        async getModel(sdk: any, modelID: string, _options?: Record<string, any>) {
+          return sdk.responses(modelID)
         },
         options: {},
       }
@@ -157,12 +190,9 @@ export namespace Provider {
     "github-copilot": async () => {
       return {
         autoload: false,
-        async getModel(sdk: any, model: Model, _options?: Record<string, any>) {
-          if (model && model.api.npm !== "@ai-sdk/github-copilot") {
-            return sdk.languageModel(model.api.id)
-          }
-          if (sdk.responses === undefined && sdk.chat === undefined) return sdk.languageModel(model.api.id)
-          return shouldUseCopilotResponsesApi(model.api.id) ? sdk.responses(model.api.id) : sdk.chat(model.api.id)
+        async getModel(sdk: any, modelID: string, _options?: Record<string, any>) {
+          if (useLanguageModel(sdk)) return sdk.languageModel(modelID)
+          return shouldUseCopilotResponsesApi(modelID) ? sdk.responses(modelID) : sdk.chat(modelID)
         },
         options: {},
       }
@@ -170,43 +200,49 @@ export namespace Provider {
     "github-copilot-enterprise": async () => {
       return {
         autoload: false,
-        async getModel(sdk: any, model: Model, _options?: Record<string, any>) {
-          if (model && model.api.npm !== "@ai-sdk/github-copilot") {
-            return sdk.languageModel(model.api.id)
-          }
-          if (sdk.responses === undefined && sdk.chat === undefined) return sdk.languageModel(model.api.id)
-          return shouldUseCopilotResponsesApi(model.api.id) ? sdk.responses(model.api.id) : sdk.chat(model.api.id)
+        async getModel(sdk: any, modelID: string, _options?: Record<string, any>) {
+          if (useLanguageModel(sdk)) return sdk.languageModel(modelID)
+          return shouldUseCopilotResponsesApi(modelID) ? sdk.responses(modelID) : sdk.chat(modelID)
         },
         options: {},
       }
     },
-    azure: async () => {
+    azure: async (provider) => {
+      const resource = iife(() => {
+        const name = provider.options?.resourceName
+        if (typeof name === "string" && name.trim() !== "") return name
+        return Env.get("AZURE_RESOURCE_NAME")
+      })
+
       return {
         autoload: false,
-        async getModel(sdk: any, model: Model, options?: Record<string, any>) {
-          if (model && model.api.npm !== "@ai-sdk/azure") {
-            return sdk.languageModel(model.api.id)
-          }
+        async getModel(sdk: any, modelID: string, options?: Record<string, any>) {
+          if (useLanguageModel(sdk)) return sdk.languageModel(modelID)
           if (options?.["useCompletionUrls"]) {
-            return sdk.chat(model.api.id)
+            return sdk.chat(modelID)
+          } else {
+            return sdk.responses(modelID)
           }
-          return sdk.responses(model.api.id)
         },
         options: {},
+        vars(_options) {
+          return {
+            ...(resource && { AZURE_RESOURCE_NAME: resource }),
+          }
+        },
       }
     },
     "azure-cognitive-services": async () => {
       const resourceName = Env.get("AZURE_COGNITIVE_SERVICES_RESOURCE_NAME")
       return {
         autoload: false,
-        async getModel(sdk: any, model: Model, options?: Record<string, any>) {
-          if (model && model.api.npm !== "@ai-sdk/azure") {
-            return sdk.languageModel(model.api.id)
-          }
+        async getModel(sdk: any, modelID: string, options?: Record<string, any>) {
+          if (useLanguageModel(sdk)) return sdk.languageModel(modelID)
           if (options?.["useCompletionUrls"]) {
-            return sdk.chat(model.api.id)
+            return sdk.chat(modelID)
+          } else {
+            return sdk.responses(modelID)
           }
-          return sdk.responses(model.api.id)
         },
         options: {
           baseURL: resourceName ? `https://${resourceName}.cognitiveservices.azure.com/openai` : undefined,
@@ -274,8 +310,7 @@ export namespace Provider {
       return {
         autoload: true,
         options: providerOptions,
-        async getModel(sdk: any, model: Model, options?: Record<string, any>) {
-          const modelID = model.api.id
+        async getModel(sdk: any, modelID: string, options?: Record<string, any>) {
           // Skip region prefixing if model already has a cross-region inference profile prefix
           // Models from models.dev may already include prefixes like us., eu., global., etc.
           const crossRegionPrefixes = ["global.", "us.", "eu.", "jp.", "apac.", "au."]
@@ -289,11 +324,10 @@ export namespace Provider {
           // 3. Default "us-east-1" (baked into defaultRegion)
           const region = options?.region ?? defaultRegion
 
-          const resolved = iife(() => {
-            const regionPrefix = region.split("-")[0]
-            const modelID = model.api.id
+          let regionPrefix = region.split("-")[0]
 
-            if (regionPrefix === "us") {
+          switch (regionPrefix) {
+            case "us": {
               const modelRequiresPrefix = [
                 "nova-micro",
                 "nova-lite",
@@ -305,12 +339,11 @@ export namespace Provider {
               ].some((m) => modelID.includes(m))
               const isGovCloud = region.startsWith("us-gov")
               if (modelRequiresPrefix && !isGovCloud) {
-                return { regionPrefix, modelID: `${regionPrefix}.${modelID}` }
+                modelID = `${regionPrefix}.${modelID}`
               }
-              return { regionPrefix, modelID }
+              break
             }
-
-            if (regionPrefix === "eu") {
+            case "eu": {
               const regionRequiresPrefix = [
                 "eu-west-1",
                 "eu-west-2",
@@ -319,51 +352,48 @@ export namespace Provider {
                 "eu-central-1",
                 "eu-south-1",
                 "eu-south-2",
-                "eu-south-3",
               ].some((r) => region.includes(r))
               const modelRequiresPrefix = ["claude", "nova-lite", "nova-micro", "llama3", "pixtral"].some((m) =>
                 modelID.includes(m),
               )
               if (regionRequiresPrefix && modelRequiresPrefix) {
-                return { regionPrefix, modelID: `${regionPrefix}.${modelID}` }
+                modelID = `${regionPrefix}.${modelID}`
               }
-              return { regionPrefix, modelID }
+              break
             }
-
-            if (regionPrefix === "ap") {
+            case "ap": {
               const isAustraliaRegion = ["ap-southeast-2", "ap-southeast-4"].includes(region)
               const isTokyoRegion = region === "ap-northeast-1"
               if (
                 isAustraliaRegion &&
                 ["anthropic.claude-sonnet-4-5", "anthropic.claude-haiku"].some((m) => modelID.includes(m))
               ) {
-                return { regionPrefix: "au", modelID: `au.${modelID}` }
-              }
-              if (isTokyoRegion) {
+                regionPrefix = "au"
+                modelID = `${regionPrefix}.${modelID}`
+              } else if (isTokyoRegion) {
                 // Tokyo region uses jp. prefix for cross-region inference
                 const modelRequiresPrefix = ["claude", "nova-lite", "nova-micro", "nova-pro"].some((m) =>
                   modelID.includes(m),
                 )
                 if (modelRequiresPrefix) {
-                  return { regionPrefix: "jp", modelID: `jp.${modelID}` }
+                  regionPrefix = "jp"
+                  modelID = `${regionPrefix}.${modelID}`
                 }
-                return { regionPrefix, modelID }
+              } else {
+                // Other APAC regions use apac. prefix
+                const modelRequiresPrefix = ["claude", "nova-lite", "nova-micro", "nova-pro"].some((m) =>
+                  modelID.includes(m),
+                )
+                if (modelRequiresPrefix) {
+                  regionPrefix = "apac"
+                  modelID = `${regionPrefix}.${modelID}`
+                }
               }
-
-              // Other APAC regions use apac. prefix
-              const modelRequiresPrefix = ["claude", "nova-lite", "nova-micro", "nova-pro"].some((m) =>
-                modelID.includes(m),
-              )
-              if (modelRequiresPrefix) {
-                return { regionPrefix: "apac", modelID: `apac.${modelID}` }
-              }
-              return { regionPrefix, modelID }
+              break
             }
+          }
 
-            return { regionPrefix, modelID }
-          })
-
-          return sdk.languageModel(resolved.modelID)
+          return sdk.languageModel(modelID)
         },
       }
     },
@@ -396,13 +426,26 @@ export namespace Provider {
         Env.get("GCP_PROJECT") ??
         Env.get("GCLOUD_PROJECT")
 
-      const location =
-        provider.options?.location ?? Env.get("GOOGLE_CLOUD_LOCATION") ?? Env.get("VERTEX_LOCATION") ?? "us-central1"
+      const location = String(
+        provider.options?.location ??
+          Env.get("GOOGLE_VERTEX_LOCATION") ??
+          Env.get("GOOGLE_CLOUD_LOCATION") ??
+          Env.get("VERTEX_LOCATION") ??
+          "us-central1",
+      )
 
       const autoload = Boolean(project)
       if (!autoload) return { autoload: false }
       return {
         autoload: true,
+        vars(_options: Record<string, any>) {
+          const endpoint = location === "global" ? "aiplatform.googleapis.com" : `${location}-aiplatform.googleapis.com`
+          return {
+            ...(project && { GOOGLE_VERTEX_PROJECT: project }),
+            GOOGLE_VERTEX_LOCATION: location,
+            GOOGLE_VERTEX_ENDPOINT: endpoint,
+          }
+        },
         options: {
           project,
           location,
@@ -417,8 +460,8 @@ export namespace Provider {
             return fetch(input, { ...init, headers })
           },
         },
-        async getModel(sdk: any, model: Model) {
-          const id = String(model.api.id).trim()
+        async getModel(sdk: any, modelID: string) {
+          const id = String(modelID).trim()
           return sdk.languageModel(id)
         },
       }
@@ -434,8 +477,8 @@ export namespace Provider {
           project,
           location,
         },
-        async getModel(sdk: any, model: Model) {
-          const id = String(model.api.id).trim()
+        async getModel(sdk: any, modelID) {
+          const id = String(modelID).trim()
           return sdk.languageModel(id)
         },
       }
@@ -459,8 +502,8 @@ export namespace Provider {
       return {
         autoload: !!envServiceKey,
         options: envServiceKey ? { deploymentId, resourceGroup } : {},
-        async getModel(sdk: any, model: Model) {
-          return sdk(model.api.id)
+        async getModel(sdk: any, modelID: string) {
+          return sdk(modelID)
         },
       }
     },
@@ -490,6 +533,7 @@ export namespace Provider {
 
       const aiGatewayHeaders = {
         "User-Agent": `opencode/${Installation.VERSION} gitlab-ai-provider/${GITLAB_PROVIDER_VERSION} (${os.platform()} ${os.release()}; ${os.arch()})`,
+        "anthropic-beta": "context-1m-2025-08-07",
         ...(providerConfig?.options?.aiGatewayHeaders || {}),
       }
 
@@ -505,8 +549,8 @@ export namespace Provider {
             ...(providerConfig?.options?.featureFlags || {}),
           },
         },
-        async getModel(sdk: any, model: Model) {
-          return sdk.agenticChat(model.api.id, {
+        async getModel(sdk: ReturnType<typeof createGitLab>, modelID: string) {
+          return sdk.agenticChat(modelID, {
             aiGatewayHeaders,
             featureFlags: {
               duo_agent_platform_agentic_chat: true,
@@ -533,10 +577,14 @@ export namespace Provider {
         autoload: !!apiKey,
         options: {
           apiKey,
-          baseURL: `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/v1`,
         },
-        async getModel(sdk: any, model: Model) {
-          return sdk.languageModel(model.api.id)
+        async getModel(sdk: any, modelID: string) {
+          return sdk.languageModel(modelID)
+        },
+        vars(_options) {
+          return {
+            CLOUDFLARE_ACCOUNT_ID: accountId,
+          }
         },
       }
     },
@@ -558,7 +606,7 @@ export namespace Provider {
       if (!apiToken) {
         throw new Error(
           "CLOUDFLARE_API_TOKEN (or CF_AIG_TOKEN) is required for Cloudflare AI Gateway. " +
-          "Set it via environment variable or run `opencode auth cloudflare-ai-gateway`.",
+            "Set it via environment variable or run `opencode auth cloudflare-ai-gateway`.",
         )
       }
 
@@ -566,47 +614,37 @@ export namespace Provider {
       const { createAiGateway } = await import("ai-gateway-provider")
       const { createUnified } = await import("ai-gateway-provider/providers/unified")
 
-      const aigateway = createAiGateway({ accountId, gateway, apiKey: apiToken })
+      const metadata = iife(() => {
+        if (input.options?.metadata) return input.options.metadata
+        try {
+          return JSON.parse(input.options?.headers?.["cf-aig-metadata"])
+        } catch {
+          return undefined
+        }
+      })
+      const opts = {
+        metadata,
+        cacheTtl: input.options?.cacheTtl,
+        cacheKey: input.options?.cacheKey,
+        skipCache: input.options?.skipCache,
+        collectLog: input.options?.collectLog,
+      }
+
+      const aigateway = createAiGateway({
+        accountId,
+        gateway,
+        apiKey: apiToken,
+        ...(Object.values(opts).some((v) => v !== undefined) ? { options: opts } : {}),
+      })
       const unified = createUnified()
 
       return {
         autoload: true,
-        async getModel(_sdk: any, model: Model, _options?: Record<string, any>) {
+        async getModel(_sdk: any, modelID: string, _options?: Record<string, any>) {
           // Model IDs use Unified API format: provider/model (e.g., "anthropic/claude-sonnet-4-5")
-          return aigateway(unified(model.api.id))
+          return aigateway(unified(modelID))
         },
-        options: {
-          baseURL: `https://gateway.ai.cloudflare.com/v1/${accountId}/${gateway}/compat`,
-          headers: {
-            // Cloudflare AI Gateway uses cf-aig-authorization for authenticated gateways
-            // This enables Unified Billing where Cloudflare handles upstream provider auth
-            ...(apiToken ? { "cf-aig-authorization": `Bearer ${apiToken}` } : {}),
-            "HTTP-Referer": "https://opencode.ai/",
-            "X-Title": "opencode",
-          },
-          // Custom fetch to handle parameter transformation and auth
-          fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
-            const headers = new Headers(init?.headers)
-            // Strip Authorization header - AI Gateway uses cf-aig-authorization instead
-            headers.delete("Authorization")
-
-            // Transform max_tokens to max_completion_tokens for newer models
-            if (init?.body && init.method === "POST") {
-              try {
-                const body = JSON.parse(init.body as string)
-                if (body.max_tokens !== undefined && !body.max_completion_tokens) {
-                  body.max_completion_tokens = body.max_tokens
-                  delete body.max_tokens
-                  init = { ...init, body: JSON.stringify(body) }
-                }
-              } catch (e) {
-                // If body parsing fails, continue with original request
-              }
-            }
-
-            return fetch(input, { ...init, headers })
-          },
-        },
+        options: {},
       }
     },
     cerebras: async () => {
@@ -634,8 +672,8 @@ export namespace Provider {
 
   export const Model = z
     .object({
-      id: z.string(),
-      providerID: z.string(),
+      id: ModelID.zod,
+      providerID: ProviderID.zod,
       api: z.object({
         id: z.string(),
         url: z.string(),
@@ -705,7 +743,7 @@ export namespace Provider {
 
   export const Info = z
     .object({
-      id: z.string(),
+      id: ProviderID.zod,
       name: z.string(),
       source: z.enum(["env", "config", "custom", "api"]),
       env: z.string().array(),
@@ -720,17 +758,14 @@ export namespace Provider {
 
   function fromModelsDevModel(provider: ModelsDev.Provider, model: ModelsDev.Model): Model {
     const m: Model = {
-      id: model.id,
-      providerID: provider.id,
+      id: ModelID.make(model.id),
+      providerID: ProviderID.make(provider.id),
       name: model.name,
       family: model.family,
       api: {
         id: model.id,
         url: model.provider?.api ?? provider.api!,
-        npm: iife(() => {
-          if (provider.id.startsWith("github-copilot")) return "@ai-sdk/github-copilot"
-          return model.provider?.npm ?? provider.npm ?? "@ai-sdk/openai-compatible"
-        }),
+        npm: model.provider?.npm ?? provider.npm ?? "@ai-sdk/openai-compatible",
       },
       status: model.status ?? "active",
       headers: model.headers ?? {},
@@ -744,13 +779,13 @@ export namespace Provider {
         },
         experimentalOver200K: model.cost?.context_over_200k
           ? {
-            cache: {
-              read: model.cost.context_over_200k.cache_read ?? 0,
-              write: model.cost.context_over_200k.cache_write ?? 0,
-            },
-            input: model.cost.context_over_200k.input,
-            output: model.cost.context_over_200k.output,
-          }
+              cache: {
+                read: model.cost.context_over_200k.cache_read ?? 0,
+                write: model.cost.context_over_200k.cache_write ?? 0,
+              },
+              input: model.cost.context_over_200k.input,
+              output: model.cost.context_over_200k.output,
+            }
           : undefined,
       },
       limit: {
@@ -790,7 +825,7 @@ export namespace Provider {
 
   export function fromModelsDevProvider(provider: ModelsDev.Provider): Info {
     return {
-      id: provider.id,
+      id: ProviderID.make(provider.id),
       source: "custom",
       name: provider.name,
       env: provider.env ?? [],
@@ -803,301 +838,292 @@ export namespace Provider {
     using _ = log.time("state")
     const config = await Config.get()
     const modelsDev = await ModelsDev.get()
-
-    const initialDatabase = mapValues(modelsDev, fromModelsDevProvider)
-
-    // Add GitHub Copilot Enterprise provider that inherits from GitHub Copilot
-    const database = iife(() => {
-      const githubCopilot = initialDatabase["github-copilot"]
-      if (!githubCopilot) return initialDatabase
-      return {
-        ...initialDatabase,
-        "github-copilot-enterprise": {
-          ...githubCopilot,
-          id: "github-copilot-enterprise",
-          name: "GitHub Copilot Enterprise",
-          models: mapValues(githubCopilot.models, (model) => ({
-            ...model,
-            providerID: "github-copilot-enterprise",
-          })),
-        },
-      }
-    })
+    const database = mapValues(modelsDev, fromModelsDevProvider)
 
     const disabled = new Set(config.disabled_providers ?? [])
     const enabled = config.enabled_providers ? new Set(config.enabled_providers) : null
 
-    function isProviderAllowed(providerID: string): boolean {
+    function isProviderAllowed(providerID: ProviderID): boolean {
       if (enabled && !enabled.has(providerID)) return false
       if (disabled.has(providerID)) return false
       return true
     }
 
+    const providers: { [providerID: string]: Info } = {}
     const languages = new Map<string, LanguageModelV2>()
-    const sdk = new Map<number, SDK>()
+    const modelLoaders: {
+      [providerID: string]: CustomModelLoader
+    } = {}
+    const varsLoaders: {
+      [providerID: string]: CustomVarsLoader
+    } = {}
+    const sdk = new Map<string, SDK>()
 
     log.info("init")
 
-    // 1. Build initial providers from database + config extensions
-    const providersFromConfig = Object.entries((config.provider ?? {}) as Record<string, any>).reduce(
-      (acc: Record<string, Info>, [providerID, provider]: [string, any]) => {
-        const existing = database[providerID]
-        const parsed: Info = {
-          id: providerID,
-          name: provider.name ?? existing?.name ?? providerID,
-          env: provider.env ?? existing?.env ?? [],
-          options: mergeDeep(existing?.options ?? {}, provider.options ?? {}),
-          source: "config",
-          models: existing?.models ?? {},
-        }
+    const configProviders = Object.entries(config.provider ?? {})
 
-        const models = Object.entries((provider.models ?? {}) as Record<string, any>).reduce((mAcc: Record<string, Model>, [modelID, model]: [string, any]) => {
-          const existingModel = parsed.models[model.id ?? modelID]
-          const name = iife(() => {
-            if (model.name) return model.name
-            if (model.id && model.id !== modelID) return modelID
-            return existingModel?.name ?? modelID
-          })
-          const parsedModel: Model = {
-            id: modelID,
-            api: {
-              id: model.id ?? existingModel?.api.id ?? modelID,
-              npm:
-                model.provider?.npm ??
-                provider.npm ??
-                existingModel?.api.npm ??
-                modelsDev[providerID]?.npm ??
-                "@ai-sdk/openai-compatible",
-              url: model.provider?.api ?? provider?.api ?? existingModel?.api.url ?? modelsDev[providerID]?.api,
-            },
-            status: model.status ?? existingModel?.status ?? "active",
-            name,
-            providerID,
-            capabilities: {
-              temperature: model.temperature ?? existingModel?.capabilities.temperature ?? false,
-              reasoning: model.reasoning ?? existingModel?.capabilities.reasoning ?? false,
-              attachment: model.attachment ?? existingModel?.capabilities.attachment ?? false,
-              toolcall: model.tool_call ?? existingModel?.capabilities.toolcall ?? true,
-              input: {
-                text: model.modalities?.input?.includes("text") ?? existingModel?.capabilities.input.text ?? true,
-                audio: model.modalities?.input?.includes("audio") ?? existingModel?.capabilities.input.audio ?? false,
-                image: model.modalities?.input?.includes("image") ?? existingModel?.capabilities.input.image ?? false,
-                video: model.modalities?.input?.includes("video") ?? existingModel?.capabilities.input.video ?? false,
-                pdf: model.modalities?.input?.includes("pdf") ?? existingModel?.capabilities.input.pdf ?? false,
-              },
-              output: {
-                text: model.modalities?.output?.includes("text") ?? existingModel?.capabilities.output.text ?? true,
-                audio: model.modalities?.output?.includes("audio") ?? existingModel?.capabilities.output.audio ?? false,
-                image: model.modalities?.output?.includes("image") ?? existingModel?.capabilities.output.image ?? false,
-                video: model.modalities?.output?.includes("video") ?? existingModel?.capabilities.output.video ?? false,
-                pdf: model.modalities?.output?.includes("pdf") ?? existingModel?.capabilities.output.pdf ?? false,
-              },
-              interleaved: model.interleaved ?? false,
-            },
-            cost: {
-              input: model?.cost?.input ?? existingModel?.cost?.input ?? 0,
-              output: model?.cost?.output ?? existingModel?.cost?.output ?? 0,
-              cache: {
-                read: model?.cost?.cache_read ?? existingModel?.cost?.cache.read ?? 0,
-                write: model?.cost?.cache_write ?? existingModel?.cost?.cache.write ?? 0,
-              },
-            },
-            options: mergeDeep(existingModel?.options ?? {}, model.options ?? {}),
-            limit: {
-              context: model.limit?.context ?? existingModel?.limit?.context ?? 0,
-              output: model.limit?.output ?? existingModel?.limit?.output ?? 0,
-            },
-            headers: mergeDeep(existingModel?.headers ?? {}, model.headers ?? {}),
-            family: model.family ?? existingModel?.family ?? "",
-            release_date: model.release_date ?? existingModel?.release_date ?? "",
-            variants: {},
-          }
-          const merged = mergeDeep(ProviderTransform.variants(parsedModel), (model.variants ?? {}) as any)
-          parsedModel.variants = mapValues(
-            pickBy(merged as any, (v: any) => !v.disabled),
-            (v) => omit(v as any, ["disabled"]),
-          )
-          return { ...mAcc, [modelID]: parsedModel }
-        }, parsed.models)
-
-        return { ...acc, [providerID]: { ...parsed, models } }
-      },
-      {} as Record<string, Info>,
-    )
-
-    // Update database with config-extended models
-    Object.assign(database, providersFromConfig)
-
-    // 2. Load from various sources (env, auth, plugins, loaders)
-    const env = Env.all()
-    const providersFromEnv = Object.entries(database).reduce((acc: Record<string, Info>, [providerID, provider]: [string, Info]) => {
-      if (disabled.has(providerID)) return acc
-      const apiKey = provider.env.map((item: string) => (env as any)[item]).find(Boolean)
-      if (!apiKey) return acc
-      return {
-        ...acc,
-        [providerID]: mergeDeep(acc[providerID] ?? database[providerID], {
-          source: "env",
-          key: provider.env.length === 1 ? apiKey : undefined,
-        } as any),
+    // Add GitHub Copilot Enterprise provider that inherits from GitHub Copilot
+    if (database["github-copilot"]) {
+      const githubCopilot = database["github-copilot"]
+      database["github-copilot-enterprise"] = {
+        ...githubCopilot,
+        id: ProviderID.githubCopilotEnterprise,
+        name: "GitHub Copilot Enterprise",
+        models: mapValues(githubCopilot.models, (model) => ({
+          ...model,
+          providerID: ProviderID.githubCopilotEnterprise,
+        })),
       }
-    }, providersFromConfig)
+    }
 
-    const providersFromAuth = Object.entries(await Auth.all()).reduce((acc: Record<string, Info>, [providerID, provider]: [string, any]) => {
-      if (disabled.has(providerID) || provider.type !== "api") return acc
-      return {
-        ...acc,
-        [providerID]: mergeDeep(acc[providerID] ?? database[providerID], {
+    function mergeProvider(providerID: ProviderID, provider: Partial<Info>) {
+      const existing = providers[providerID]
+      if (existing) {
+        // @ts-expect-error
+        providers[providerID] = mergeDeep(existing, provider)
+        return
+      }
+      const match = database[providerID]
+      if (!match) return
+      // @ts-expect-error
+      providers[providerID] = mergeDeep(match, provider)
+    }
+
+    // extend database from config
+    for (const [providerID, provider] of configProviders) {
+      const existing = database[providerID]
+      const parsed: Info = {
+        id: ProviderID.make(providerID),
+        name: provider.name ?? existing?.name ?? providerID,
+        env: provider.env ?? existing?.env ?? [],
+        options: mergeDeep(existing?.options ?? {}, provider.options ?? {}),
+        source: "config",
+        models: existing?.models ?? {},
+      }
+
+      for (const [modelID, model] of Object.entries(provider.models ?? {})) {
+        const existingModel = parsed.models[model.id ?? modelID]
+        const name = iife(() => {
+          if (model.name) return model.name
+          if (model.id && model.id !== modelID) return modelID
+          return existingModel?.name ?? modelID
+        })
+        const parsedModel: Model = {
+          id: ModelID.make(modelID),
+          api: {
+            id: model.id ?? existingModel?.api.id ?? modelID,
+            npm:
+              model.provider?.npm ??
+              provider.npm ??
+              existingModel?.api.npm ??
+              modelsDev[providerID]?.npm ??
+              "@ai-sdk/openai-compatible",
+            url: model.provider?.api ?? provider?.api ?? existingModel?.api.url ?? modelsDev[providerID]?.api,
+          },
+          status: model.status ?? existingModel?.status ?? "active",
+          name,
+          providerID: ProviderID.make(providerID),
+          capabilities: {
+            temperature: model.temperature ?? existingModel?.capabilities.temperature ?? false,
+            reasoning: model.reasoning ?? existingModel?.capabilities.reasoning ?? false,
+            attachment: model.attachment ?? existingModel?.capabilities.attachment ?? false,
+            toolcall: model.tool_call ?? existingModel?.capabilities.toolcall ?? true,
+            input: {
+              text: model.modalities?.input?.includes("text") ?? existingModel?.capabilities.input.text ?? true,
+              audio: model.modalities?.input?.includes("audio") ?? existingModel?.capabilities.input.audio ?? false,
+              image: model.modalities?.input?.includes("image") ?? existingModel?.capabilities.input.image ?? false,
+              video: model.modalities?.input?.includes("video") ?? existingModel?.capabilities.input.video ?? false,
+              pdf: model.modalities?.input?.includes("pdf") ?? existingModel?.capabilities.input.pdf ?? false,
+            },
+            output: {
+              text: model.modalities?.output?.includes("text") ?? existingModel?.capabilities.output.text ?? true,
+              audio: model.modalities?.output?.includes("audio") ?? existingModel?.capabilities.output.audio ?? false,
+              image: model.modalities?.output?.includes("image") ?? existingModel?.capabilities.output.image ?? false,
+              video: model.modalities?.output?.includes("video") ?? existingModel?.capabilities.output.video ?? false,
+              pdf: model.modalities?.output?.includes("pdf") ?? existingModel?.capabilities.output.pdf ?? false,
+            },
+            interleaved: model.interleaved ?? false,
+          },
+          cost: {
+            input: model?.cost?.input ?? existingModel?.cost?.input ?? 0,
+            output: model?.cost?.output ?? existingModel?.cost?.output ?? 0,
+            cache: {
+              read: model?.cost?.cache_read ?? existingModel?.cost?.cache.read ?? 0,
+              write: model?.cost?.cache_write ?? existingModel?.cost?.cache.write ?? 0,
+            },
+          },
+          options: mergeDeep(existingModel?.options ?? {}, model.options ?? {}),
+          limit: {
+            context: model.limit?.context ?? existingModel?.limit?.context ?? 0,
+            output: model.limit?.output ?? existingModel?.limit?.output ?? 0,
+          },
+          headers: mergeDeep(existingModel?.headers ?? {}, model.headers ?? {}),
+          family: model.family ?? existingModel?.family ?? "",
+          release_date: model.release_date ?? existingModel?.release_date ?? "",
+          variants: {},
+        }
+        const merged = mergeDeep(ProviderTransform.variants(parsedModel), model.variants ?? {})
+        parsedModel.variants = mapValues(
+          pickBy(merged, (v) => !v.disabled),
+          (v) => omit(v, ["disabled"]),
+        )
+        parsed.models[modelID] = parsedModel
+      }
+      database[providerID] = parsed
+    }
+
+    // load env
+    const env = Env.all()
+    for (const [id, provider] of Object.entries(database)) {
+      const providerID = ProviderID.make(id)
+      if (disabled.has(providerID)) continue
+      const apiKey = provider.env.map((item) => env[item]).find(Boolean)
+      if (!apiKey) continue
+      mergeProvider(providerID, {
+        source: "env",
+        key: provider.env.length === 1 ? apiKey : undefined,
+      })
+    }
+
+    // load apikeys
+    for (const [id, provider] of Object.entries(await Auth.all())) {
+      const providerID = ProviderID.make(id)
+      if (disabled.has(providerID)) continue
+      if (provider.type === "api") {
+        mergeProvider(providerID, {
           source: "api",
           key: provider.key,
-        } as any),
-      }
-    }, providersFromEnv)
-
-    const plugins = await Plugin.list()
-    const providersFromPlugins = await plugins.reduce(async (accPromise, plugin) => {
-      const acc = await accPromise
-      if (!plugin.auth) return acc
-      const providerID = plugin.auth.provider
-      if (disabled.has(providerID)) return acc
-
-      const auth = await Auth.get(providerID)
-      const enterpriseAuth = providerID === "github-copilot" ? await Auth.get("github-copilot-enterprise") : undefined
-      const hasAuth = !!auth || !!enterpriseAuth
-
-      if (!hasAuth || !plugin.auth.loader) return acc
-
-      const nextAcc = iife(async () => {
-        const withAuth = auth
-          ? {
-            ...acc,
-            [providerID]: mergeDeep(acc[providerID] ?? database[providerID], {
-              source: "custom",
-              options: await plugin.auth!.loader!(() => Auth.get(providerID) as any, database[providerID]),
-            } as any),
-          }
-          : acc
-
-        if (providerID === "github-copilot") {
-          const enterpriseProviderID = "github-copilot-enterprise"
-          if (!disabled.has(enterpriseProviderID) && enterpriseAuth) {
-            return {
-              ...withAuth,
-              [enterpriseProviderID]: mergeDeep(withAuth[enterpriseProviderID] ?? database[enterpriseProviderID], {
-                source: "custom",
-                options: await plugin.auth!.loader!(
-                  () => Auth.get(enterpriseProviderID) as any,
-                  database[enterpriseProviderID],
-                ),
-              } as any),
-            }
-          }
-        }
-        return withAuth
-      })
-
-      return nextAcc
-    }, Promise.resolve(providersFromAuth))
-
-    const finalProvidersWithLoaders = await Object.entries(CUSTOM_LOADERS).reduce(
-      async (accPromise, [providerID, fn]) => {
-        const acc = await accPromise
-        if (disabled.has(providerID)) return acc
-        const data = database[providerID]
-        if (!data) {
-          log.error("Provider does not exist in model list " + providerID)
-          return acc
-        }
-        const result = await (fn as any)(data)
-        if (result && (result.autoload || acc[providerID])) {
-          return {
-            ...acc,
-            [providerID]: mergeDeep(acc[providerID] ?? database[providerID], {
-              ...(acc[providerID] ? {} : { source: "custom" }),
-              options: result.options,
-            } as any),
-          }
-        }
-        return acc
-      },
-      Promise.resolve(providersFromPlugins),
-    )
-
-    // Re-apply config to ensure it takes precedence
-    const finalProviders = Object.entries((config.provider ?? {}) as Record<string, any>).reduce((acc: Record<string, Info>, [providerID, provider]: [string, any]) => {
-      return {
-        ...acc,
-        [providerID]: mergeDeep(acc[providerID] ?? database[providerID], {
-          source: "config",
-          ...(provider.env ? { env: provider.env } : {}),
-          ...(provider.name ? { name: provider.name } : {}),
-          ...(provider.options ? { options: provider.options } : {}),
-        } as any),
-      }
-    }, finalProvidersWithLoaders)
-
-    const modelLoaders = await Object.entries(CUSTOM_LOADERS).reduce(async (accPromise, [providerID, fn]) => {
-      const acc = await accPromise
-      if (disabled.has(providerID)) return acc
-      const data = database[providerID]
-      if (!data) return acc
-      const result = await (fn as any)(data)
-      if (result?.getModel && (result.autoload || (finalProviders as any)[providerID])) {
-        return { ...acc, [providerID]: result.getModel }
-      }
-      return acc
-    }, Promise.resolve({} as Record<string, CustomModelLoader>))
-
-    // 3. Final filtering and model processing
-    const filteredProviders = Object.fromEntries(
-      (Object.entries(finalProviders) as any)
-        .filter((entry: any) => isProviderAllowed(entry[0]))
-        .map((entry: any) => {
-          const [providerID, provider] = entry
-          const configProvider = config.provider?.[providerID]
-          const models = Object.fromEntries(
-            Object.entries((provider.models ?? {}) as any).filter((mEntry: any) => {
-              const [modelID, model] = mEntry
-              model.api.id = model.api.id ?? model.id ?? modelID
-              if (modelID === "gpt-5-chat-latest" || (providerID === "openrouter" && modelID === "openai/gpt-5-chat")) {
-                return false
-              }
-              if (model.status === "alpha" && !Flag.OPENCODE_ENABLE_EXPERIMENTAL_MODELS) {
-                return false
-              }
-              if (model.status === "deprecated") {
-                return false
-              }
-              if (
-                (configProvider?.blacklist && configProvider.blacklist.includes(modelID)) ||
-                (configProvider?.whitelist && !configProvider.whitelist.includes(modelID))
-              ) {
-                return false
-              }
-
-              // Filter out disabled variants from config
-              const configVariants = (configProvider?.models as any)?.[modelID]?.variants
-              if (configVariants && model.variants) {
-                const merged = mergeDeep(model.variants, configVariants)
-                model.variants = mapValues(
-                  pickBy(merged as any, (v: any) => !v.disabled),
-                  (v) => omit(v as any, ["disabled"]),
-                )
-              }
-
-              return true
-            }),
-          )
-          return [providerID, { ...provider, models }]
         })
-        .filter((entry: any) => Object.keys(entry[1].models ?? {}).length > 0),
-    )
+      }
+    }
+
+    for (const plugin of await Plugin.list()) {
+      if (!plugin.auth) continue
+      const providerID = ProviderID.make(plugin.auth.provider)
+      if (disabled.has(providerID)) continue
+
+      // For github-copilot plugin, check if auth exists for either github-copilot or github-copilot-enterprise
+      let hasAuth = false
+      const auth = await Auth.get(providerID)
+      if (auth) hasAuth = true
+
+      // Special handling for github-copilot: also check for enterprise auth
+      if (providerID === ProviderID.githubCopilot && !hasAuth) {
+        const enterpriseAuth = await Auth.get("github-copilot-enterprise")
+        if (enterpriseAuth) hasAuth = true
+      }
+
+      if (!hasAuth) continue
+      if (!plugin.auth.loader) continue
+
+      // Load for the main provider if auth exists
+      if (auth) {
+        const options = await plugin.auth.loader(() => Auth.get(providerID) as any, database[plugin.auth.provider])
+        const opts = options ?? {}
+        const patch: Partial<Info> = providers[providerID] ? { options: opts } : { source: "custom", options: opts }
+        mergeProvider(providerID, patch)
+      }
+
+      // If this is github-copilot plugin, also register for github-copilot-enterprise if auth exists
+      if (providerID === ProviderID.githubCopilot) {
+        const enterpriseProviderID = ProviderID.githubCopilotEnterprise
+        if (!disabled.has(enterpriseProviderID)) {
+          const enterpriseAuth = await Auth.get(enterpriseProviderID)
+          if (enterpriseAuth) {
+            const enterpriseOptions = await plugin.auth.loader(
+              () => Auth.get(enterpriseProviderID) as any,
+              database[enterpriseProviderID],
+            )
+            const opts = enterpriseOptions ?? {}
+            const patch: Partial<Info> = providers[enterpriseProviderID]
+              ? { options: opts }
+              : { source: "custom", options: opts }
+            mergeProvider(enterpriseProviderID, patch)
+          }
+        }
+      }
+    }
+
+    for (const [id, fn] of Object.entries(CUSTOM_LOADERS)) {
+      const providerID = ProviderID.make(id)
+      if (disabled.has(providerID)) continue
+      const data = database[providerID]
+      if (!data) {
+        log.error("Provider does not exist in model list " + providerID)
+        continue
+      }
+      const result = await fn(data)
+      if (result && (result.autoload || providers[providerID])) {
+        if (result.getModel) modelLoaders[providerID] = result.getModel
+        if (result.vars) varsLoaders[providerID] = result.vars
+        const opts = result.options ?? {}
+        const patch: Partial<Info> = providers[providerID] ? { options: opts } : { source: "custom", options: opts }
+        mergeProvider(providerID, patch)
+      }
+    }
+
+    // load config
+    for (const [id, provider] of configProviders) {
+      const providerID = ProviderID.make(id)
+      const partial: Partial<Info> = { source: "config" }
+      if (provider.env) partial.env = provider.env
+      if (provider.name) partial.name = provider.name
+      if (provider.options) partial.options = provider.options
+      mergeProvider(providerID, partial)
+    }
+
+    for (const [id, provider] of Object.entries(providers)) {
+      const providerID = ProviderID.make(id)
+      if (!isProviderAllowed(providerID)) {
+        delete providers[providerID]
+        continue
+      }
+
+      const configProvider = config.provider?.[providerID]
+
+      for (const [modelID, model] of Object.entries(provider.models)) {
+        model.api.id = model.api.id ?? model.id ?? modelID
+        if (
+          modelID === "gpt-5-chat-latest" ||
+          (providerID === ProviderID.openrouter && modelID === "openai/gpt-5-chat")
+        )
+          delete provider.models[modelID]
+        if (model.status === "alpha" && !Flag.OPENCODE_ENABLE_EXPERIMENTAL_MODELS) delete provider.models[modelID]
+        if (model.status === "deprecated") delete provider.models[modelID]
+        if (
+          (configProvider?.blacklist && configProvider.blacklist.includes(modelID)) ||
+          (configProvider?.whitelist && !configProvider.whitelist.includes(modelID))
+        )
+          delete provider.models[modelID]
+
+        model.variants = mapValues(ProviderTransform.variants(model), (v) => v)
+
+        // Filter out disabled variants from config
+        const configVariants = configProvider?.models?.[modelID]?.variants
+        if (configVariants && model.variants) {
+          const merged = mergeDeep(model.variants, configVariants)
+          model.variants = mapValues(
+            pickBy(merged, (v) => !v.disabled),
+            (v) => omit(v, ["disabled"]),
+          )
+        }
+      }
+
+      if (Object.keys(provider.models).length === 0) {
+        delete providers[providerID]
+        continue
+      }
+
+      log.info("found", { providerID })
+    }
 
     return {
       models: languages,
-      providers: filteredProviders,
+      providers,
       sdk,
       modelLoaders,
+      varsLoaders,
     }
   })
 
@@ -1122,7 +1148,30 @@ export namespace Provider {
         options["includeUsage"] = true
       }
 
-      const baseURL = loadBaseURL(model, options)
+      const baseURL = iife(() => {
+        let url =
+          typeof options["baseURL"] === "string" && options["baseURL"] !== "" ? options["baseURL"] : model.api.url
+        if (!url) return
+
+        // some models/providers have variable urls, ex: "https://${AZURE_RESOURCE_NAME}.services.ai.azure.com/anthropic/v1"
+        // We track this in models.dev, and then when we are resolving the baseURL
+        // we need to string replace that literal: "${AZURE_RESOURCE_NAME}"
+        const loader = s.varsLoaders[model.providerID]
+        if (loader) {
+          const vars = loader(options)
+          for (const [key, value] of Object.entries(vars)) {
+            const field = "${" + key + "}"
+            url = url.replaceAll(field, value)
+          }
+        }
+
+        url = url.replace(/\$\{([^}]+)\}/g, (item, key) => {
+          const val = Env.get(String(key))
+          return val ?? item
+        })
+        return url
+      })
+
       if (baseURL !== undefined) options["baseURL"] = baseURL
       if (options["apiKey"] === undefined && provider.key) options["apiKey"] = provider.key
       if (model.headers)
@@ -1131,62 +1180,55 @@ export namespace Provider {
           ...model.headers,
         }
 
-      const key = Bun.hash.xxHash32(JSON.stringify({ providerID: model.providerID, npm: model.api.npm, options }))
+      const key = Hash.fast(JSON.stringify({ providerID: model.providerID, npm: model.api.npm, options }))
       const existing = s.sdk.get(key)
       if (existing) return existing
 
       const customFetch = options["fetch"]
+      const chunkTimeout = options["chunkTimeout"] || DEFAULT_CHUNK_TIMEOUT
+      delete options["chunkTimeout"]
 
       options["fetch"] = async (input: any, init?: BunFetchRequestInit) => {
         // Preserve custom fetch if it exists, wrap it with timeout logic
         const fetchFn = customFetch ?? fetch
         const opts = init ?? {}
+        const chunkAbortCtl = typeof chunkTimeout === "number" && chunkTimeout > 0 ? new AbortController() : undefined
+        const signals: AbortSignal[] = []
 
-        if (options["timeout"] !== undefined && options["timeout"] !== null) {
-          const signals: AbortSignal[] = []
-          if (opts.signal) signals.push(opts.signal)
-          if (options["timeout"] !== false) signals.push(AbortSignal.timeout(options["timeout"]))
+        if (opts.signal) signals.push(opts.signal)
+        if (chunkAbortCtl) signals.push(chunkAbortCtl.signal)
+        if (options["timeout"] !== undefined && options["timeout"] !== null && options["timeout"] !== false)
+          signals.push(AbortSignal.timeout(options["timeout"]))
 
-          const combined = signals.length > 1 ? AbortSignal.any(signals) : signals[0]
-
-          opts.signal = combined
-        }
+        const combined = signals.length === 0 ? null : signals.length === 1 ? signals[0] : AbortSignal.any(signals)
+        if (combined) opts.signal = combined
 
         // Strip openai itemId metadata following what codex does
         // Codex uses #[serde(skip_serializing)] on id fields for all item types:
         // Message, Reasoning, FunctionCall, LocalShellCall, CustomToolCall, WebSearchCall
         // IDs are only re-attached for Azure with store=true
-        const stripIds = options["stripIds"] !== false
-        if (
-          stripIds &&
-          model.api.npm === "@ai-sdk/openai" &&
-          opts.body &&
-          opts.method === "POST" &&
-          (opts.body as string).includes('"id"')
-        ) {
+        if (model.api.npm === "@ai-sdk/openai" && opts.body && opts.method === "POST") {
           const body = JSON.parse(opts.body as string)
-          const isAzure = model.providerID.includes("azure") || model.api.npm.includes("azure")
+          const isAzure = model.providerID.includes("azure")
           const keepIds = isAzure && body.store === true
           if (!keepIds && Array.isArray(body.input)) {
-            const input = body.input.map((item: any) => {
-              if (item && typeof item === "object" && "id" in item) {
-                const { id, ...rest } = item
-                return rest
+            for (const item of body.input) {
+              if ("id" in item) {
+                delete item.id
               }
-              return item
-            })
-            const changed = input.some((item: any, index: number) => item !== body.input[index])
-            if (changed) {
-              opts.body = JSON.stringify({ ...body, input })
             }
+            opts.body = JSON.stringify(body)
           }
         }
 
-        return fetchFn(input, {
+        const res = await fetchFn(input, {
           ...opts,
           // @ts-ignore see here: https://github.com/oven-sh/bun/issues/16682
           timeout: false,
         })
+
+        if (!chunkAbortCtl) return res
+        return wrapSSE(res, chunkTimeout, chunkAbortCtl)
       }
 
       const bundledFn = BUNDLED_PROVIDERS[model.api.npm]
@@ -1200,15 +1242,15 @@ export namespace Provider {
         return loaded as SDK
       }
 
-      const installedPath = iife(async () => {
-        if (!model.api.npm.startsWith("file://")) {
-          return await BunProc.install(model.api.npm, "latest")
-        }
+      let installedPath: string
+      if (!model.api.npm.startsWith("file://")) {
+        installedPath = await BunProc.install(model.api.npm, "latest")
+      } else {
         log.info("loading local provider", { pkg: model.api.npm })
-        return model.api.npm
-      })
+        installedPath = model.api.npm
+      }
 
-      const mod = await import(await installedPath)
+      const mod = await import(installedPath)
 
       const fn = mod[Object.keys(mod).find((key) => key.startsWith("create"))!]
       const loaded = fn({
@@ -1222,11 +1264,11 @@ export namespace Provider {
     }
   }
 
-  export async function getProvider(providerID: string) {
+  export async function getProvider(providerID: ProviderID) {
     return state().then((s) => s.providers[providerID])
   }
 
-  export async function getModel(providerID: string, modelID: string) {
+  export async function getModel(providerID: ProviderID, modelID: ModelID) {
     const s = await state()
     const provider = s.providers[providerID]
     if (!provider) {
@@ -1255,8 +1297,9 @@ export namespace Provider {
     const sdk = await getSDK(model)
 
     try {
-      const loader = s.modelLoaders[model.providerID]
-      const language = loader ? await loader(sdk, model, provider.options) : sdk.languageModel(model.api.id)
+      const language = s.modelLoaders[model.providerID]
+        ? await s.modelLoaders[model.providerID](sdk, model.api.id, provider.options)
+        : sdk.languageModel(model.api.id)
       s.models.set(key, language)
       return language
     } catch (e) {
@@ -1272,22 +1315,22 @@ export namespace Provider {
     }
   }
 
-  export async function closest(providerID: string, query: string[]) {
+  export async function closest(providerID: ProviderID, query: string[]) {
     const s = await state()
     const provider = s.providers[providerID]
     if (!provider) return undefined
-
-    const match = query
-      .map((item) => {
-        const modelID = Object.keys(provider.models).find((id) => id.includes(item))
-        return modelID ? { providerID, modelID } : undefined
-      })
-      .find(Boolean)
-
-    return match
+    for (const item of query) {
+      for (const modelID of Object.keys(provider.models)) {
+        if (modelID.includes(item))
+          return {
+            providerID,
+            modelID,
+          }
+      }
+    }
   }
 
-  export async function getSmallModel(providerID: string) {
+  export async function getSmallModel(providerID: ProviderID) {
     const cfg = await Config.get()
 
     if (cfg.small_model) {
@@ -1296,21 +1339,8 @@ export namespace Provider {
     }
 
     const provider = await state().then((state) => state.providers[providerID])
-    if (!provider) {
-      // Check if opencode provider is available before using it
-      const opencodeProvider = await state().then((state) => state.providers["opencode"])
-      if (opencodeProvider && opencodeProvider.models["gpt-5-nano"]) {
-        return getModel("opencode", "gpt-5-nano")
-      }
-      return undefined
-    }
-
-    const priority = iife(() => {
-      if (providerID.startsWith("opencode")) return ["gpt-5-nano"]
-      if (providerID.startsWith("github-copilot")) {
-        return ["gpt-5-mini", "claude-haiku-4.5", "claude-haiku-4-5", "3-5-haiku", "3.5-haiku", "gemini-3-flash", "gemini-2.5-flash"]
-      }
-      return [
+    if (provider) {
+      let priority = [
         "claude-haiku-4-5",
         "claude-haiku-4.5",
         "3-5-haiku",
@@ -1319,48 +1349,49 @@ export namespace Provider {
         "gemini-2.5-flash",
         "gpt-5-nano",
       ]
-    })
-    for (const item of priority) {
-      if (providerID === "amazon-bedrock") {
-        const crossRegionPrefixes = ["global.", "us.", "eu."]
-        const candidates = Object.keys(provider.models).filter((m) => m.includes(item))
+      if (providerID.startsWith("opencode")) {
+        priority = ["gpt-5-nano"]
+      }
+      if (providerID.startsWith("github-copilot")) {
+        // prioritize free models for github copilot
+        priority = ["gpt-5-mini", "claude-haiku-4.5", ...priority]
+      }
+      for (const item of priority) {
+        if (providerID === ProviderID.amazonBedrock) {
+          const crossRegionPrefixes = ["global.", "us.", "eu."]
+          const candidates = Object.keys(provider.models).filter((m) => m.includes(item))
 
-        // Model selection priority:
-        // 1. global. prefix (works everywhere)
-        // 2. User's region prefix (us., eu.)
-        // 3. Unprefixed model
-        const globalMatch = candidates.find((m) => m.startsWith("global."))
-        if (globalMatch) return getModel(providerID, globalMatch)
+          // Model selection priority:
+          // 1. global. prefix (works everywhere)
+          // 2. User's region prefix (us., eu.)
+          // 3. Unprefixed model
+          const globalMatch = candidates.find((m) => m.startsWith("global."))
+          if (globalMatch) return getModel(providerID, ModelID.make(globalMatch))
 
-        const region = provider.options?.region
-        if (region) {
-          const regionPrefix = region.split("-")[0]
-          if (regionPrefix === "us" || regionPrefix === "eu") {
-            const regionalMatch = candidates.find((m) => m.startsWith(`${regionPrefix}.`))
-            if (regionalMatch) return getModel(providerID, regionalMatch)
+          const region = provider.options?.region
+          if (region) {
+            const regionPrefix = region.split("-")[0]
+            if (regionPrefix === "us" || regionPrefix === "eu") {
+              const regionalMatch = candidates.find((m) => m.startsWith(`${regionPrefix}.`))
+              if (regionalMatch) return getModel(providerID, ModelID.make(regionalMatch))
+            }
+          }
+
+          const unprefixed = candidates.find((m) => !crossRegionPrefixes.some((p) => m.startsWith(p)))
+          if (unprefixed) return getModel(providerID, ModelID.make(unprefixed))
+        } else {
+          for (const model of Object.keys(provider.models)) {
+            if (model.includes(item)) return getModel(providerID, ModelID.make(model))
           }
         }
-
-        const unprefixed = candidates.find((m) => !crossRegionPrefixes.some((p) => m.startsWith(p)))
-        if (unprefixed) return getModel(providerID, unprefixed)
-      } else {
-        for (const model of Object.keys(provider.models)) {
-          if (model.includes(item)) return getModel(providerID, model)
-        }
       }
-    }
-
-    // Check if opencode provider is available before using it
-    const opencodeProvider = await state().then((state) => state.providers["opencode"])
-    if (opencodeProvider && opencodeProvider.models["gpt-5-nano"]) {
-      return getModel("opencode", "gpt-5-nano")
     }
 
     return undefined
   }
 
   const priority = ["gpt-5", "claude-sonnet-4", "big-pickle", "gemini-3-pro"]
-  export function sort(models: Model[]) {
+  export function sort<T extends { id: string }>(models: T[]) {
     return sortBy(
       models,
       [(model) => priority.findIndex((filter) => model.id.includes(filter)), "desc"],
@@ -1374,11 +1405,11 @@ export namespace Provider {
     if (cfg.model) return parseModel(cfg.model)
 
     const providers = await list()
-    const recent = (await Filesystem.readJson<{ recent?: { providerID: string; modelID: string }[] }>(
+    const recent = (await Filesystem.readJson<{ recent?: { providerID: ProviderID; modelID: ModelID }[] }>(
       path.join(Global.Path.state, "model.json"),
     )
       .then((x) => (Array.isArray(x.recent) ? x.recent : []))
-      .catch(() => [])) as { providerID: string; modelID: string }[]
+      .catch(() => [])) as { providerID: ProviderID; modelID: ModelID }[]
     for (const entry of recent) {
       const provider = providers[entry.providerID]
       if (!provider) continue
@@ -1388,7 +1419,7 @@ export namespace Provider {
 
     const provider = Object.values(providers).find((p) => !cfg.provider || Object.keys(cfg.provider).includes(p.id))
     if (!provider) throw new Error("no providers found")
-    const [model] = (Object.values(provider.models) as Model[]).sort(() => Math.random() - 0.5)
+    const [model] = sort(Object.values(provider.models))
     if (!model) throw new Error("no models found")
     return {
       providerID: provider.id,
@@ -1399,16 +1430,16 @@ export namespace Provider {
   export function parseModel(model: string) {
     const [providerID, ...rest] = model.split("/")
     return {
-      providerID: providerID,
-      modelID: rest.join("/"),
+      providerID: ProviderID.make(providerID),
+      modelID: ModelID.make(rest.join("/")),
     }
   }
 
   export const ModelNotFoundError = NamedError.create(
     "ProviderModelNotFoundError",
     z.object({
-      providerID: z.string(),
-      modelID: z.string(),
+      providerID: ProviderID.zod,
+      modelID: ModelID.zod,
       suggestions: z.array(z.string()).optional(),
     }),
   )
@@ -1416,22 +1447,7 @@ export namespace Provider {
   export const InitError = NamedError.create(
     "ProviderInitError",
     z.object({
-      providerID: z.string(),
+      providerID: ProviderID.zod,
     }),
   )
-
-  export function resolveModelBaseURL(model: Model, options: Record<string, any>): string {
-    const template = model.api?.url ?? ""
-    if (!template) return ""
-    const matches = [...template.matchAll(/{{([^}]+)}}/g)]
-    if (matches.length === 0) return template
-    return matches.reduce((url, match) => {
-      const keys = match[1].split("|").map((item) => item.trim())
-      const resolved = keys
-        .map((key) => Env.get(key) ?? options[key])
-        .find((value) => value !== undefined && value !== null && value !== "")
-      if (resolved === undefined || resolved === null || resolved === "") return url
-      return url.replaceAll(match[0], String(resolved))
-    }, template)
-  }
 }

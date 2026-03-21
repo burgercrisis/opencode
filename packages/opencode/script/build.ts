@@ -1,10 +1,10 @@
 #!/usr/bin/env bun
 
-import solidPlugin from "../node_modules/@opentui/solid/scripts/solid-plugin"
-import path from "path"
-import fs from "fs"
 import { $ } from "bun"
+import fs from "fs"
+import path from "path"
 import { fileURLToPath } from "url"
+import solidPlugin from "@opentui/solid/bun-plugin"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -12,8 +12,9 @@ const dir = path.resolve(__dirname, "..")
 
 process.chdir(dir)
 
-import pkg from "../package.json"
 import { Script } from "@opencode-ai/script"
+import pkg from "../package.json"
+
 const modelsUrl = process.env.OPENCODE_MODELS_URL || "https://models.dev"
 // Fetch and generate models.dev snapshot
 const modelsData = process.env.MODELS_DEV_API_JSON
@@ -26,7 +27,11 @@ await Bun.write(
 console.log("Generated models-snapshot.ts")
 
 // Load migrations from migration directories
-const migrationDirs = (await fs.promises.readdir(path.join(dir, "migration"), { withFileTypes: true }))
+const migrationDirs = (
+  await fs.promises.readdir(path.join(dir, "migration"), {
+    withFileTypes: true,
+  })
+)
   .filter((entry) => entry.isDirectory() && /^\d{4}\d{2}\d{2}\d{2}\d{2}\d{2}/.test(entry.name))
   .map((entry) => entry.name)
   .sort()
@@ -46,27 +51,14 @@ const migrations = await Promise.all(
           Number(match[6]),
         )
       : 0
-    return { sql, timestamp }
+    return { sql, timestamp, name }
   }),
 )
 console.log(`Loaded ${migrations.length} migrations`)
 
 const singleFlag = process.argv.includes("--single")
 const baselineFlag = process.argv.includes("--baseline")
-// Configuration for Windows baseline build behavior
-// Can be overridden via environment variable: OPENCODE_SKIP_WINDOWS_BASELINE=true
-const SKIP_WINDOWS_BASELINE = process.env.OPENCODE_SKIP_WINDOWS_BASELINE !== "false"
-
 const skipInstall = process.argv.includes("--skip-install")
-
-export type BuildTarget = {
-  os: string
-  arch: "arm64" | "x64"
-  abi?: "musl"
-  avx2?: false
-}
-
-export { allTargets }
 
 const allTargets: {
   os: string
@@ -74,91 +66,82 @@ const allTargets: {
   abi?: "musl"
   avx2?: false
 }[] = [
-    {
-      os: "linux",
-      arch: "arm64",
-    },
-    {
-      os: "linux",
-      arch: "x64",
-    },
-    {
-      os: "linux",
-      arch: "x64",
-      avx2: false,
-    },
-    {
-      os: "linux",
-      arch: "arm64",
-      abi: "musl",
-    },
-    {
-      os: "linux",
-      arch: "x64",
-      abi: "musl",
-    },
-    {
-      os: "linux",
-      arch: "x64",
-      abi: "musl",
-      avx2: false,
-    },
-    {
-      os: "darwin",
-      arch: "arm64",
-    },
-    {
-      os: "darwin",
-      arch: "x64",
-    },
-    {
-      os: "darwin",
-      arch: "x64",
-      avx2: false,
-    },
-    {
-      os: "win32",
-      arch: "x64",
-    },
-    {
-      os: "win32",
-      arch: "x64",
-      avx2: false,
-    },
-  ]
+  {
+    os: "linux",
+    arch: "arm64",
+  },
+  {
+    os: "linux",
+    arch: "x64",
+  },
+  {
+    os: "linux",
+    arch: "x64",
+    avx2: false,
+  },
+  {
+    os: "linux",
+    arch: "arm64",
+    abi: "musl",
+  },
+  {
+    os: "linux",
+    arch: "x64",
+    abi: "musl",
+  },
+  {
+    os: "linux",
+    arch: "x64",
+    abi: "musl",
+    avx2: false,
+  },
+  {
+    os: "darwin",
+    arch: "arm64",
+  },
+  {
+    os: "darwin",
+    arch: "x64",
+  },
+  {
+    os: "darwin",
+    arch: "x64",
+    avx2: false,
+  },
+  {
+    os: "win32",
+    arch: "arm64",
+  },
+  {
+    os: "win32",
+    arch: "x64",
+  },
+  {
+    os: "win32",
+    arch: "x64",
+    avx2: false,
+  },
+]
 
 const targets = singleFlag
   ? allTargets.filter((item) => {
-    if (item.os !== process.platform || item.arch !== process.arch) {
-      return false
-    }
-
-    // When building for the current platform, prefer a single native binary by default.
-    // Baseline binaries require additional Bun artifacts and can be flaky to download.
-    // 
-    // Windows-specific limitation: Baseline builds on Windows require additional Bun artifacts
-    // that can be unreliable to download due to network issues, platform-specific
-    // dependencies, or missing Visual Studio Build Tools. This can cause build failures
-    // or long download times that block the development workflow.
-    // 
-    // This behavior can be overridden by setting OPENCODE_SKIP_WINDOWS_BASELINE=false
-    // environment variable if you have a reliable network connection and required dependencies.
-    if (item.avx2 === false) {
-      // Skip baseline builds on Windows due to Bun download issues
-      if (process.platform === "win32" && SKIP_WINDOWS_BASELINE) {
-        console.log(`Skipping baseline build for Windows (target: ${item.os}-${item.arch}). Set OPENCODE_SKIP_WINDOWS_BASELINE=false to override.`)
+      if (item.os !== process.platform || item.arch !== process.arch) {
         return false
       }
-      return baselineFlag
-    }
 
-    // also skip abi-specific builds for the same reason
-    if (item.abi !== undefined) {
-      return false
-    }
+      // When building for the current platform, prefer a single native binary by default.
+      // Baseline binaries require additional Bun artifacts and can be flaky to download.
+      if (item.avx2 === false) {
+        return baselineFlag
+      }
 
-    return true
-  })
+      // also skip abi-specific builds for the same reason
+      if (item.abi !== undefined) {
+        return false
+      }
+
+      return true
+    })
   : allTargets
 
 await $`rm -rf dist`
@@ -182,7 +165,9 @@ for (const item of targets) {
   console.log(`building ${name}`)
   await $`mkdir -p dist/${name}/bin`
 
-  const parserWorker = fs.realpathSync(path.resolve(dir, "./node_modules/@opentui/core/parser.worker.js"))
+  const localPath = path.resolve(dir, "node_modules/@opentui/core/parser.worker.js")
+  const rootPath = path.resolve(dir, "../../node_modules/@opentui/core/parser.worker.js")
+  const parserWorker = fs.realpathSync(fs.existsSync(localPath) ? localPath : rootPath)
   const workerPath = "./src/cli/cmd/tui/worker.ts"
 
   // Use platform-specific bunfs root path based on target OS
@@ -190,14 +175,12 @@ for (const item of targets) {
   const workerRelativePath = path.relative(dir, parserWorker).replaceAll("\\", "/")
 
   await Bun.build({
-    conditions: ["browser", "import", "default"],
+    conditions: ["browser"],
     tsconfig: "./tsconfig.json",
     plugins: [solidPlugin],
-    sourcemap: "external",
     compile: {
       autoloadBunfig: false,
       autoloadDotenv: false,
-      //@ts-ignore (bun types aren't up to date)
       autoloadTsconfig: true,
       autoloadPackageJson: true,
       target: name.replace(pkg.name, "bun") as any,
@@ -240,7 +223,7 @@ if (Script.release) {
       await $`zip -r ../../${key}.zip *`.cwd(`dist/${key}/bin`)
     }
   }
-  await $`gh release upload v${Script.version} ./dist/*.zip ./dist/*.tar.gz --clobber`
+  await $`gh release upload v${Script.version} ./dist/*.zip ./dist/*.tar.gz --clobber --repo ${process.env.GH_REPO}`
 }
 
 export { binaries }

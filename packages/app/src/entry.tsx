@@ -1,9 +1,8 @@
 // @refresh reload
 
-import { iife } from "@opencode-ai/util/iife"
 import { render } from "solid-js/web"
-import { AppProviders } from "@/app"
-import { Platform, PlatformProvider } from "@/context/platform"
+import { AppBaseProviders, AppInterface } from "@/app"
+import { type Platform, PlatformProvider } from "@/context/platform"
 import { dict as en } from "@/i18n/en"
 import { dict as zh } from "@/i18n/zh"
 import { handleNotificationClick } from "@/utils/notification-click"
@@ -98,6 +97,19 @@ if (!(root instanceof HTMLElement) && import.meta.env.DEV) {
   throw new Error(getRootNotFoundError())
 }
 
+const getCurrentUrl = () => {
+  if (location.hostname.includes("opencode.ai")) return "http://localhost:4096"
+  if (import.meta.env.DEV)
+    return `http://${import.meta.env.VITE_OPENCODE_SERVER_HOST ?? "localhost"}:${import.meta.env.VITE_OPENCODE_SERVER_PORT ?? "4096"}`
+  return location.origin
+}
+
+const getDefaultUrl = () => {
+  const lsDefault = readDefaultServerUrl()
+  if (lsDefault) return lsDefault
+  return getCurrentUrl()
+}
+
 const platform: Platform = {
   platform: "web",
   version: pkg.version,
@@ -106,27 +118,25 @@ const platform: Platform = {
   forward,
   restart,
   notify,
-  getDefaultServerUrl: async () => readDefaultServerUrl(),
-  setDefaultServerUrl: writeDefaultServerUrl,
+  getDefaultServer: async () => {
+    const stored = readDefaultServerUrl()
+    return stored ? ServerConnection.Key.make(stored) : null
+  },
+  setDefaultServer: writeDefaultServerUrl,
 }
 
-// BEST OF BOTH WORLDS: Use AppProviders from HEAD with defaultUrl logic from incoming
-const defaultUrl = iife(() => {
-  const lsDefault = readDefaultServerUrl()
-  if (lsDefault) return lsDefault
-  if (location.hostname.includes("opencode.ai")) return "http://localhost:4096"
-  if (import.meta.env.DEV)
-    return `http://${import.meta.env.VITE_OPENCODE_SERVER_HOST ?? "localhost"}:${import.meta.env.VITE_OPENCODE_SERVER_PORT ?? "4096"}`
-  return location.origin
-})
-
 if (root instanceof HTMLElement) {
-  const server: ServerConnection.Http = { type: "http", http: { url: defaultUrl } }
-  const serverKey = ServerConnection.key(server)
+  const server: ServerConnection.Http = { type: "http", http: { url: getCurrentUrl() } }
   render(
     () => (
       <PlatformProvider value={platform}>
-        <AppProviders defaultServer={serverKey} servers={[server]} />
+        <AppBaseProviders>
+          <AppInterface
+            defaultServer={ServerConnection.Key.make(getDefaultUrl())}
+            servers={[server]}
+            disableHealthCheck
+          />
+        </AppBaseProviders>
       </PlatformProvider>
     ),
     root,

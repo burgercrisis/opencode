@@ -4,26 +4,20 @@
   "compilerOptions": {
     "jsx": "preserve",
     "jsxImportSource": "@opentui/solid",
-    "lib": [
-      "ESNext",
-      "DOM",
-      "DOM.Iterable"
-    ],
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
     "types": [],
-    "noUncheckedIndexedAccess": true,
-    "customConditions": [
-      "browser"
-    ],
+    "noUncheckedIndexedAccess": false,
+    "customConditions": ["browser"],
     "paths": {
-      "@opencode-ai/*": [
-        "../shared/*"
-      ],
-      "@/*": [
-        "./src/*"
-      ],
-      "@tui/*": [
-        "./src/cli/cmd/tui/*"
-      ]
-    }
+      "@/*": ["./src/*"],
+      "@tui/*": ["./src/cli/cmd/tui/*"]
+    },
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        "transform": "@effect/language-service/transform",
+        "namespaceImportPackages": ["effect", "@effect/*"]
+      }
+    ]
   }
 }

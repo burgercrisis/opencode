@@ -1,3 +1,4 @@
+import { Effect } from "effect"
 import { Log } from "@/util/log"
 import { Context } from "../util/context"
 import { Project } from "./project"
@@ -5,6 +6,7 @@ import { State } from "./state"
 import { iife } from "@/util/iife"
 import { GlobalBus } from "@/bus/global"
 import { Filesystem } from "@/util/filesystem"
+import { InstanceState } from "@/util/instance-state"
 
 interface Context {
   directory: string
@@ -18,28 +20,62 @@ const disposal = {
   all: undefined as Promise<void> | undefined,
 }
 
-export const Instance = {
-  async provide<R>(input: { directory: string; init?: () => Promise<any>; fn: () => R }): Promise<R> {
-    const existing =
-      cache.get(input.directory) ??
-      iife(() => {
-        Log.Default.info("creating instance", { directory: input.directory })
-        const promise = iife(async () => {
-          const { project, sandbox } = await Project.fromDirectory(input.directory)
-          const ctx = {
+function emit(directory: string) {
+  GlobalBus.emit("event", {
+    directory,
+    payload: {
+      type: "server.instance.disposed",
+      properties: {
+        directory,
+      },
+    },
+  })
+}
+
+function boot(input: { directory: string; init?: () => Promise<any>; project?: Project.Info; worktree?: string }) {
+  return iife(async () => {
+    const ctx =
+      input.project && input.worktree
+        ? {
+            directory: input.directory,
+            worktree: input.worktree,
+            project: input.project,
+          }
+        : await Project.fromDirectory(input.directory).then(({ project, sandbox }) => ({
             directory: input.directory,
             worktree: sandbox,
             project,
-          }
-          await context.provide(ctx, async () => {
-            await input.init?.()
-          })
-          return ctx
-        })
-        cache.set(input.directory, promise)
-        return promise
-      })
+          }))
+    await context.provide(ctx, async () => {
+      await input.init?.()
+    })
+    return ctx
+  })
+}
 
+function track(directory: string, next: Promise<Context>) {
+  const task = next.catch((error) => {
+    if (cache.get(directory) === task) cache.delete(directory)
+    throw error
+  })
+  cache.set(directory, task)
+  return task
+}
+
+export const Instance = {
+  async provide<R>(input: { directory: string; init?: () => Promise<any>; fn: () => R }): Promise<R> {
+    const directory = Filesystem.resolve(input.directory)
+    let existing = cache.get(directory)
+    if (!existing) {
+      Log.Default.info("creating instance", { directory })
+      existing = track(
+        directory,
+        boot({
+          directory,
+          init: input.init,
+        }),
+      )
+    }
     const ctx = await existing
     return context.provide(ctx, async () => {
       return input.fn()
@@ -69,19 +105,20 @@ export const Instance = {
   state<S>(init: () => S, dispose?: (state: Awaited<S>) => Promise<void>): () => S {
     return State.create(() => Instance.directory, init, dispose)
   },
+  async reload(input: { directory: string; init?: () => Promise<any>; project?: Project.Info; worktree?: string }) {
+    const directory = Filesystem.resolve(input.directory)
+    Log.Default.info("reloading instance", { directory })
+    await Promise.all([State.dispose(directory), Effect.runPromise(InstanceState.dispose(directory))])
+    cache.delete(directory)
+    const next = track(directory, boot({ ...input, directory }))
+    emit(directory)
+    return await next
+  },
   async dispose() {
     Log.Default.info("disposing instance", { directory: Instance.directory })
-    await State.dispose(Instance.directory)
+    await Promise.all([State.dispose(Instance.directory), Effect.runPromise(InstanceState.dispose(Instance.directory))])
     cache.delete(Instance.directory)
-    GlobalBus.emit("event", {
-      directory: Instance.directory,
-      payload: {
-        type: "server.instance.disposed",
-        properties: {
-          directory: Instance.directory,
-        },
-      },
-    })
+    emit(Instance.directory)
   },
   async disposeAll() {
     if (disposal.all) return disposal.all
@@ -113,37 +150,5 @@ export const Instance = {
     })
 
     return disposal.all
-  },
-  /**
-   * Internal test helper to clear all instances and caches.
-   * @internal
-   */
-  async resetForTest() {
-    // Inline disposeAll logic to avoid method reference issues
-    Log.Default.info("disposing all instances")
-    const entries = [...cache.entries()]
-    for (const [key, value] of entries) {
-      if (cache.get(key) !== value) continue
-
-      const ctx = await value.catch((error) => {
-        Log.Default.warn("instance dispose failed", { key, error })
-        return undefined
-      })
-
-      if (!ctx) {
-        if (cache.get(key) === value) cache.delete(key)
-        continue
-      }
-
-      if (cache.get(key) !== value) continue
-
-      await context.provide(ctx, async () => {
-        await Instance.dispose()
-      })
-    }
-    
-    cache.clear()
-    disposal.all = undefined
-    State.resetForTest()
   },
 }

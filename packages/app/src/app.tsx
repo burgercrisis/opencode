@@ -1,16 +1,30 @@
 import "@/index.css"
-import { Code } from "@opencode-ai/ui/code"
 import { I18nProvider } from "@opencode-ai/ui/context"
-import { CodeComponentProvider } from "@opencode-ai/ui/context/code"
 import { DialogProvider } from "@opencode-ai/ui/context/dialog"
-import { DiffComponentProvider } from "@opencode-ai/ui/context/diff"
+import { FileComponentProvider } from "@opencode-ai/ui/context/file"
 import { MarkedProvider } from "@opencode-ai/ui/context/marked"
-import { Diff } from "@opencode-ai/ui/diff"
+import { File } from "@opencode-ai/ui/file"
 import { Font } from "@opencode-ai/ui/font"
+import { Splash } from "@opencode-ai/ui/logo"
 import { ThemeProvider } from "@opencode-ai/ui/theme"
 import { MetaProvider } from "@solidjs/meta"
-import { Navigate, Route, Router } from "@solidjs/router"
-import { ErrorBoundary, type JSX, lazy, type ParentProps, Show, Suspense } from "solid-js"
+import { type BaseRouterProps, Navigate, Route, Router } from "@solidjs/router"
+import { type Duration, Effect } from "effect"
+import {
+  type Component,
+  createMemo,
+  createResource,
+  createSignal,
+  ErrorBoundary,
+  For,
+  type JSX,
+  lazy,
+  onCleanup,
+  type ParentProps,
+  Show,
+  Suspense,
+} from "solid-js"
+import { Dynamic } from "solid-js/web"
 import { CommandProvider } from "@/context/command"
 import { CommentsProvider } from "@/context/comments"
 import { FileProvider } from "@/context/file"
@@ -24,13 +38,13 @@ import { NotificationProvider } from "@/context/notification"
 import { PermissionProvider } from "@/context/permission"
 import { usePlatform } from "@/context/platform"
 import { PromptProvider } from "@/context/prompt"
-import { type ServerConnection, ServerProvider, useServer } from "@/context/server"
+import { ServerConnection, ServerProvider, serverName, useServer } from "@/context/server"
 import { SettingsProvider } from "@/context/settings"
 import { TerminalProvider } from "@/context/terminal"
-import { Logo } from "@opencode-ai/ui/logo"
 import DirectoryLayout from "@/pages/directory-layout"
 import Layout from "@/pages/layout"
 import { ErrorPage } from "./pages/error"
+import { useCheckServerHealth } from "./utils/server-health"
 
 const Home = lazy(() => import("@/pages/home"))
 const Session = lazy(() => import("@/pages/session"))
@@ -54,7 +68,7 @@ const SessionIndexRoute = () => <Navigate href="session" />
 
 function UiI18nBridge(props: ParentProps) {
   const language = useLanguage()
-  return <I18nProvider value={{ locale: language.locale, t: language.t }}>{props.children}</I18nProvider>
+  return <I18nProvider value={{ locale: language.intl, t: language.t }}>{props.children}</I18nProvider>
 }
 
 declare global {
@@ -64,6 +78,9 @@ declare global {
       deepLinks?: string[]
       wsl?: boolean
     }
+    api?: {
+      setTitlebar?: (theme: { mode: "light" | "dark" }) => Promise<void>
+    }
   }
 }
 
@@ -72,21 +89,6 @@ function MarkedProviderWithNativeParser(props: ParentProps) {
   return <MarkedProvider nativeParser={platform.parseMarkdown}>{props.children}</MarkedProvider>
 }
 
-// BEST OF BOTH WORLDS: Keep AppProviders that wraps both base providers and interface
-export function AppProviders(props: ParentProps<{
-  defaultServer: ServerConnection.Key
-  servers?: Array<ServerConnection.Any>
-}>) {
-  return (
-    <AppBaseProviders>
-      <AppInterface defaultServer={props.defaultServer} servers={props.servers}>
-        {props.children}
-      </AppInterface>
-    </AppBaseProviders>
-  )
-}
-
-// BEST OF BOTH WORLDS: Keep AppShellProviders from incoming for better organization
 function AppShellProviders(props: ParentProps) {
   return (
     <SettingsProvider>
@@ -107,7 +109,6 @@ function AppShellProviders(props: ParentProps) {
   )
 }
 
-// BEST OF BOTH WORLDS: Keep SessionProviders from incoming for session-specific context
 function SessionProviders(props: ParentProps) {
   return (
     <TerminalProvider>
@@ -120,7 +121,6 @@ function SessionProviders(props: ParentProps) {
   )
 }
 
-// BEST OF BOTH WORLDS: Keep RouterRoot from incoming
 function RouterRoot(props: ParentProps<{ appChildren?: JSX.Element }>) {
   return (
     <AppShellProviders>
@@ -134,19 +134,19 @@ export function AppBaseProviders(props: ParentProps) {
   return (
     <MetaProvider>
       <Font />
-      <ThemeProvider>
+      <ThemeProvider
+        onThemeApplied={(_, mode) => {
+          void window.api?.setTitlebar?.({ mode })
+        }}
+      >
         <LanguageProvider>
           <UiI18nBridge>
             <ErrorBoundary fallback={(error) => <ErrorPage error={error} />}>
-              <SettingsProvider>
-                <DialogProvider>
-                  <MarkedProviderWithNativeParser>
-                    <DiffComponentProvider component={Diff}>
-                      <CodeComponentProvider component={Code}>{props.children}</CodeComponentProvider>
-                    </DiffComponentProvider>
-                  </MarkedProviderWithNativeParser>
-                </DialogProvider>
-              </SettingsProvider>
+              <DialogProvider>
+                <MarkedProviderWithNativeParser>
+                  <FileComponentProvider component={File}>{props.children}</FileComponentProvider>
+                </MarkedProviderWithNativeParser>
+              </DialogProvider>
             </ErrorBoundary>
           </UiI18nBridge>
         </LanguageProvider>
@@ -155,12 +155,113 @@ export function AppBaseProviders(props: ParentProps) {
   )
 }
 
-function ServerKey(props: ParentProps) {
+const effectMinDuration =
+  (duration: Duration.Input) =>
+  <A, E, R>(e: Effect.Effect<A, E, R>) =>
+    Effect.all([e, Effect.sleep(duration)], { concurrency: "unbounded" }).pipe(Effect.map((v) => v[0]))
+
+function ConnectionGate(props: ParentProps<{ disableHealthCheck?: boolean }>) {
   const server = useServer()
+  const checkServerHealth = useCheckServerHealth()
+
+  const [checkMode, setCheckMode] = createSignal<"blocking" | "background">("blocking")
+
+  // performs repeated health check with a grace period for
+  // non-http connections, otherwise fails instantly
+  const [startupHealthCheck, healthCheckActions] = createResource(() =>
+    props.disableHealthCheck
+      ? true
+      : Effect.gen(function* () {
+          if (!server.current) return true
+          const { http, type } = server.current
+
+          while (true) {
+            const res = yield* Effect.promise(() => checkServerHealth(http))
+            if (res.healthy) return true
+            if (checkMode() === "background" || type === "http") return false
+          }
+        }).pipe(
+          effectMinDuration(checkMode() === "blocking" ? "1.2 seconds" : 0),
+          Effect.timeoutOrElse({ duration: "10 seconds", onTimeout: () => Effect.succeed(false) }),
+          Effect.ensuring(Effect.sync(() => setCheckMode("background"))),
+          Effect.runPromise,
+        ),
+  )
+
   return (
-    <Show when={server.key} keyed>
-      {props.children}
+    <Show
+      when={checkMode() === "blocking" ? !startupHealthCheck.loading : startupHealthCheck.state !== "pending"}
+      fallback={
+        <div class="h-dvh w-screen flex flex-col items-center justify-center bg-background-base">
+          <Splash class="w-16 h-20 opacity-50 animate-pulse" />
+        </div>
+      }
+    >
+      <Show
+        when={startupHealthCheck()}
+        fallback={
+          <ConnectionError
+            onRetry={() => {
+              if (checkMode() === "background") healthCheckActions.refetch()
+            }}
+            onServerSelected={(key) => {
+              setCheckMode("blocking")
+              server.setActive(key)
+              healthCheckActions.refetch()
+            }}
+          />
+        }
+      >
+        {props.children}
+      </Show>
     </Show>
+  )
+}
+
+function ConnectionError(props: { onRetry?: () => void; onServerSelected?: (key: ServerConnection.Key) => void }) {
+  const language = useLanguage()
+  const server = useServer()
+  const others = () => server.list.filter((s) => ServerConnection.key(s) !== server.key)
+  const name = createMemo(() => server.name || server.key)
+  const serverToken = "\u0000server\u0000"
+  const unreachable = createMemo(() => language.t("app.server.unreachable", { server: serverToken }).split(serverToken))
+
+  const timer = setInterval(() => props.onRetry?.(), 1000)
+  onCleanup(() => clearInterval(timer))
+
+  return (
+    <div class="h-dvh w-screen flex flex-col items-center justify-center bg-background-base gap-6 p-6">
+      <div class="flex flex-col items-center max-w-md text-center">
+        <Splash class="w-12 h-15 mb-4" />
+        <p class="text-14-regular text-text-base">
+          {unreachable()[0]}
+          <span class="text-text-strong font-medium">{name()}</span>
+          {unreachable()[1]}
+        </p>
+        <p class="mt-1 text-12-regular text-text-weak">{language.t("app.server.retrying")}</p>
+      </div>
+      <Show when={others().length > 0}>
+        <div class="flex flex-col gap-2 w-full max-w-sm">
+          <span class="text-12-regular text-text-base text-center">{language.t("app.server.otherServers")}</span>
+          <div class="flex flex-col gap-1 bg-surface-base rounded-lg p-2">
+            <For each={others()}>
+              {(conn) => {
+                const key = ServerConnection.key(conn)
+                return (
+                  <button
+                    type="button"
+                    class="flex items-center gap-3 w-full px-3 py-2 rounded-md hover:bg-surface-raised-base-hover transition-colors text-left"
+                    onClick={() => props.onServerSelected?.(key)}
+                  >
+                    <span class="text-14-regular text-text-strong truncate">{serverName(conn)}</span>
+                  </button>
+                )
+              }}
+            </For>
+          </div>
+        </div>
+      </Show>
+    </div>
   )
 }
 
@@ -168,60 +269,27 @@ export function AppInterface(props: {
   children?: JSX.Element
   defaultServer: ServerConnection.Key
   servers?: Array<ServerConnection.Any>
+  router?: Component<BaseRouterProps>
+  disableHealthCheck?: boolean
 }) {
   return (
     <ServerProvider defaultServer={props.defaultServer} servers={props.servers}>
-      <ServerKey>
+      <ConnectionGate disableHealthCheck={props.disableHealthCheck}>
         <GlobalSDKProvider>
           <GlobalSyncProvider>
-            <Router
-              // BEST OF BOTH WORLDS: Keep inline router root from HEAD for flexibility
-              root={(routerProps) => (
-                <PermissionProvider>
-                  <LayoutProvider>
-                    <NotificationProvider>
-                      <ModelsProvider>
-                        <CommandProvider>
-                          <HighlightsProvider>
-                            <Layout>
-                              {props.children}
-                              {routerProps.children}
-                            </Layout>
-                          </HighlightsProvider>
-                        </CommandProvider>
-                      </ModelsProvider>
-                    </NotificationProvider>
-                  </LayoutProvider>
-                </PermissionProvider>
-              )}
+            <Dynamic
+              component={props.router ?? Router}
+              root={(routerProps) => <RouterRoot appChildren={props.children}>{routerProps.children}</RouterRoot>}
             >
               <Route path="/" component={HomeRoute} />
               <Route path="/:dir" component={DirectoryLayout}>
-                {/* BEST OF BOTH WORLDS: Keep both route approaches */}
-                <Route path="/" component={() => <Navigate href="session" />} />
-                <Route
-                  path="/session/:id?"
-                  component={(p) => (
-                    <Show when={p.params.id ?? "new"}>
-                      <FileProvider>
-                        <TerminalProvider>
-                          <PromptProvider>
-                            <CommentsProvider>
-                              <Suspense fallback={<Loading />}>
-                                <Session />
-                              </Suspense>
-                            </CommentsProvider>
-                          </PromptProvider>
-                        </TerminalProvider>
-                      </FileProvider>
-                    </Show>
-                  )}
-                />
+                <Route path="/" component={SessionIndexRoute} />
+                <Route path="/session/:id?" component={SessionRoute} />
               </Route>
-            </Router>
+            </Dynamic>
           </GlobalSyncProvider>
         </GlobalSDKProvider>
-      </ServerKey>
+      </ConnectionGate>
     </ServerProvider>
   )
 }

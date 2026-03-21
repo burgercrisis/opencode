@@ -1,87 +1,128 @@
-import { describe, expect, it, mock } from "bun:test"
-import { assertExternalDirectory } from "../../src/tool/external-directory"
-import { Filesystem } from "../../src/util/filesystem"
+import { describe, expect, test } from "bun:test"
+import path from "path"
+import type { Tool } from "../../src/tool/tool"
 import { Instance } from "../../src/project/instance"
-import { tmpdir } from "../fixture/fixture"
-import * as path from "path"
+import { assertExternalDirectory } from "../../src/tool/external-directory"
+import type { PermissionNext } from "../../src/permission/next"
+import { SessionID, MessageID } from "../../src/session/schema"
 
-describe("assertExternalDirectory", () => {
-  it("returns undefined if target is missing", async () => {
-    const result = await assertExternalDirectory({} as any)
-    expect(result).toBeUndefined()
-  })
+const baseCtx: Omit<Tool.Context, "ask"> = {
+  sessionID: SessionID.make("ses_test"),
+  messageID: MessageID.make(""),
+  callID: "",
+  agent: "build",
+  abort: AbortSignal.any([]),
+  messages: [],
+  metadata: () => {},
+}
 
-  it("returns undefined if bypass is true", async () => {
-    const result = await assertExternalDirectory({} as any, "/outside", { bypass: true })
-    expect(result).toBeUndefined()
-  })
+describe("tool.assertExternalDirectory", () => {
+  test("no-ops for empty target", async () => {
+    const requests: Array<Omit<PermissionNext.Request, "id" | "sessionID" | "tool">> = []
+    const ctx: Tool.Context = {
+      ...baseCtx,
+      ask: async (req) => {
+        requests.push(req)
+      },
+    }
 
-  it("returns undefined if path is inside project", async () => {
-    await using tmp = await tmpdir({ git: true })
     await Instance.provide({
-      directory: tmp.path,
+      directory: "/tmp",
       fn: async () => {
-        const target = path.join(tmp.path, "file.txt")
-        const result = await assertExternalDirectory({} as any, target)
-        expect(result).toBeUndefined()
+        await assertExternalDirectory(ctx)
       },
     })
+
+    expect(requests.length).toBe(0)
   })
 
-  it("asks for permission if path is outside project (file kind)", async () => {
-    await using tmp = await tmpdir({ git: true })
-    await using outerTmp = await tmpdir()
+  test("no-ops for paths inside Instance.directory", async () => {
+    const requests: Array<Omit<PermissionNext.Request, "id" | "sessionID" | "tool">> = []
+    const ctx: Tool.Context = {
+      ...baseCtx,
+      ask: async (req) => {
+        requests.push(req)
+      },
+    }
 
     await Instance.provide({
-      directory: tmp.path,
+      directory: "/tmp/project",
       fn: async () => {
-        const askSpy = mock().mockResolvedValue(undefined)
-        const ctx = { ask: askSpy } as any
-        const target = path.join(outerTmp.path, "file.txt")
-        const nativeTarget = Filesystem.nativePath(target)
-        const parentDir = Filesystem.dirname(nativeTarget)
-        const glob = Filesystem.join(parentDir, "*")
+        await assertExternalDirectory(ctx, path.join("/tmp/project", "file.txt"))
+      },
+    })
 
+    expect(requests.length).toBe(0)
+  })
+
+  test("asks with a single canonical glob", async () => {
+    const requests: Array<Omit<PermissionNext.Request, "id" | "sessionID" | "tool">> = []
+    const ctx: Tool.Context = {
+      ...baseCtx,
+      ask: async (req) => {
+        requests.push(req)
+      },
+    }
+
+    const directory = "/tmp/project"
+    const target = "/tmp/outside/file.txt"
+    const expected = path.join(path.dirname(target), "*").replaceAll("\\", "/")
+
+    await Instance.provide({
+      directory,
+      fn: async () => {
         await assertExternalDirectory(ctx, target)
-
-        expect(askSpy).toHaveBeenCalledWith({
-          permission: "external_directory",
-          patterns: [glob],
-          always: [glob],
-          metadata: {
-            filepath: nativeTarget,
-            parentDir,
-          }
-        })
       },
     })
+
+    const req = requests.find((r) => r.permission === "external_directory")
+    expect(req).toBeDefined()
+    expect(req!.patterns).toEqual([expected])
+    expect(req!.always).toEqual([expected])
   })
 
-  it("asks for permission if path is outside project (directory kind)", async () => {
-    await using tmp = await tmpdir({ git: true })
-    await using outerTmp = await tmpdir()
+  test("uses target directory when kind=directory", async () => {
+    const requests: Array<Omit<PermissionNext.Request, "id" | "sessionID" | "tool">> = []
+    const ctx: Tool.Context = {
+      ...baseCtx,
+      ask: async (req) => {
+        requests.push(req)
+      },
+    }
+
+    const directory = "/tmp/project"
+    const target = "/tmp/outside"
+    const expected = path.join(target, "*").replaceAll("\\", "/")
 
     await Instance.provide({
-      directory: tmp.path,
+      directory,
       fn: async () => {
-        const askSpy = mock().mockResolvedValue(undefined)
-        const ctx = { ask: askSpy } as any
-        const target = outerTmp.path
-        const nativeTarget = Filesystem.nativePath(target)
-        const glob = Filesystem.join(nativeTarget, "*")
-
         await assertExternalDirectory(ctx, target, { kind: "directory" })
-
-        expect(askSpy).toHaveBeenCalledWith({
-          permission: "external_directory",
-          patterns: [glob],
-          always: [glob],
-          metadata: {
-            filepath: nativeTarget,
-            parentDir: nativeTarget,
-          }
-        })
       },
     })
+
+    const req = requests.find((r) => r.permission === "external_directory")
+    expect(req).toBeDefined()
+    expect(req!.patterns).toEqual([expected])
+    expect(req!.always).toEqual([expected])
+  })
+
+  test("skips prompting when bypass=true", async () => {
+    const requests: Array<Omit<PermissionNext.Request, "id" | "sessionID" | "tool">> = []
+    const ctx: Tool.Context = {
+      ...baseCtx,
+      ask: async (req) => {
+        requests.push(req)
+      },
+    }
+
+    await Instance.provide({
+      directory: "/tmp/project",
+      fn: async () => {
+        await assertExternalDirectory(ctx, "/tmp/outside/file.txt", { bypass: true })
+      },
+    })
+
+    expect(requests.length).toBe(0)
   })
 })

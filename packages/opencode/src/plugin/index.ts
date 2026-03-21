@@ -25,25 +25,33 @@ export namespace Plugin {
     const client = createOpencodeClient({
       baseUrl: "http://localhost:4096",
       directory: Instance.directory,
-      // @ts-ignore - fetch type incompatibility
-      fetch: async (...args) => Server.App().fetch(...args),
+      headers: Flag.OPENCODE_SERVER_PASSWORD
+        ? {
+            Authorization: `Basic ${Buffer.from(`${Flag.OPENCODE_SERVER_USERNAME ?? "opencode"}:${Flag.OPENCODE_SERVER_PASSWORD}`).toString("base64")}`,
+          }
+        : undefined,
+      fetch: async (...args) => Server.Default().fetch(...args),
     })
     const config = await Config.get()
+    const hooks: Hooks[] = []
     const input: PluginInput = {
       client,
       project: Instance.project,
       worktree: Instance.worktree,
       directory: Instance.directory,
-      serverUrl: Server.url(),
+      get serverUrl(): URL {
+        return Server.url ?? new URL("http://localhost:4096")
+      },
       $: Bun.$,
     }
 
-    const internalHooks = await Promise.all(
-      INTERNAL_PLUGINS.map(async (plugin) => {
-        log.info("loading internal plugin", { name: plugin.name })
-        return await plugin(input)
-      }),
-    )
+    for (const plugin of INTERNAL_PLUGINS) {
+      log.info("loading internal plugin", { name: plugin.name })
+      const init = await plugin(input).catch((err) => {
+        log.error("failed to load internal plugin", { name: plugin.name, error: err })
+      })
+      if (init) hooks.push(init)
+    }
 
     let plugins = config.plugin ?? []
     if (plugins.length) await Config.waitForDependencies()
@@ -51,68 +59,52 @@ export namespace Plugin {
       plugins = [...BUILTIN, ...plugins]
     }
 
-    const externalHooks = await plugins.reduce(async (accPromise, rawPlugin) => {
-      const acc = await accPromise
-
+    for (let plugin of plugins) {
       // ignore old codex plugin since it is supported first party now
-      const isDeprecated =
-        rawPlugin.includes("opencode-openai-codex-auth") ||
-        rawPlugin.includes("opencode-copilot-auth")
-      if (isDeprecated) return acc
-
-      log.info("loading plugin", { path: rawPlugin })
-
-      const plugin = await (async () => {
-        if (rawPlugin.startsWith("file://")) return rawPlugin
-
-        const lastAtIndex = rawPlugin.lastIndexOf("@")
-        const pkg = lastAtIndex > 0 ? rawPlugin.substring(0, lastAtIndex) : rawPlugin
-        const version = lastAtIndex > 0 ? rawPlugin.substring(lastAtIndex + 1) : "latest"
-        const builtin = BUILTIN.some((x) => x.startsWith(pkg + "@"))
-
-        return await BunProc.install(pkg, version).catch((err) => {
-          if (!builtin) throw err
-
-          const message = err instanceof Error ? err.message : String(err)
-          log.error("failed to install builtin plugin", {
-            pkg,
-            version,
-            error: message,
-          })
+      if (plugin.includes("opencode-openai-codex-auth") || plugin.includes("opencode-copilot-auth")) continue
+      log.info("loading plugin", { path: plugin })
+      if (!plugin.startsWith("file://")) {
+        const lastAtIndex = plugin.lastIndexOf("@")
+        const pkg = lastAtIndex > 0 ? plugin.substring(0, lastAtIndex) : plugin
+        const version = lastAtIndex > 0 ? plugin.substring(lastAtIndex + 1) : "latest"
+        plugin = await BunProc.install(pkg, version).catch((err) => {
+          const cause = err instanceof Error ? err.cause : err
+          const detail = cause instanceof Error ? cause.message : String(cause ?? err)
+          log.error("failed to install plugin", { pkg, version, error: detail })
           Bus.publish(Session.Event.Error, {
             error: new NamedError.Unknown({
-              message: `Failed to install built-in plugin ${pkg}@${version}: ${message}`,
+              message: `Failed to install plugin ${pkg}@${version}: ${detail}`,
             }).toObject(),
           })
-
           return ""
         })
-      })()
-
-      return !plugin
-        ? acc
-        : await (async () => {
-            const mod = await import(plugin)
-            // Prevent duplicate initialization when plugins export the same function
-            // as both a named export and default export (e.g., `export const X` and `export default X`).
-            const pluginInits = await Object.entries<PluginInstance>(mod).reduce(
-              async (innerAccPromise, [_name, fn]) => {
-                const innerAcc = await innerAccPromise
-                return innerAcc.seen.has(fn)
-                  ? innerAcc
-                  : {
-                      seen: new Set([...innerAcc.seen, fn]),
-                      hooks: [...innerAcc.hooks, await fn(input)],
-                    }
-              },
-              Promise.resolve({ seen: new Set<PluginInstance>(), hooks: [] as Hooks[] }),
-            )
-            return [...acc, ...pluginInits.hooks]
-          })()
-    }, Promise.resolve([] as Hooks[]))
+        if (!plugin) continue
+      }
+      // Prevent duplicate initialization when plugins export the same function
+      // as both a named export and default export (e.g., `export const X` and `export default X`).
+      // Object.entries(mod) would return both entries pointing to the same function reference.
+      await import(plugin)
+        .then(async (mod) => {
+          const seen = new Set<PluginInstance>()
+          for (const [_name, fn] of Object.entries<PluginInstance>(mod)) {
+            if (seen.has(fn)) continue
+            seen.add(fn)
+            hooks.push(await fn(input))
+          }
+        })
+        .catch((err) => {
+          const message = err instanceof Error ? err.message : String(err)
+          log.error("failed to load plugin", { path: plugin, error: message })
+          Bus.publish(Session.Event.Error, {
+            error: new NamedError.Unknown({
+              message: `Failed to load plugin ${plugin}: ${message}`,
+            }).toObject(),
+          })
+        })
+    }
 
     return {
-      hooks: [...internalHooks, ...externalHooks],
+      hooks,
       input,
     }
   })
@@ -123,15 +115,14 @@ export namespace Plugin {
     Output = Parameters<Required<Hooks>[Name]>[1],
   >(name: Name, input: Input, output: Output): Promise<Output> {
     if (!name) return output
-    const hooks = await state().then((x) => x.hooks)
-
-    await hooks.reduce(async (promise, hook) => {
-      await promise
+    for (const hook of await state().then((x) => x.hooks)) {
       const fn = hook[name]
-      if (!fn) return
-      await (fn as any)(input, output)
-    }, Promise.resolve())
-
+      if (!fn) continue
+      // @ts-expect-error if you feel adventurous, please fix the typing, make sure to bump the try-counter if you
+      // give up.
+      // try-counter: 2
+      await fn(input, output)
+    }
     return output
   }
 
@@ -142,19 +133,17 @@ export namespace Plugin {
   export async function init() {
     const hooks = await state().then((x) => x.hooks)
     const config = await Config.get()
-
-    await hooks.reduce(async (promise, hook) => {
-      await promise
-      await (hook.config as any)?.(config)
-    }, Promise.resolve())
-
+    for (const hook of hooks) {
+      // @ts-expect-error this is because we haven't moved plugin to sdk v2
+      await hook.config?.(config)
+    }
     Bus.subscribeAll(async (input) => {
       const hooks = await state().then((x) => x.hooks)
-      hooks.forEach((hook) => {
+      for (const hook of hooks) {
         hook["event"]?.({
           event: input,
         })
-      })
+      }
     })
   }
 }
