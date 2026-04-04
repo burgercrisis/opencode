@@ -9,22 +9,35 @@ export namespace State {
   const log = Log.create({ service: "state" })
   const recordsByKey = new Map<string, Map<any, Entry>>()
 
+  /**
+   * Internal test helper to clear all state.
+   * @internal
+   */
+  export function resetForTest() {
+    recordsByKey.clear()
+  }
+
   export function create<S>(root: () => string, init: () => S, dispose?: (state: Awaited<S>) => Promise<void>) {
     return () => {
       const key = root()
-      let entries = recordsByKey.get(key)
-      if (!entries) {
-        entries = new Map<string, Entry>()
-        recordsByKey.set(key, entries)
-      }
+      const entries =
+        recordsByKey.get(key) ??
+        (() => {
+          const map = new Map<any, Entry>()
+          recordsByKey.set(key, map)
+          return map
+        })()
       const exists = entries.get(init)
-      if (exists) return exists.state as S
-      const state = init()
-      entries.set(init, {
-        state,
-        dispose,
-      })
-      return state
+      return exists
+        ? (exists.state as S)
+        : (() => {
+            const state = init()
+            entries.set(init, {
+              state,
+              dispose,
+            })
+            return state
+          })()
     }
   }
 
@@ -34,16 +47,13 @@ export namespace State {
 
     log.info("waiting for state disposal to complete", { key })
 
-    let disposalFinished = false
-
-    setTimeout(() => {
-      if (!disposalFinished) {
-        log.warn(
-          "state disposal is taking an unusually long time - if it does not complete in a reasonable time, please report this as a bug",
-          { key },
-        )
-      }
-    }, 10000).unref()
+    const timeout = setTimeout(() => {
+      log.warn(
+        "state disposal is taking an unusually long time - if it does not complete in a reasonable time, please report this as a bug",
+        { key },
+      )
+    }, 10000)
+    timeout.unref()
 
     const tasks: Promise<void>[] = []
     for (const [init, entry] of entries) {
@@ -59,12 +69,11 @@ export namespace State {
 
       tasks.push(task)
     }
-    await Promise.all(tasks)
 
     entries.clear()
     recordsByKey.delete(key)
-
-    disposalFinished = true
+    await Promise.all(tasks)
+    clearTimeout(timeout)
     log.info("state disposal completed", { key })
   }
 }

@@ -368,7 +368,7 @@ export namespace Config {
   }
 
   function rel(item: string, patterns: string[]) {
-    const normalizedItem = item.replaceAll("\\", "/")
+    const normalizedItem = item.replace(/\\/g, "/")
     for (const pattern of patterns) {
       const index = normalizedItem.indexOf(pattern)
       if (index === -1) continue
@@ -1305,6 +1305,7 @@ export namespace Config {
       if (data.plugin && isFile) {
         for (let i = 0; i < data.plugin.length; i++) {
           const plugin = data.plugin[i]
+          if (!plugin) continue
           try {
             data.plugin[i] = import.meta.resolve!(plugin, options.path)
           } catch (e) {

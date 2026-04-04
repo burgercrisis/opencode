@@ -1,72 +1,92 @@
-import { describe, expect, test } from "bun:test"
+import { expect, test, describe } from "bun:test"
 import { Lock } from "../../src/util/lock"
 
-function tick() {
-  return new Promise<void>((r) => queueMicrotask(r))
-}
-
-async function flush(n = 5) {
-  for (let i = 0; i < n; i++) await tick()
-}
-
 describe("util.lock", () => {
-  test("writer exclusivity: blocks reads and other writes while held", async () => {
-    const key = "lock:" + Math.random().toString(36).slice(2)
+  test("Lock should allow multiple concurrent readers", async () => {
+    const key = "test-lock-readers"
+    const r1 = await Lock.read(key)
+    const r2 = await Lock.read(key)
+    
+    expect(r1).toBeDefined()
+    expect(r2).toBeDefined()
+    
+    r1[Symbol.dispose]()
+    r2[Symbol.dispose]()
+  })
 
-    const state = {
-      writer2: false,
-      reader: false,
-      writers: 0,
-    }
-
-    // Acquire writer1
-    using writer1 = await Lock.write(key)
-    state.writers++
-    expect(state.writers).toBe(1)
-
-    // Start writer2 candidate (should block)
-    const writer2Task = (async () => {
-      const w = await Lock.write(key)
-      state.writers++
-      expect(state.writers).toBe(1)
-      state.writer2 = true
-      // Hold for a tick so reader cannot slip in
-      await tick()
-      return w
-    })()
-
-    // Start reader candidate (should block)
-    const readerTask = (async () => {
-      const r = await Lock.read(key)
-      state.reader = true
+  test("Lock should block readers while writer is active", async () => {
+    const key = "test-lock-writer-blocks-readers"
+    const w1 = await Lock.write(key)
+    
+    let readerAcquired = false
+    const readerPromise = Lock.read(key).then(r => {
+      readerAcquired = true
       return r
-    })()
+    })
+    
+    // Wait a bit to ensure the reader is blocked
+    await new Promise(r => setTimeout(r, 10))
+    expect(readerAcquired).toBe(false)
+    
+    w1[Symbol.dispose]()
+    const r1 = await readerPromise
+    expect(readerAcquired).toBe(true)
+    r1[Symbol.dispose]()
+  })
 
-    // Flush microtasks and assert neither acquired
-    await flush()
-    expect(state.writer2).toBe(false)
-    expect(state.reader).toBe(false)
+  test("Lock should block writers while readers are active", async () => {
+    const key = "test-lock-readers-block-writer"
+    const r1 = await Lock.read(key)
+    
+    let writerAcquired = false
+    const writerPromise = Lock.write(key).then(w => {
+      writerAcquired = true
+      return w
+    })
+    
+    await new Promise(r => setTimeout(r, 10))
+    expect(writerAcquired).toBe(false)
+    
+    r1[Symbol.dispose]()
+    const w1 = await writerPromise
+    expect(writerAcquired).toBe(true)
+    w1[Symbol.dispose]()
+  })
 
-    // Release writer1
-    writer1[Symbol.dispose]()
-    state.writers--
+  test("Lock should prioritize writers over readers", async () => {
+    const key = "test-lock-writer-priority"
+    const w_initial = await Lock.write(key)
+    
+    const events: string[] = []
+    
+    const readerPromise = Lock.read(key).then(r => {
+      events.push("reader")
+      r[Symbol.dispose]()
+    })
+    
+    const writerPromise = Lock.write(key).then(w => {
+      events.push("writer")
+      w[Symbol.dispose]()
+    })
+    
+    w_initial[Symbol.dispose]()
+    
+    await Promise.all([readerPromise, writerPromise])
+    
+    // Writer should be processed before reader due to priority in process()
+    expect(events).toEqual(["writer", "reader"])
+  })
 
-    // writer2 should acquire next
-    const writer2 = await writer2Task
-    expect(state.writer2).toBe(true)
-
-    // Reader still blocked while writer2 held
-    await flush()
-    expect(state.reader).toBe(false)
-
-    // Release writer2
-    writer2[Symbol.dispose]()
-    state.writers--
-
-    // Reader should now acquire
-    const reader = await readerTask
-    expect(state.reader).toBe(true)
-
-    reader[Symbol.dispose]()
+  test("Lock should handle multiple waiting writers", async () => {
+    const key = "test-lock-multiple-writers"
+    const w1 = await Lock.write(key)
+    
+    const events: string[] = []
+    const p1 = Lock.write(key).then(w => { events.push("w2"); w[Symbol.dispose]() })
+    const p2 = Lock.write(key).then(w => { events.push("w3"); w[Symbol.dispose]() })
+    
+    w1[Symbol.dispose]()
+    await Promise.all([p1, p2])
+    expect(events).toEqual(["w2", "w3"])
   })
 })

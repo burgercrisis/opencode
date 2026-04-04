@@ -43,6 +43,7 @@ impl CommandWrapper for WinCreationFlags {
 const CLI_INSTALL_DIR: &str = ".opencode/bin";
 const CLI_BINARY_NAME: &str = "opencode";
 const SHELL_ENV_TIMEOUT: Duration = Duration::from_secs(5);
+pub const SIDECAR_NAME: &str = "opencode-cli";
 
 #[derive(serde::Deserialize, Debug)]
 pub struct ServerConfig {
@@ -115,7 +116,7 @@ pub fn get_sidecar_path(app: &tauri::AppHandle) -> std::path::PathBuf {
         .expect("Failed to get current binary")
         .parent()
         .expect("Failed to get parent dir")
-        .join("opencode-cli")
+        .join(SIDECAR_NAME)
 }
 
 fn is_cli_installed() -> bool {
@@ -217,7 +218,11 @@ pub fn sync_cli(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+
 fn get_user_shell() -> String {
+    #[cfg(target_os = "windows")]
+    return "cmd".to_string();
+    #[cfg(not(target_os = "windows"))]
     std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string())
 }
 

@@ -2,8 +2,8 @@ import type { KVNamespaceListOptions, KVNamespaceListResult, KVNamespacePutOptio
 import { Resource as ResourceBase } from "sst"
 import Cloudflare from "cloudflare"
 
-export const waitUntil = async (promise: Promise<any>) => {
-  await promise
+export const waitUntil = async (promise: Promise<any> | any): Promise<any> => {
+  return await promise
 }
 
 export const Resource = new Proxy(
@@ -11,11 +11,11 @@ export const Resource = new Proxy(
   {
     get(_target, prop: keyof typeof ResourceBase) {
       const value = ResourceBase[prop]
-      if ("type" in value) {
+      if (value && "type" in value) {
         // @ts-ignore
         if (value.type === "sst.cloudflare.Bucket") {
           return {
-            put: async () => {},
+            put: async () => { },
           }
         }
         // @ts-ignore

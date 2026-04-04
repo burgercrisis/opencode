@@ -18,7 +18,7 @@ describe("tui.selectSession endpoint", () => {
 
         // #when
         const app = Server.Default()
-        const response = await app.request("/tui/select-session", {
+        const response = await app.request(`/tui/select-session?directory=${encodeURIComponent(projectRoot)}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ sessionID: session.id }),

@@ -31,8 +31,8 @@ export namespace Tool {
       description: string
       parameters: Parameters
       execute(
-        args: z.infer<Parameters>,
-        ctx: Context,
+        args: z.input<Parameters>,
+        ctx: Context<M>,
       ): Promise<{
         title: string
         metadata: M
@@ -46,44 +46,60 @@ export namespace Tool {
   export type InferParameters<T extends Info> = T extends Info<infer P> ? z.infer<P> : never
   export type InferMetadata<T extends Info> = T extends Info<any, infer M> ? M : never
 
+  export interface Implementation<Parameters extends z.ZodType, M extends Metadata> {
+    description: string
+    parameters: Parameters
+    execute(
+      args: z.infer<Parameters>,
+      ctx: Context<M>,
+    ): Promise<{
+      title: string
+      metadata: M
+      output: string
+      attachments?: MessageV2.FilePart[]
+    }>
+    formatValidationError?(error: z.ZodError): string
+  }
+
   export function define<Parameters extends z.ZodType, Result extends Metadata>(
     id: string,
-    init: Info<Parameters, Result>["init"] | Awaited<ReturnType<Info<Parameters, Result>["init"]>>,
+    init: ((ctx?: InitContext) => Promise<Implementation<Parameters, Result>>) | Implementation<Parameters, Result>,
   ): Info<Parameters, Result> {
     return {
       id,
       init: async (initCtx) => {
         const toolInfo = init instanceof Function ? await init(initCtx) : init
         const execute = toolInfo.execute
-        toolInfo.execute = async (args, ctx) => {
-          try {
-            toolInfo.parameters.parse(args)
-          } catch (error) {
-            if (error instanceof z.ZodError && toolInfo.formatValidationError) {
-              throw new Error(toolInfo.formatValidationError(error), { cause: error })
-            }
-            throw new Error(
-              `The ${id} tool was called with invalid arguments: ${error}.\nPlease rewrite the input so it satisfies the expected schema.`,
-              { cause: error },
-            )
-          }
-          const result = await execute(args, ctx)
-          // skip truncation for tools that handle it themselves
-          if (result.metadata.truncated !== undefined) {
-            return result
-          }
-          const truncated = await Truncate.output(result.output, {}, initCtx?.agent)
-          return {
-            ...result,
-            output: truncated.content,
-            metadata: {
-              ...result.metadata,
-              truncated: truncated.truncated,
-              ...(truncated.truncated && { outputPath: truncated.outputPath }),
-            },
-          }
+        return {
+          ...toolInfo,
+          execute: async (args, ctx) => {
+            const parsed = toolInfo.parameters.safeParse(args)
+            const validArgs = parsed.success
+              ? parsed.data
+              : (() => {
+                  const error = parsed.error
+                  throw new Error(
+                    toolInfo.formatValidationError && error instanceof z.ZodError
+                      ? toolInfo.formatValidationError(error)
+                      : `The ${id} tool was called with invalid arguments: ${error}.\nPlease rewrite the input so it satisfies the expected schema.`,
+                    { cause: error },
+                  )
+                })()
+
+            const result = await execute(validArgs, ctx)
+            return result.metadata.truncated !== undefined
+              ? result
+              : await Truncate.output(result.output, {}, initCtx?.agent).then((truncated) => ({
+                  ...result,
+                  output: truncated.content,
+                  metadata: {
+                    ...result.metadata,
+                    truncated: truncated.truncated,
+                    ...(truncated.truncated && { outputPath: truncated.outputPath }),
+                  },
+                }))
+          },
         }
-        return toolInfo
       },
     }
   }

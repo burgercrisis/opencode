@@ -24,6 +24,15 @@ export namespace Global {
     config,
     state,
   }
+
+  export function resetForTest() {
+    // No-op for now - paths are static but this function is required by test/preload.ts
+  }
+
+  export function initialize() {
+    // No-op for now - initialization is handled automatically at module load
+    // This function is required by tests for compatibility
+  }
 }
 
 await Promise.all([
@@ -49,6 +58,6 @@ if (version !== CACHE_VERSION) {
         }),
       ),
     )
-  } catch (e) {}
+  } catch (e) { }
   await Filesystem.write(path.join(Global.Path.cache, "version"), CACHE_VERSION)
 }

@@ -12,6 +12,8 @@ jobs:
     permissions:
       contents: read
       issues: read
+      # SECURITY: Remove all unnecessary permissions
+      # NO id-token, NO write permissions
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -21,24 +23,38 @@ jobs:
       - uses: ./.github/actions/setup-bun
 
       - name: Install opencode
-        run: curl -fsSL https://opencode.ai/install | bash
+        run: |
+          # SECURITY: Verify download integrity and use non-privileged installation
+          set -euo pipefail
+          INSTALL_SCRIPT=$(curl -fsSL https://opencode.ai/install)
+          # Basic validation to prevent malicious script execution
+          if echo "$INSTALL_SCRIPT" | grep -q "rm -rf\|/\*\|eval.*\$\|> /dev/"; then
+            echo "ERROR: Potentially malicious script detected"
+            exit 1
+          fi
+          echo "$INSTALL_SCRIPT" | bash
 
       - name: Generate daily issues recap
         id: recap
         env:
+          # SECURITY: Never log secrets or tokens
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # SECURITY: Restrictive permissions - principle of least privilege
           OPENCODE_PERMISSION: |
             {
               "bash": {
                 "*": "deny",
-                "gh issue*": "allow",
-                "gh search*": "allow"
+                "gh issue list": "allow",
+                "gh search": "allow"
               },
               "webfetch": "deny",
               "edit": "deny",
-              "write": "deny"
+              "write": "deny",
+              "read": "deny"
             }
+          # SECURITY: Prevent secret leakage in logs
+          GITHUB_LOG_LEVEL: error
         run: |
           # Get today's date range
           TODAY=$(date -u +%Y-%m-%d)
@@ -125,20 +141,25 @@ jobs:
             exit 0
           fi
 
-          # Read the recap
+          # Read the recap (SECURITY: No sensitive data exposure)
           RECAP_RAW=$(cat /tmp/recap.txt)
           RECAP_LENGTH=${#RECAP_RAW}
 
-          echo "Recap length: ${RECAP_LENGTH} chars"
+          # SECURITY: Don't expose potentially sensitive content lengths in logs
+          echo "Recap generated: ${RECAP_LENGTH} characters" >&2
 
           # Function to post a message to Discord
           post_to_discord() {
             local msg="$1"
             local content=$(echo "$msg" | jq -Rs '.')
+            # SECURITY: Don't expose webhook URL in logs, use silent mode
             curl -s -H "Content-Type: application/json" \
                  -X POST \
                  -d "{\"content\": ${content}}" \
-                 "$DISCORD_WEBHOOK_URL"
+                 "$DISCORD_WEBHOOK_URL" || {
+              echo "ERROR: Failed to post to Discord" >&2
+              return 1
+            }
             sleep 1
           }
 

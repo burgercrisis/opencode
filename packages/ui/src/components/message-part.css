@@ -347,12 +347,6 @@
     height: auto;
     max-height: 240px;
     overflow-y: auto;
-    scrollbar-width: none;
-    -ms-overflow-style: none;
-
-    &::-webkit-scrollbar {
-      display: none;
-    }
 
     [data-component="markdown"] {
       overflow: visible;
@@ -517,13 +511,6 @@
   overflow-x: hidden;
   overflow-y: visible;
 
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-
-  &::-webkit-scrollbar {
-    display: none;
-  }
-
   [data-component="diff"] {
     border-radius: inherit;
     overflow: hidden;
@@ -537,17 +524,7 @@
   overflow-y: visible;
 
   [data-component="code"] {
-    padding-bottom: 0 !important;
-    border-radius: inherit;
-    overflow: hidden;
-  }
-
-  /* Hide scrollbar */
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-
-  &::-webkit-scrollbar {
-    display: none;
+    padding-bottom: 0px !important;
   }
 }
 

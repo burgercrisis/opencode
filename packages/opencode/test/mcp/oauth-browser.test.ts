@@ -1,11 +1,14 @@
-import { test, expect, mock, beforeEach } from "bun:test"
+import { test, expect, mock, beforeEach, afterEach, beforeAll, describe, vi } from "bun:test"
 import { EventEmitter } from "events"
+import path from "path"
+import os from "os"
+import fs from "fs"
 
 // Track open() calls and control failure behavior
 let openShouldFail = false
 let openCalledWith: string | undefined
 
-mock.module("open", () => ({
+vi.mock("open", () => ({
   default: async (url: string) => {
     openCalledWith = url
 
@@ -30,14 +33,14 @@ class MockUnauthorizedError extends Error {
 }
 
 // Track what options were passed to each transport constructor
-const transportCalls: Array<{
+let transportCalls: Array<{
   type: "streamable" | "sse"
   url: string
   options: { authProvider?: unknown }
 }> = []
 
 // Mock the transport constructors
-mock.module("@modelcontextprotocol/sdk/client/streamableHttp.js", () => ({
+vi.mock("@modelcontextprotocol/sdk/client/streamableHttp.js", () => ({
   StreamableHTTPClientTransport: class MockStreamableHTTP {
     url: string
     authProvider: { redirectToAuthorization?: (url: URL) => Promise<void> } | undefined
@@ -63,7 +66,7 @@ mock.module("@modelcontextprotocol/sdk/client/streamableHttp.js", () => ({
   },
 }))
 
-mock.module("@modelcontextprotocol/sdk/client/sse.js", () => ({
+vi.mock("@modelcontextprotocol/sdk/client/sse.js", () => ({
   SSEClientTransport: class MockSSE {
     constructor(url: URL) {
       transportCalls.push({
@@ -79,35 +82,57 @@ mock.module("@modelcontextprotocol/sdk/client/sse.js", () => ({
 }))
 
 // Mock the MCP SDK Client to trigger OAuth flow
-mock.module("@modelcontextprotocol/sdk/client/index.js", () => ({
+vi.mock("@modelcontextprotocol/sdk/client/index.js", () => ({
   Client: class MockClient {
     async connect(transport: { start: () => Promise<void> }) {
       await transport.start()
     }
+    async listTools() {
+      return { tools: [] }
+    }
+    on() {}
+    close() {}
   },
 }))
 
 // Mock UnauthorizedError in the auth module
-mock.module("@modelcontextprotocol/sdk/client/auth.js", () => ({
+vi.mock("@modelcontextprotocol/sdk/client/auth.js", () => ({
   UnauthorizedError: MockUnauthorizedError,
 }))
 
-beforeEach(() => {
-  openShouldFail = false
-  openCalledWith = undefined
-  transportCalls.length = 0
-})
+let MCP: any
+let Bus: any
+let McpOAuthCallback: any
+let Instance: any
+let tmpdir: any
 
-// Import modules after mocking
-const { MCP } = await import("../../src/mcp/index")
-const { Bus } = await import("../../src/bus")
-const { McpOAuthCallback } = await import("../../src/mcp/oauth-callback")
-const { Instance } = await import("../../src/project/instance")
-const { tmpdir } = await import("../fixture/fixture")
+describe("MCP OAuth Browser", () => {
+  beforeAll(async () => {
+    // Global is auto-initialized via preload.ts
+    const { Config } = await import("../../src/config/config")
+    Config.global.reset()
+    
+    const mcpMod = await import("../../src/mcp/index")
+    MCP = mcpMod.MCP
+    const busMod = await import("../../src/bus/index")
+    Bus = busMod.Bus
+    const oauthMod = await import("../../src/mcp/oauth-callback")
+    McpOAuthCallback = oauthMod.McpOAuthCallback
+    const instanceMod = await import("../../src/project/instance")
+    Instance = instanceMod.Instance
+    const fixtureMod = await import("../fixture/fixture")
+    tmpdir = fixtureMod.tmpdir
+  })
 
-test("BrowserOpenFailed event is published when open() throws", async () => {
+  beforeEach(() => {
+    openShouldFail = false
+    openCalledWith = undefined
+    transportCalls = []
+  })
+
+  test("BrowserOpenFailed event is published when open() throws", async () => {
   await using tmp = await tmpdir({
-    init: async (dir) => {
+    init: async (dir: string) => {
       await Bun.write(
         `${dir}/opencode.json`,
         JSON.stringify({
@@ -129,7 +154,7 @@ test("BrowserOpenFailed event is published when open() throws", async () => {
       openShouldFail = true
 
       const events: Array<{ mcpName: string; url: string }> = []
-      const unsubscribe = Bus.subscribe(MCP.BrowserOpenFailed, (evt) => {
+      const unsubscribe = Bus.subscribe(MCP.BrowserOpenFailed, (evt: any) => {
         events.push(evt.properties)
       })
 
@@ -158,7 +183,7 @@ test("BrowserOpenFailed event is published when open() throws", async () => {
 
 test("BrowserOpenFailed event is NOT published when open() succeeds", async () => {
   await using tmp = await tmpdir({
-    init: async (dir) => {
+    init: async (dir: string) => {
       await Bun.write(
         `${dir}/opencode.json`,
         JSON.stringify({
@@ -180,7 +205,7 @@ test("BrowserOpenFailed event is NOT published when open() succeeds", async () =
       openShouldFail = false
 
       const events: Array<{ mcpName: string; url: string }> = []
-      const unsubscribe = Bus.subscribe(MCP.BrowserOpenFailed, (evt) => {
+      const unsubscribe = Bus.subscribe(MCP.BrowserOpenFailed, (evt: any) => {
         events.push(evt.properties)
       })
 
@@ -207,7 +232,7 @@ test("BrowserOpenFailed event is NOT published when open() succeeds", async () =
 
 test("open() is called with the authorization URL", async () => {
   await using tmp = await tmpdir({
-    init: async (dir) => {
+    init: async (dir: string) => {
       await Bun.write(
         `${dir}/opencode.json`,
         JSON.stringify({
@@ -246,4 +271,5 @@ test("open() is called with the authorization URL", async () => {
       expect(openCalledWith!).toContain("https://")
     },
   })
+})
 })

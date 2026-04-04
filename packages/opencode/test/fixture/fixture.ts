@@ -9,25 +9,57 @@ function sanitizePath(p: string): string {
   return p.replace(/\0/g, "")
 }
 
-function exists(dir: string) {
-  return fs
-    .stat(dir)
-    .then(() => true)
-    .catch(() => false)
+// Cross-platform symlink helper
+// On Windows, creates a junction for directories, or a symbolic link for files
+// On Unix, creates a symbolic link
+export async function symlink(target: string, linkPath: string): Promise<void> {
+  try {
+    // First try the standard fs.symlink
+    await fs.symlink(target, linkPath)
+  } catch (error) {
+    // On Windows, may need administrator privileges for symlinks
+    // Fall back to junction for directories
+    if (process.platform === "win32") {
+      try {
+        const stats = await fs.lstat(target)
+        if (stats.isDirectory()) {
+          await $`cmd /c mklink /J "${linkPath}" "${target}"`.quiet()
+          return
+        }
+      } catch {
+        // Target doesn't exist, try file symlink
+      }
+      // Try file symlink with admin elevation prompt handled
+      await $`cmd /c mklink "${linkPath}" "${target}"`.quiet()
+    } else {
+      throw error
+    }
+  }
 }
 
-function clean(dir: string) {
-  return fs.rm(dir, {
-    recursive: true,
-    force: true,
-    maxRetries: 5,
-    retryDelay: 100,
-  })
+// Cross-platform chmod helper
+// On Windows, this is a no-op since Windows uses ACLs instead of Unix permissions
+export async function chmod(filePath: string, mode: number): Promise<void> {
+  if (process.platform === "win32") {
+    // On Windows, chmod doesn't work the same way
+    // Only set executable bit on .bat, .cmd, .exe, .ps1 files
+    const ext = path.extname(filePath).toLowerCase()
+    if ([".bat", ".cmd", ".exe", ".ps1", ".sh"].includes(ext)) {
+      // Try to make file executable - best effort on Windows
+      try {
+        await fs.chmod(filePath, 0o755)
+      } catch {
+        // Best effort - may fail without admin rights
+      }
+    }
+    return
+  }
+  await fs.chmod(filePath, mode)
 }
 
-async function stop(dir: string) {
-  if (!(await exists(dir))) return
-  await $`git fsmonitor--daemon stop`.cwd(dir).quiet().nothrow()
+// Make file executable (cross-platform)
+export async function makeExecutable(filePath: string): Promise<void> {
+  await chmod(filePath, 0o755)
 }
 
 type TmpDirOptions<T> = {
@@ -41,9 +73,6 @@ export async function tmpdir<T>(options?: TmpDirOptions<T>) {
   await fs.mkdir(dirpath, { recursive: true })
   if (options?.git) {
     await $`git init`.cwd(dirpath).quiet()
-    await $`git config core.fsmonitor false`.cwd(dirpath).quiet()
-    await $`git config user.email "test@opencode.test"`.cwd(dirpath).quiet()
-    await $`git config user.name "Test"`.cwd(dirpath).quiet()
     await $`git commit --allow-empty -m "root commit ${dirpath}"`.cwd(dirpath).quiet()
   }
   if (options?.config) {
@@ -55,16 +84,52 @@ export async function tmpdir<T>(options?: TmpDirOptions<T>) {
       }),
     )
   }
+  const extra = await options?.init?.(dirpath)
   const realpath = sanitizePath(await fs.realpath(dirpath))
-  const extra = await options?.init?.(realpath)
   const result = {
     [Symbol.asyncDispose]: async () => {
-      try {
-        await options?.dispose?.(realpath)
-      } finally {
-        if (options?.git) await stop(realpath).catch(() => undefined)
-        await clean(realpath).catch(() => undefined)
+      // Enhanced cleanup with retry mechanism for Windows file locking
+      const maxRetries = 3
+      const retryDelay = 100 // 100ms between retries
+
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          // Try to remove directory first
+          await fs.rm(dirpath, { recursive: true, force: true })
+
+          // Wait a bit to ensure Windows releases file handles
+          if (process.platform === "win32") {
+            await new Promise(resolve => setTimeout(resolve, retryDelay))
+          }
+
+          // Verify directory is actually gone
+          try {
+            await fs.access(dirpath)
+            // If we can still access it, files are locked
+            await new Promise(resolve => setTimeout(resolve, retryDelay))
+            continue
+          } catch {
+            // Directory is gone, proceed with cleanup
+            break
+          }
+        } catch (error) {
+          // Directory removal failed, try again
+          if (attempt === maxRetries) {
+            console.warn(`Failed to cleanup tmpdir after ${maxRetries} attempts:`, error)
+            break
+          }
+          await new Promise(resolve => setTimeout(resolve, retryDelay))
+        }
       }
+
+      // Final cleanup of any remaining files
+      try {
+        await options?.dispose?.(dirpath)
+      } catch (error) {
+        console.warn("Dispose callback failed:", error)
+      }
+
+      console.log(`Successfully cleaned up temporary directory: ${dirpath}`)
     },
     path: realpath,
     extra: extra as T,

@@ -13,6 +13,7 @@ export namespace BusEvent {
     const result = {
       type,
       properties,
+      schema: properties,
     }
     registry.set(type, result)
     return result

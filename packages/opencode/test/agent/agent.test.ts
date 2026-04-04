@@ -1,9 +1,30 @@
-import { afterEach, test, expect } from "bun:test"
+import { afterEach, describe, test, expect, beforeAll } from "bun:test"
 import path from "path"
+import os from "os"
+import fs from "fs/promises"
 import { tmpdir } from "../fixture/fixture"
 import { Instance } from "../../src/project/instance"
 import { Agent } from "../../src/agent/agent"
 import { Permission } from "../../src/permission"
+import { Global } from "../../src/global"
+import { Config } from "../../src/config/config"
+
+beforeAll(async () => {
+  // Use the preload's test home directory to avoid path mismatch
+  // The preload sets OPENCODE_TEST_HOME before importing Global, so we should use that
+  const testHome = process.env.OPENCODE_TEST_HOME
+  if (!testHome) {
+    throw new Error("OPENCODE_TEST_HOME not set - preload may not have run")
+  }
+  await Global.initialize()
+  // Clear auth.json in the test home to avoid pollution from real user config
+  try {
+    const authPath = path.join(Global.Path.data, "auth.json")
+    await fs.writeFile(authPath, "{}", "utf-8")
+  } catch {
+    // Ignore errors
+  }
+})
 
 // Helper to evaluate permission for a tool with wildcard pattern
 function evalPerm(agent: Agent.Info | undefined, permission: string): Permission.Action | undefined {
@@ -578,6 +599,7 @@ description: Permission skill.
 
   const home = process.env.OPENCODE_TEST_HOME
   process.env.OPENCODE_TEST_HOME = tmp.path
+  await Global.initialize()
 
   try {
     await Instance.provide({
@@ -590,7 +612,8 @@ description: Permission skill.
       },
     })
   } finally {
-    process.env.OPENCODE_TEST_HOME = home
+    if (home === undefined) delete process.env.OPENCODE_TEST_HOME
+    else process.env.OPENCODE_TEST_HOME = home
   }
 })
 
@@ -714,6 +737,21 @@ test("defaultAgent throws when all primary agents are disabled", async () => {
     fn: async () => {
       // build and plan are disabled, no primary-capable agents remain
       await expect(Agent.defaultAgent()).rejects.toThrow("no primary visible agent found")
+    },
+  })
+})
+
+test("build agent defaults *.env to ask", async () => {
+  await using tmp = await tmpdir()
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const build = await Agent.get("build")
+      const target = path.join(tmp.path, ".env")
+      expect(PermissionNext.evaluate("read", target, build!.permission).action).toBe("ask")
+      
+      const targetExample = path.join(tmp.path, ".env.example")
+      expect(PermissionNext.evaluate("read", targetExample, build!.permission).action).toBe("allow")
     },
   })
 })

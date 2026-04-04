@@ -210,6 +210,16 @@ export namespace Provider {
         options: {},
       }
     },
+    "github-copilot-enterprise": async () => {
+      return {
+        autoload: false,
+        async getModel(sdk: any, modelID: string, _options?: Record<string, any>) {
+          if (useLanguageModel(sdk)) return sdk.languageModel(modelID)
+          return shouldUseCopilotResponsesApi(modelID) ? sdk.responses(modelID) : sdk.chat(modelID)
+        },
+        options: {},
+      }
+    },
     azure: async (provider) => {
       const resource = iife(() => {
         const name = provider.options?.resourceName
@@ -920,6 +930,20 @@ export namespace Provider {
     const modelsDev = await ModelsDev.get()
     const database = mapValues(modelsDev, fromModelsDevProvider)
 
+    const ghCopilot = database["github-copilot"]
+    if (ghCopilot && !database["github-copilot-enterprise"]) {
+      const ent = ProviderID.make("github-copilot-enterprise")
+      database["github-copilot-enterprise"] = {
+        ...ghCopilot,
+        id: ent,
+        name: "GitHub Copilot Enterprise",
+        models: mapValues(ghCopilot.models, (m) => ({
+          ...m,
+          providerID: ent,
+        })),
+      }
+    }
+
     const disabled = new Set(config.disabled_providers ?? [])
     const enabled = config.enabled_providers ? new Set(config.enabled_providers) : null
 
@@ -1071,16 +1095,30 @@ export namespace Provider {
       if (!plugin.auth) continue
       const providerID = ProviderID.make(plugin.auth.provider)
       if (disabled.has(providerID)) continue
+      if (!plugin.auth.loader) continue
 
       const auth = await Auth.get(providerID)
-      if (!auth) continue
-      if (!plugin.auth.loader) continue
+      const enterpriseId = ProviderID.make("github-copilot-enterprise")
+      const enterpriseAuth =
+        plugin.auth.provider === "github-copilot" ? await Auth.get(enterpriseId) : undefined
+
+      if (!auth && !enterpriseAuth) continue
 
       if (auth) {
         const options = await plugin.auth.loader(() => Auth.get(providerID) as any, database[plugin.auth.provider])
         const opts = options ?? {}
         const patch: Partial<Info> = providers[providerID] ? { options: opts } : { source: "custom", options: opts }
         mergeProvider(providerID, patch)
+      }
+
+      if (plugin.auth.provider === "github-copilot" && enterpriseAuth && !disabled.has(enterpriseId)) {
+        const base = database["github-copilot-enterprise"]
+        if (base) {
+          const options = await plugin.auth.loader(() => Auth.get(enterpriseId) as any, base)
+          const opts = options ?? {}
+          const patch: Partial<Info> = providers[enterpriseId] ? { options: opts } : { source: "custom", options: opts }
+          mergeProvider(enterpriseId, patch)
+        }
       }
     }
 

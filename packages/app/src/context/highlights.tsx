@@ -5,9 +5,19 @@ import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { usePlatform } from "@/context/platform"
 import { useSettings } from "@/context/settings"
 import { persisted } from "@/utils/persist"
-import { DialogReleaseNotes, type Highlight } from "@/components/dialog-release-notes"
+import { DialogReleaseNotes } from "@/components/dialog-release-notes"
 
 const CHANGELOG_URL = "https://opencode.ai/changelog.json"
+
+export type Highlight = {
+  title: string
+  description: string
+  media?: {
+    type: "image" | "video"
+    src: string
+    alt: string
+  }
+}
 
 type Store = {
   version?: string

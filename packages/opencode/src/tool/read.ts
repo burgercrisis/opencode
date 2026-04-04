@@ -1,39 +1,32 @@
 import z from "zod"
-import { createReadStream } from "fs"
 import * as fs from "fs/promises"
 import * as path from "path"
-import { createInterface } from "readline"
 import { Tool } from "./tool"
 import { LSP } from "../lsp"
 import { FileTime } from "../file/time"
-import DESCRIPTION from "./read.txt"
+import { Filesystem } from "../util/filesystem"
 import { Instance } from "../project/instance"
 import { assertExternalDirectory } from "./external-directory"
+import { Identifier } from "../id/id"
 import { InstructionPrompt } from "../session/instruction"
-import { Filesystem } from "../util/filesystem"
+import DESCRIPTION from "./read.txt"
+import { TOOL } from "../constants"
 
-const DEFAULT_READ_LIMIT = 2000
-const MAX_LINE_LENGTH = 2000
-const MAX_LINE_SUFFIX = `... (line truncated to ${MAX_LINE_LENGTH} chars)`
-const MAX_BYTES = 50 * 1024
-const MAX_BYTES_LABEL = `${MAX_BYTES / 1024} KB`
+const parameters = z.object({
+  filePath: z.string().describe("The absolute path to the file or directory to read"),
+  offset: z.coerce.number().describe("The line number to start reading from (1-indexed)").optional(),
+  limit: z.coerce.number().describe("The maximum number of lines to read (defaults to 2000)").optional(),
+})
 
-export const ReadTool = Tool.define("read", {
+export const ReadTool = Tool.define<typeof parameters, { preview: string; truncated: boolean; loaded: string[] }>("read", {
   description: DESCRIPTION,
-  parameters: z.object({
-    filePath: z.string().describe("The absolute path to the file or directory to read"),
-    offset: z.coerce.number().describe("The line number to start reading from (1-indexed)").optional(),
-    limit: z.coerce.number().describe("The maximum number of lines to read (defaults to 2000)").optional(),
-  }),
+  parameters,
   async execute(params, ctx) {
     if (params.offset !== undefined && params.offset < 1) {
       throw new Error("offset must be greater than or equal to 1")
     }
-    let filepath = params.filePath
-    if (!path.isAbsolute(filepath)) {
-      filepath = path.resolve(Instance.directory, filepath)
-    }
-    const title = path.relative(Instance.worktree, filepath)
+    const filepath = Filesystem.resolvePath(params.filePath)
+    const title = Filesystem.relativePath(Instance.worktree, filepath)
 
     const stat = Filesystem.stat(filepath)
 
@@ -53,24 +46,16 @@ export const ReadTool = Tool.define("read", {
       const dir = path.dirname(filepath)
       const base = path.basename(filepath)
 
-      const suggestions = await fs
-        .readdir(dir)
-        .then((entries) =>
-          entries
-            .filter(
-              (entry) =>
-                entry.toLowerCase().includes(base.toLowerCase()) || base.toLowerCase().includes(entry.toLowerCase()),
-            )
-            .map((entry) => path.join(dir, entry))
-            .slice(0, 3),
-        )
+      const suggestions = await fs.readdir(dir)
+        .then((entries) => entries.filter((entry) => entry.toLowerCase().includes(base.toLowerCase()) || base.toLowerCase().includes(entry.toLowerCase())))
+        .then((filtered) => filtered.map((entry) => path.join(dir, entry)))
+        .then((mapped) => mapped.slice(0, 3))
         .catch(() => [])
 
-      if (suggestions.length > 0) {
-        throw new Error(`File not found: ${filepath}\n\nDid you mean one of these?\n${suggestions.join("\n")}`)
-      }
-
-      throw new Error(`File not found: ${filepath}`)
+      const error = suggestions.length > 0
+        ? `File not found: ${filepath}\n\nDid you mean one of these?\n${suggestions.join("\n")}`
+        : `File not found: ${filepath}`
+      throw new Error(error)
     }
 
     if (stat.isDirectory()) {
@@ -87,7 +72,7 @@ export const ReadTool = Tool.define("read", {
       )
       entries.sort((a, b) => a.localeCompare(b))
 
-      const limit = params.limit ?? DEFAULT_READ_LIMIT
+      const limit = params.limit ?? TOOL.DEFAULT_READ_LIMIT
       const offset = params.offset ?? 1
       const start = offset - 1
       const sliced = entries.slice(start, start + limit)
@@ -121,6 +106,7 @@ export const ReadTool = Tool.define("read", {
     const mime = Filesystem.mimeType(filepath)
     const isImage = mime.startsWith("image/") && mime !== "image/svg+xml" && mime !== "image/vnd.fastbidsheet"
     const isPdf = mime === "application/pdf"
+
     if (isImage || isPdf) {
       const msg = `${isImage ? "Image" : "PDF"} read successfully`
       return {
@@ -141,55 +127,32 @@ export const ReadTool = Tool.define("read", {
       }
     }
 
-    const isBinary = await isBinaryFile(filepath, Number(stat.size))
+    const isBinary = await Filesystem.isBinaryFile(filepath)
     if (isBinary) throw new Error(`Cannot read binary file: ${filepath}`)
 
-    const stream = createReadStream(filepath, { encoding: "utf8" })
-    const rl = createInterface({
-      input: stream,
-      // Note: we use the crlfDelay option to recognize all instances of CR LF
-      // ('\r\n') in file as a single line break.
-      crlfDelay: Infinity,
-    })
-
-    const limit = params.limit ?? DEFAULT_READ_LIMIT
+    const file = Bun.file(filepath)
+    const text = await file.text()
+    const lines = text.split(/\r?\n/)
+    const limit = params.limit ?? TOOL.DEFAULT_READ_LIMIT
     const offset = params.offset ?? 1
     const start = offset - 1
+    if (start >= lines.length) throw new Error(`Offset ${offset} is out of range for this file (${lines.length} lines)`)
+
     const raw: string[] = []
     let bytes = 0
-    let lines = 0
     let truncatedByBytes = false
-    let hasMoreLines = false
-    try {
-      for await (const text of rl) {
-        lines += 1
-        if (lines <= start) continue
-
-        if (raw.length >= limit) {
-          hasMoreLines = true
-          continue
-        }
-
-        const line = text.length > MAX_LINE_LENGTH ? text.substring(0, MAX_LINE_LENGTH) + MAX_LINE_SUFFIX : text
-        const size = Buffer.byteLength(line, "utf-8") + (raw.length > 0 ? 1 : 0)
-        if (bytes + size > MAX_BYTES) {
-          truncatedByBytes = true
-          hasMoreLines = true
-          break
-        }
-
-        raw.push(line)
-        bytes += size
+    for (let i = start; i < Math.min(lines.length, start + limit); i++) {
+      const line = lines[i].length > 2000 ? lines[i].substring(0, 2000) + "..." : lines[i]
+      const size = Buffer.byteLength(line, "utf-8") + (raw.length > 0 ? 1 : 0)
+      if (bytes + size > TOOL.MAX_BYTES) {
+        truncatedByBytes = true
+        break
       }
-    } finally {
-      rl.close()
-      stream.destroy()
+      raw.push(line)
+      bytes += size
     }
 
-    if (lines < offset && !(lines === 0 && offset === 1)) {
-      throw new Error(`Offset ${offset} is out of range for this file (${lines} lines)`)
-    }
-
+    const hasMoreLines = start + limit < lines.length
     const content = raw.map((line, index) => {
       return `${index + offset}: ${line}`
     })
@@ -198,22 +161,22 @@ export const ReadTool = Tool.define("read", {
     let output = [`<path>${filepath}</path>`, `<type>file</type>`, "<content>"].join("\n")
     output += content.join("\n")
 
-    const totalLines = lines
+    const totalLines = lines.length
     const lastReadLine = offset + raw.length - 1
     const nextOffset = lastReadLine + 1
     const truncated = hasMoreLines || truncatedByBytes
 
     if (truncatedByBytes) {
-      output += `\n\n(Output capped at ${MAX_BYTES_LABEL}. Showing lines ${offset}-${lastReadLine}. Use offset=${nextOffset} to continue.)`
+      output += `\n\n(Output truncated at ${TOOL.MAX_BYTES} bytes. Use 'offset' parameter to read beyond line ${lastReadLine})`
     } else if (hasMoreLines) {
       output += `\n\n(Showing lines ${offset}-${lastReadLine} of ${totalLines}. Use offset=${nextOffset} to continue.)`
     } else {
-      output += `\n\n(End of file - total ${totalLines} lines)`
+      output += `\n\n(End of file - total ${lines.length} lines)`
     }
     output += "\n</content>"
 
     // just warms the lsp client
-    LSP.touchFile(filepath, false)
+    await LSP.touchFile(filepath, false)
     await FileTime.read(ctx.sessionID, filepath)
 
     if (instructions.length > 0) {
@@ -231,63 +194,3 @@ export const ReadTool = Tool.define("read", {
     }
   },
 })
-
-async function isBinaryFile(filepath: string, fileSize: number): Promise<boolean> {
-  const ext = path.extname(filepath).toLowerCase()
-  // binary check for common non-text extensions
-  switch (ext) {
-    case ".zip":
-    case ".tar":
-    case ".gz":
-    case ".exe":
-    case ".dll":
-    case ".so":
-    case ".class":
-    case ".jar":
-    case ".war":
-    case ".7z":
-    case ".doc":
-    case ".docx":
-    case ".xls":
-    case ".xlsx":
-    case ".ppt":
-    case ".pptx":
-    case ".odt":
-    case ".ods":
-    case ".odp":
-    case ".bin":
-    case ".dat":
-    case ".obj":
-    case ".o":
-    case ".a":
-    case ".lib":
-    case ".wasm":
-    case ".pyc":
-    case ".pyo":
-      return true
-    default:
-      break
-  }
-
-  if (fileSize === 0) return false
-
-  const fh = await fs.open(filepath, "r")
-  try {
-    const sampleSize = Math.min(4096, fileSize)
-    const bytes = Buffer.alloc(sampleSize)
-    const result = await fh.read(bytes, 0, sampleSize, 0)
-    if (result.bytesRead === 0) return false
-
-    let nonPrintableCount = 0
-    for (let i = 0; i < result.bytesRead; i++) {
-      if (bytes[i] === 0) return true
-      if (bytes[i] < 9 || (bytes[i] > 13 && bytes[i] < 32)) {
-        nonPrintableCount++
-      }
-    }
-    // If >30% non-printable characters, consider it binary
-    return nonPrintableCount / result.bytesRead > 0.3
-  } finally {
-    await fh.close()
-  }
-}

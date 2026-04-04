@@ -46,6 +46,41 @@ Usage notes:
     cd /foo/bar && pytest tests
     </bad-example>
 
+Windows Command Support - Native Execution:
+
+- Windows CMD builtins are now supported natively (dir, copy, del, mkdir, echo, type, etc.)
+- Bare CMD commands are automatically routed to cmd.exe
+- Examples of bare CMD commands: `dir`, `copy file.txt backup.txt`, `echo Hello`, `type file.txt`
+- Explicit `cmd /c` commands still work: `cmd /c dir`, `cmd /c echo test | findstr test`
+- PowerShell support: `powershell -Command "Get-Process"`
+- Note that complex operations with pipes/redirection should use explicit `cmd /c` or PowerShell
+
+CMD Echo Commands:
+- ✅ WORKS: cmd /c echo HelloWorld
+- ❌ ISSUE: When chained with &&, may output Windows banner
+- Solution: Execute commands individually to capture correct output
+
+CMD Quoting and Escaping:
+- Use caret (^) for escaping in CMD: cmd /c echo @echo off^ ^> test.bat
+- Pipes work: cmd /c echo test | findstr test
+- Complex pipes: cmd /c systeminfo | find /c "OS"
+
+PowerShell Variable Handling:
+- ✅ CORRECT: powershell -Command 'foreach ($i in 1,2,3) { Write-Host $i }'
+- ❌ WRONG: powershell -Command "foreach ($i in 1,2,3) { Write-Host $i }"
+- CRITICAL: Use single quotes to prevent bash $ interpretation
+
+Bash Variable Syntax Not Supported in CMD:
+- The $ symbol (used for process ID in bash) is bash syntax and not supported in CMD
+- In CMD, use `%random%` for random numbers or other CMD variables
+- Example: Instead of `cmd /c mkdir test_$RANDOM`, use `cmd /c mkdir test_%random%`
+- Alternative: Use PowerShell for more advanced variable handling
+
+Exit Code Tracking:
+- When using && chaining, exit codes may be from the wrong command
+- Solution: Execute commands individually to get accurate exit codes
+- Use: cmd /c <command> (separate from echo "Exit code: $?")
+
 # Committing changes with git
 
 Only create commits when requested by the user. If unclear, ask first. When the user asks you to create a new git commit, follow these steps carefully:

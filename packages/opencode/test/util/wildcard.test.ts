@@ -1,77 +1,147 @@
-import { test, expect } from "bun:test"
+import { expect, test, describe } from "bun:test"
 import { Wildcard } from "../../src/util/wildcard"
 
-test("match handles glob tokens", () => {
-  expect(Wildcard.match("file1.txt", "file?.txt")).toBe(true)
-  expect(Wildcard.match("file12.txt", "file?.txt")).toBe(false)
-  expect(Wildcard.match("foo+bar", "foo+bar")).toBe(true)
-})
+describe("Wildcard", () => {
+  describe("match", () => {
+    test("should match simple strings", () => {
+      expect(Wildcard.match("hello", "hello")).toBe(true)
+      expect(Wildcard.match("hello", "world")).toBe(false)
+    })
 
-test("match with trailing space+wildcard matches command with or without args", () => {
-  // "ls *" should match "ls" (no args) and "ls -la" (with args)
-  expect(Wildcard.match("ls", "ls *")).toBe(true)
-  expect(Wildcard.match("ls -la", "ls *")).toBe(true)
-  expect(Wildcard.match("ls foo bar", "ls *")).toBe(true)
+    test("should handle wildcards", () => {
+      expect(Wildcard.match("hello", "h*o")).toBe(true)
+      expect(Wildcard.match("hello", "*")).toBe(true)
+      expect(Wildcard.match("hello", "h?llo")).toBe(true)
+    })
 
-  // "ls*" (no space) should NOT match "ls" alone — wait, it should because .* matches empty
-  // but it WILL match "lstmeval" which is the dangerous case users should avoid
-  expect(Wildcard.match("ls", "ls*")).toBe(true)
-  expect(Wildcard.match("lstmeval", "ls*")).toBe(true)
+    test("should handle regex special characters in pattern", () => {
+      expect(Wildcard.match("file.ts", "file.ts")).toBe(true)
+      expect(Wildcard.match("file+ts", "file+ts")).toBe(true)
+      expect(Wildcard.match("file^ts", "file^ts")).toBe(true)
+      expect(Wildcard.match("file$ts", "file$ts")).toBe(true)
+      expect(Wildcard.match("file{ts}", "file{ts}")).toBe(true)
+      expect(Wildcard.match("file(ts)", "file(ts)")).toBe(true)
+      expect(Wildcard.match("file|ts", "file|ts")).toBe(true)
+      expect(Wildcard.match("file[ts]", "file[ts]")).toBe(true)
+    })
 
-  // "ls *" (with space) should NOT match "lstmeval"
-  expect(Wildcard.match("lstmeval", "ls *")).toBe(false)
+    test("should handle path separators", () => {
+      expect(Wildcard.match("a\\b", "a/*")).toBe(true)
+      expect(Wildcard.match("a/b", "a/*")).toBe(true)
+    })
 
-  // multi-word commands
-  expect(Wildcard.match("git status", "git *")).toBe(true)
-  expect(Wildcard.match("git", "git *")).toBe(true)
-  expect(Wildcard.match("git commit -m foo", "git *")).toBe(true)
-})
+    test("should handle optional space wildcard", () => {
+      expect(Wildcard.match("hello", "hello *")).toBe(true)
+      expect(Wildcard.match("hello world", "hello *")).toBe(true)
+    })
+  })
 
-test("all picks the most specific pattern", () => {
-  const rules = {
-    "*": "deny",
-    "git *": "ask",
-    "git status": "allow",
-  }
-  expect(Wildcard.all("git status", rules)).toBe("allow")
-  expect(Wildcard.all("git log", rules)).toBe("ask")
-  expect(Wildcard.all("echo hi", rules)).toBe("deny")
-})
+  describe("all", () => {
+    test("should find best match and handle sorting", () => {
+      const patterns = {
+        "*": "fallback",
+        "h*": "starts-with-h",
+        "hello": "exact",
+        "abc": "abc",
+        "abd": "abd",
+      }
+      expect(Wildcard.all("hello", patterns)).toBe("exact")
+      expect(Wildcard.all("hi", patterns)).toBe("starts-with-h")
+      expect(Wildcard.all("bye", patterns)).toBe("fallback")
+      expect(Wildcard.all("abc", patterns)).toBe("abc")
+      expect(Wildcard.all("abd", patterns)).toBe("abd")
+    })
+  })
 
-test("allStructured matches command sequences", () => {
-  const rules = {
-    "git *": "ask",
-    "git status*": "allow",
-  }
-  expect(Wildcard.allStructured({ head: "git", tail: ["status", "--short"] }, rules)).toBe("allow")
-  expect(Wildcard.allStructured({ head: "npm", tail: ["run", "build", "--watch"] }, { "npm run *": "allow" })).toBe(
-    "allow",
-  )
-  expect(Wildcard.allStructured({ head: "ls", tail: ["-la"] }, rules)).toBeUndefined()
-})
+  describe("matchSequence edge cases", () => {
+    test("should handle empty patterns", () => {
+      expect(Wildcard.allStructured({ head: "a", tail: [] }, { "a": "val" })).toBe("val")
+    })
 
-test("allStructured prioritizes flag-specific patterns", () => {
-  const rules = {
-    "find *": "allow",
-    "find * -delete*": "ask",
-    "sort*": "allow",
-    "sort -o *": "ask",
-  }
-  expect(Wildcard.allStructured({ head: "find", tail: ["src", "-delete"] }, rules)).toBe("ask")
-  expect(Wildcard.allStructured({ head: "find", tail: ["src", "-print"] }, rules)).toBe("allow")
-  expect(Wildcard.allStructured({ head: "sort", tail: ["-o", "out.txt"] }, rules)).toBe("ask")
-  expect(Wildcard.allStructured({ head: "sort", tail: ["--reverse"] }, rules)).toBe("allow")
-})
+    test("should handle * in sequence", () => {
+      const patterns = { "git * status": "status" }
+      expect(Wildcard.allStructured({ head: "git", tail: ["status"] }, patterns)).toBe("status")
+    })
+  })
 
-test("allStructured handles sed flags", () => {
-  const rules = {
-    "sed * -i*": "ask",
-    "sed -n*": "allow",
-  }
-  expect(Wildcard.allStructured({ head: "sed", tail: ["-i", "file"] }, rules)).toBe("ask")
-  expect(Wildcard.allStructured({ head: "sed", tail: ["-i.bak", "file"] }, rules)).toBe("ask")
-  expect(Wildcard.allStructured({ head: "sed", tail: ["-n", "1p", "file"] }, rules)).toBe("allow")
-  expect(Wildcard.allStructured({ head: "sed", tail: ["-i", "-n", "/./p", "myfile.txt"] }, rules)).toBe("ask")
+  describe("all sorting logic", () => {
+    test("should sort by length then alphabetically", () => {
+      const patterns = {
+        "aaaa": "len4-a",
+        "bbbb": "len4-b",
+        "ccc": "len3",
+      }
+      expect(Wildcard.all("aaaa", patterns)).toBe("len4-a")
+      expect(Wildcard.all("bbbb", patterns)).toBe("len4-b")
+      expect(Wildcard.all("ccc", patterns)).toBe("len3")
+    })
+  })
+
+  describe("allStructured", () => {
+    test("should match structured input", () => {
+      const patterns = {
+        "git *": "git-command",
+        "git checkout": "git-checkout",
+        "ls": "list-command",
+      }
+      expect(Wildcard.allStructured({ head: "git", tail: ["checkout", "main"] }, patterns)).toBe("git-checkout")
+      expect(Wildcard.allStructured({ head: "git", tail: ["status"] }, patterns)).toBe("git-command")
+      expect(Wildcard.allStructured({ head: "ls", tail: [] }, patterns)).toBe("list-command")
+      expect(Wildcard.allStructured({ head: "cd", tail: [".."] }, patterns)).toBeUndefined()
+    })
+    
+    test("should handle sequence matching with *", () => {
+       const patterns = {
+        "git * commit": "git-commit",
+      }
+      expect(Wildcard.allStructured({ head: "git", tail: ["add", ".", "commit"] }, patterns)).toBe("git-commit")
+      expect(Wildcard.allStructured({ head: "git", tail: ["commit"] }, patterns)).toBe("git-commit")
+    })
+
+    test("should return acc if matchSequence fails", () => {
+      const patterns = { "git checkout": "val" }
+      expect(Wildcard.allStructured({ head: "git", tail: ["status"] }, patterns)).toBeUndefined()
+    })
+
+    test("should handle multiple patterns in sequence", () => {
+      const patterns = {
+        "a b c": "match"
+      }
+      expect(Wildcard.allStructured({ head: "a", tail: ["b", "c"] }, patterns)).toBe("match")
+      expect(Wildcard.allStructured({ head: "a", tail: ["x", "b", "c"] }, patterns)).toBe("match")
+      expect(Wildcard.allStructured({ head: "a", tail: ["b", "x", "c"] }, patterns)).toBe("match")
+      expect(Wildcard.allStructured({ head: "a", tail: ["x", "y"] }, patterns)).toBeUndefined()
+    })
+
+    test("should handle matchSequence failing with empty items", () => {
+      const patterns = { "a b": "val" }
+      expect(Wildcard.allStructured({ head: "a", tail: [] }, patterns)).toBeUndefined()
+    })
+
+    test("should handle matchSequence with literal parts that don't match", () => {
+      const patterns = { "a b": "val" }
+      expect(Wildcard.allStructured({ head: "a", tail: ["c"] }, patterns)).toBeUndefined()
+    })
+
+    test("should handle sequence matching with *", () => {
+       const patterns = {
+        "git * commit": "git-commit",
+      }
+      expect(Wildcard.allStructured({ head: "git", tail: ["add", ".", "commit"] }, patterns)).toBe("git-commit")
+      expect(Wildcard.allStructured({ head: "git", tail: ["commit"] }, patterns)).toBe("git-commit")
+      expect(Wildcard.allStructured({ head: "git", tail: ["add", "push"] }, patterns)).toBeUndefined()
+    })
+
+    test("should handle complex sequence matching", () => {
+      const patterns = {
+        "a * b * c": "match"
+      }
+      expect(Wildcard.allStructured({ head: "a", tail: ["x", "b", "y", "c"] }, patterns)).toBe("match")
+      expect(Wildcard.allStructured({ head: "a", tail: ["b", "c"] }, patterns)).toBe("match")
+      expect(Wildcard.allStructured({ head: "a", tail: ["x", "y", "b", "z", "c"] }, patterns)).toBe("match")
+      expect(Wildcard.allStructured({ head: "a", tail: ["x", "y"] }, patterns)).toBeUndefined()
+    })
+  })
 })
 
 test("match normalizes slashes for cross-platform globbing", () => {

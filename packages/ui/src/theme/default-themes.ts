@@ -1,4 +1,5 @@
 import type { DesktopTheme } from "./types"
+import abyssThemeJson from "./themes/abyss.json"
 import oc2ThemeJson from "./themes/oc-2.json"
 import amoledThemeJson from "./themes/amoled.json"
 import auraThemeJson from "./themes/aura.json"
@@ -36,7 +37,28 @@ import tokyonightThemeJson from "./themes/tokyonight.json"
 import vercelThemeJson from "./themes/vercel.json"
 import vesperThemeJson from "./themes/vesper.json"
 import zenburnThemeJson from "./themes/zenburn.json"
+import customThemeJson from "./themes/custom-theme.json"
+import ipomoeaThemeJson from "./themes/ipomoea.json"
+import cobalt2ThemeJson from "./themes/cobalt2.json"
+import mercuryThemeJson from "./themes/mercury.json"
+import synthwave84ThemeJson from "./themes/synthwave84.json"
+import everforestThemeJson from "./themes/everforest.json"
+import lucentOrngThemeJson from "./themes/lucent-orng.json"
+import palenightThemeJson from "./themes/palenight.json"
+import rosepineThemeJson from "./themes/rosepine.json"
+import zenburnThemeJson from "./themes/zenburn.json"
+import flexokiThemeJson from "./themes/flexoki.json"
+import kanagawaThemeJson from "./themes/kanagawa.json"
+import matrixThemeJson from "./themes/matrix.json"
+import githubThemeJson from "./themes/github.json"
+import cursorThemeJson from "./themes/cursor.json"
+import materialThemeJson from "./themes/material.json"
+import oneDarkThemeJson from "./themes/one-dark.json"
+import orngThemeJson from "./themes/orng.json"
+import osakaJadeThemeJson from "./themes/osaka-jade.json"
+import vercelThemeJson from "./themes/vercel.json"
 
+export const abyssTheme = abyssThemeJson as DesktopTheme
 export const oc2Theme = oc2ThemeJson as DesktopTheme
 export const amoledTheme = amoledThemeJson as DesktopTheme
 export const auraTheme = auraThemeJson as DesktopTheme
@@ -74,8 +96,29 @@ export const tokyonightTheme = tokyonightThemeJson as DesktopTheme
 export const vercelTheme = vercelThemeJson as DesktopTheme
 export const vesperTheme = vesperThemeJson as DesktopTheme
 export const zenburnTheme = zenburnThemeJson as DesktopTheme
+export const customTheme = customThemeJson as DesktopTheme
+export const ipomoeaTheme = ipomoeaThemeJson as DesktopTheme
+export const cobalt2Theme = cobalt2ThemeJson as DesktopTheme
+export const mercuryTheme = mercuryThemeJson as DesktopTheme
+export const synthwave84Theme = synthwave84ThemeJson as DesktopTheme
+export const everforestTheme = everforestThemeJson as DesktopTheme
+export const lucentOrngTheme = lucentOrngThemeJson as DesktopTheme
+export const palenightTheme = palenightThemeJson as DesktopTheme
+export const rosepineTheme = rosepineThemeJson as DesktopTheme
+export const zenburnTheme = zenburnThemeJson as DesktopTheme
+export const flexokiTheme = flexokiThemeJson as DesktopTheme
+export const kanagawaTheme = kanagawaThemeJson as DesktopTheme
+export const matrixTheme = matrixThemeJson as DesktopTheme
+export const githubTheme = githubThemeJson as DesktopTheme
+export const cursorTheme = cursorThemeJson as DesktopTheme
+export const materialTheme = materialThemeJson as DesktopTheme
+export const oneDarkTheme = oneDarkThemeJson as DesktopTheme
+export const orngTheme = orngThemeJson as DesktopTheme
+export const osakaJadeTheme = osakaJadeThemeJson as DesktopTheme
+export const vercelTheme = vercelThemeJson as DesktopTheme
 
 export const DEFAULT_THEMES: Record<string, DesktopTheme> = {
+  abyss: abyssTheme,
   "oc-2": oc2Theme,
   amoled: amoledTheme,
   aura: auraTheme,
@@ -113,4 +156,24 @@ export const DEFAULT_THEMES: Record<string, DesktopTheme> = {
   vercel: vercelTheme,
   vesper: vesperTheme,
   zenburn: zenburnTheme,
+  "custom-theme": customTheme,
+  ipomoea: ipomoeaTheme,
+  cobalt2: cobalt2Theme,
+  mercury: mercuryTheme,
+  synthwave84: synthwave84Theme,
+  everforest: everforestTheme,
+  "lucent-orng": lucentOrngTheme,
+  palenight: palenightTheme,
+  rosepine: rosepineTheme,
+  zenburn: zenburnTheme,
+  flexoki: flexokiTheme,
+  kanagawa: kanagawaTheme,
+  matrix: matrixTheme,
+  github: githubTheme,
+  cursor: cursorTheme,
+  material: materialTheme,
+  "one-dark": oneDarkTheme,
+  orng: orngTheme,
+  "osaka-jade": osakaJadeTheme,
+  vercel: vercelTheme,
 }

@@ -40,7 +40,7 @@ export namespace SystemPrompt {
         `</env>`,
         `<directories>`,
         `  ${
-          project.vcs === "git" && false
+          project.vcs === "git"
             ? await Ripgrep.tree({
                 cwd: Instance.directory,
                 limit: 50,
@@ -64,5 +64,9 @@ export namespace SystemPrompt {
       // version of them here and a less verbose version in tool description, rather than vice versa.
       Skill.fmt(list, { verbose: true }),
     ].join("\n")
+  }
+
+  export async function custom(): Promise<string[]> {
+    return []
   }
 }

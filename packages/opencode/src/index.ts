@@ -168,34 +168,30 @@ cli = cli
 try {
   await cli.parse()
 } catch (e) {
-  let data: Record<string, any> = {}
-  if (e instanceof NamedError) {
-    const obj = e.toObject()
-    Object.assign(data, {
-      ...obj.data,
-    })
-  }
-
-  if (e instanceof Error) {
-    Object.assign(data, {
+  const data = (() => {
+    const base = e instanceof NamedError ? e.toObject().data : {}
+    const withError = e instanceof Error ? {
+      ...base,
       name: e.name,
       message: e.message,
       cause: e.cause?.toString(),
       stack: e.stack,
-    })
-  }
+    } : base
 
-  if (e instanceof ResolveMessage) {
-    Object.assign(data, {
-      name: e.name,
-      message: e.message,
-      code: e.code,
-      specifier: e.specifier,
-      referrer: e.referrer,
-      position: e.position,
-      importKind: e.importKind,
-    })
-  }
+    if (e instanceof ResolveMessage) {
+      return {
+        ...withError,
+        name: e.name,
+        message: e.message,
+        code: e.code,
+        specifier: e.specifier,
+        referrer: e.referrer,
+        position: e.position,
+        importKind: e.importKind,
+      }
+    }
+    return withError
+  })()
   Log.Default.error("fatal", data)
   const formatted = FormatError(e)
   if (formatted) UI.error(formatted)

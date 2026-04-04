@@ -1,0 +1,23 @@
+Apply a patch to modify multiple files. Supports adding, updating, and deleting files with context-aware changes.
+
+Usage:
+- The patch must be enclosed in markers:
+  *** Begin Patch
+  ...
+  *** End Patch
+
+- To add a file:
+  *** Add File: <path>
+  +<line 1>
+  +<line 2>
+
+- To delete a file:
+  *** Delete File: <path>
+
+- To update/move a file:
+  *** Update File: <path>
+  *** Move to: <new_path> (optional)
+  @@ <context>
+  - <old line>
+  + <new line>
+  *** End of File (optional)

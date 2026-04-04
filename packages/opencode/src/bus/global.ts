@@ -8,3 +8,10 @@ export const GlobalBus = new EventEmitter<{
     },
   ]
 }>()
+
+/**
+ * Reset state for test isolation
+ */
+export function resetForTest() {
+  GlobalBus.removeAllListeners()
+}

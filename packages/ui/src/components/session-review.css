@@ -3,6 +3,8 @@
   flex-direction: column;
   gap: 0px;
   height: 100%;
+  overflow-y: auto;
+  contain: strict;
 
   [data-slot="session-review-scroll"] {
     flex: 1 1 auto;

@@ -1,15 +1,28 @@
 import { Instance } from "../project/instance"
 
 export namespace Env {
-  const state = Instance.state(() => {
-    // Create a shallow copy to isolate environment per instance
-    // Prevents parallel tests from interfering with each other's env vars
-    return { ...process.env } as Record<string, string | undefined>
-  })
+  let _state: (() => Record<string, string | undefined>) | undefined
+
+  function state() {
+    if (!_state) {
+      _state = Instance.state(() => {
+        // Create a shallow copy to isolate environment per instance
+        // Prevents parallel tests from interfering with each other's env vars
+        return { ...process.env } as Record<string, string | undefined>
+      })
+    }
+    return _state()
+  }
 
   export function get(key: string) {
     const env = state()
-    return env[key]
+    const value = env[key]
+    if (value !== undefined) return value
+
+    // Case-insensitive lookup as fallback
+    const upper = key.toUpperCase()
+    const found = Object.keys(env).find((k) => k.toUpperCase() === upper)
+    return found ? env[found] : undefined
   }
 
   export function all() {

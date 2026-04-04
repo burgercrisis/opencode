@@ -26,6 +26,8 @@ on:
 concurrency: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.version || inputs.bump }}
 
 permissions:
+  # SECURITY: id-token: write required for package publishing and signing
+  # REVIEW: This is a legitimate use case for deployment workflows
   id-token: write
   contents: write
   packages: write
@@ -107,6 +109,13 @@ jobs:
       - build-cli
       - version
     continue-on-error: false
+  # Tauri multi-platform build job
+  # continue-on-error: true ensures that if one platform fails, others can still complete
+  # fail-fast: false allows other matrix jobs to continue even if one fails
+  # This provides resilience against platform-specific build issues
+  publish-tauri:
+    needs: publish
+    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
@@ -148,7 +157,9 @@ jobs:
       - name: Setup Apple API Key
         if: ${{ runner.os == 'macOS' }}
         run: |
+          # SECURITY: Write secret to temp file without logging
           echo "${{ secrets.APPLE_API_KEY_PATH }}" > $RUNNER_TEMP/apple-api-key.p8
+          chmod 600 $RUNNER_TEMP/apple-api-key.p8
 
       - uses: ./.github/actions/setup-bun
 
@@ -370,10 +381,18 @@ jobs:
           path: packages/desktop-electron/dist/latest*.yml
 
   publish:
+  # Final release completion job
+  # always() allows this job to run even if some platform builds failed
+  # We only require the main publish job to succeed and have a tag
+  # This ensures successful platforms are still released even if others fail
+  publish-release:
     needs:
       - version
       - build-cli
       - build-tauri
+      - publish
+      - publish-tauri
+    if: always() && needs.publish.result == 'success' && needs.publish.outputs.tag
       - build-electron
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
@@ -430,11 +449,30 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y pacman-package-manager
           mkdir -p ~/.ssh
-          echo "${{ secrets.AUR_KEY }}" > ~/.ssh/id_rsa
+          # SECURITY: Write SSH key without logging
+          {
+            echo "${{ secrets.AUR_KEY }}"
+          } > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
           git config --global user.email "opencode@sst.dev"
           git config --global user.name "opencode"
           ssh-keyscan -H aur.archlinux.org >> ~/.ssh/known_hosts || true
+
+      - name: Report Platform Build Status
+        run: |
+          echo "📊 Platform Build Status Report"
+          echo "==============================="
+          echo "Publish Job: ${{ needs.publish.result }}"
+          echo "Tauri Job: ${{ needs.publish-tauri.result }}"
+          echo ""
+          if [[ "${{ needs.publish-tauri.result }}" == "failure" ]]; then
+            echo "⚠️  Some platform builds failed, but continuing with release completion"
+            echo "   Successful platforms will still be published"
+            echo "   Check the individual platform job logs for details"
+          elif [[ "${{ needs.publish-tauri.result }}" == "success" ]]; then
+            echo "✅ All platform builds completed successfully"
+          fi
+          echo ""
 
       - run: ./script/publish.ts
         env:

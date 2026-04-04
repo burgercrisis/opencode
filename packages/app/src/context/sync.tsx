@@ -1,5 +1,5 @@
 import { batch, createMemo } from "solid-js"
-import { createStore, produce, reconcile } from "solid-js/store"
+import { createStore, produce, reconcile, SetStoreFunction } from "solid-js/store"
 import { Binary } from "@opencode-ai/util/binary"
 import { retry } from "@opencode-ai/util/retry"
 import { createSimpleContext } from "@opencode-ai/ui/context"
@@ -172,6 +172,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
     const sdk = useSDK()
 
     type Child = ReturnType<(typeof globalSync)["child"]>
+    type Store = Child[0]
     type Setter = Child[1]
 
     const current = createMemo(() => globalSync.child(sdk.directory))
@@ -182,12 +183,16 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
     const absolute = (path: string) => (current()[0].path.directory + "/" + path).replace("//", "/")
     const initialMessagePageSize = 80
     const historyMessagePageSize = 200
+    const messagePageSize = initialMessagePageSize
     const inflight = new Map<string, Promise<void>>()
     const inflightDiff = new Map<string, Promise<void>>()
     const inflightTodo = new Map<string, Promise<void>>()
+    
+    // BEST OF BOTH: Keep HEAD optimistic caching + seen tracking for Windows/shell session performance
     const optimistic = new Map<string, Map<string, OptimisticItem>>()
     const maxDirs = 30
     const seen = new Map<string, Set<string>>()
+
     const [meta, setMeta] = createStore({
       limit: {} as Record<string, number>,
       cursor: {} as Record<string, string | undefined>,
@@ -247,6 +252,22 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
         evict(first, setStore, stale)
       }
       return created
+    }
+
+    const tracked = (directory: string, sessionID: string) => seen.get(directory)?.has(sessionID) ?? false
+
+    // Incoming hydration upgrade for efficient Windows/shell session loading
+    const hydrateMessages = (directory: string, store: Store, sessionID: string) => {
+      const key = keyFor(directory, sessionID)
+      if (meta.limit[key] !== undefined) return
+
+      const messages = store.message[sessionID]
+      if (!messages) return
+
+      // BEST OF BOTH: Simple limit logic for shell-heavy sessions
+      const limit = messages.length === 0 ? initialMessagePageSize : messages.length + historyMessagePageSize
+      setMeta("limit", key, limit)
+      setMeta("complete", key, messages.length < limit)
     }
 
     const clearMeta = (directory: string, sessionIDs: string[]) => {
@@ -310,8 +331,6 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
         complete: !cursor,
       }
     }
-
-    const tracked = (directory: string, sessionID: string) => seen.get(directory)?.has(sessionID) ?? false
 
     const loadMessages = async (input: {
       directory: string
@@ -433,7 +452,9 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           const [store, setStore] = globalSync.child(directory)
           const key = keyFor(directory, sessionID)
 
+          // BEST OF BOTH: HEAD touch + incoming hydrate for optimal shell session loading
           touch(directory, setStore, sessionID)
+          hydrateMessages(directory, store, sessionID)
 
           const seeded = getSessionPrefetch(directory, sessionID)
           if (seeded && store.message[sessionID] !== undefined && meta.limit[key] === undefined) {
@@ -444,6 +465,17 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
               setMeta("loading", key, false)
             })
           }
+
+          const hasMessages = store.message[sessionID] !== undefined
+          const hydrated = meta.limit[key] !== undefined
+          const hasSession = Binary.search(store.session, sessionID, (s) => s.id).found
+          if (hasSession && hasMessages && hydrated && !opts?.force) return
+
+          const pending = inflight.get(key)
+          if (pending) return pending
+
+          const count = store.message[sessionID]?.length ?? 0
+          const limit = hydrated ? (meta.limit[key] ?? messagePageSize) : Math.max(initialMessagePageSize, count + 50)
 
           return runInflight(inflight, key, async () => {
             const pending = getSessionPrefetchPromise(directory, sessionID)
@@ -460,41 +492,38 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
               }
             }
 
-            const hasSession = Binary.search(store.session, sessionID, (s) => s.id).found
             const cached = store.message[sessionID] !== undefined && meta.limit[key] !== undefined
             if (cached && hasSession && !opts?.force) return
 
-            const limit = meta.limit[key] ?? initialMessagePageSize
-            const sessionReq =
-              hasSession && !opts?.force
-                ? Promise.resolve()
-                : retry(() => client.session.get({ sessionID })).then((session) => {
-                    if (!tracked(directory, sessionID)) return
-                    const data = session.data
-                    if (!data) return
-                    setStore(
-                      "session",
-                      produce((draft) => {
-                        const match = Binary.search(draft, sessionID, (s) => s.id)
-                        if (match.found) {
-                          draft[match.index] = data
-                          return
-                        }
-                        draft.splice(match.index, 0, data)
-                      }),
-                    )
-                  })
+            const sessionLimit = meta.limit[key] ?? initialMessagePageSize
+            const sessionReq = hasSession && !opts?.force
+              ? Promise.resolve()
+              : retry(() => client.session.get({ sessionID })).then((session) => {
+                  if (!tracked(directory, sessionID)) return
+                  const data = session.data
+                  if (!data) return
+                  setStore(
+                    "session",
+                    produce((draft) => {
+                      const match = Binary.search(draft, sessionID, (s) => s.id)
+                      if (match.found) {
+                        draft[match.index] = data
+                        return
+                      }
+                      draft.splice(match.index, 0, data)
+                    }),
+                  )
+                })
 
-            const messagesReq =
-              cached && !opts?.force
-                ? Promise.resolve()
-                : loadMessages({
-                    directory,
-                    client,
-                    setStore,
-                    sessionID,
-                    limit,
-                  })
+            const messagesReq = cached && !opts?.force
+              ? Promise.resolve()
+              : loadMessages({
+                  directory,
+                  client,
+                  setStore,
+                  sessionID,
+                  limit: sessionLimit,
+                })
 
             await Promise.all([sessionReq, messagesReq])
           })

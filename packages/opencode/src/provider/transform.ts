@@ -221,9 +221,9 @@ export namespace ProviderTransform {
       const filtered = msg.content.map((part) => {
         if (part.type !== "file" && part.type !== "image") return part
 
-        // Check for empty base64 image data
+        // Check for empty base64 image data with defensive null checks
         if (part.type === "image") {
-          const imageStr = part.image.toString()
+          const imageStr = part.image?.toString?.() ?? ""
           if (imageStr.startsWith("data:")) {
             const match = imageStr.match(/^data:([^;]+);base64,(.*)$/)
             if (match && (!match[2] || match[2].length === 0)) {
@@ -235,7 +235,10 @@ export namespace ProviderTransform {
           }
         }
 
-        const mime = part.type === "image" ? part.image.toString().split(";")[0].replace("data:", "") : part.mediaType
+        // Defensive checks for mime extraction
+        const mime = part.type === "image"
+          ? part.image?.toString?.().split(";")[0]?.replace("data:", "") ?? ""
+          : part.mediaType ?? ""
         const filename = part.type === "file" ? part.filename : undefined
         const modality = mimeToModality(mime)
         if (!modality) return part

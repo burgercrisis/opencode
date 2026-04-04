@@ -294,7 +294,7 @@ export class Global extends HeyApiClient {
   }
 
   /**
-   * Dispose instance
+   * Dispose all instances
    *
    * Clean up and dispose all OpenCode instances, releasing all resources.
    */

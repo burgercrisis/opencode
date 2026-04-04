@@ -163,4 +163,36 @@ export const Instance = {
 
     return disposal.all
   },
+  /**
+   * Internal test helper to clear all instances and caches.
+   * @internal
+   */
+  async resetForTest() {
+    // Inline disposeAll logic to avoid method reference issues
+    Log.Default.info("disposing all instances")
+    const entries = [...cache.entries()]
+    for (const [key, value] of entries) {
+      if (cache.get(key) !== value) continue
+
+      const ctx = await value.catch((error) => {
+        Log.Default.warn("instance dispose failed", { key, error })
+        return undefined
+      })
+
+      if (!ctx) {
+        if (cache.get(key) === value) cache.delete(key)
+        continue
+      }
+
+      if (cache.get(key) !== value) continue
+
+      await context.provide(ctx, async () => {
+        await Instance.dispose()
+      })
+    }
+    
+    cache.clear()
+    disposal.all = undefined
+    State.resetForTest()
+  },
 }

@@ -1,15 +1,35 @@
 import { $ } from "bun"
+import { copyBinaryToSidecarFolder, getCurrentSidecar, windowsify, RUST_TARGET } from "./utils"
 
-import { copyBinaryToSidecarFolder, getCurrentSidecar, windowsify } from "./utils"
-
-const RUST_TARGET = Bun.env.TAURI_ENV_TARGET_TRIPLE
+// Aggressively kill any hanging sidecar or app processes to release file locks
+if (process.platform === "win32") {
+  try {
+    // Kill any process that might be using the opencode-cli or the app
+    await $`powershell -Command "Get-Process | Where-Object { $_.Name -like '*opencode*' } | Stop-Process -Force"`.quiet()
+  } catch (e) {
+    // Ignore errors if no processes found
+  }
+}
 
 const sidecarConfig = getCurrentSidecar(RUST_TARGET)
 
-const binaryPath = windowsify(`../opencode/dist/${sidecarConfig.ocBinary}/bin/opencode`)
+// Use baseline builds based on Windows baseline build configuration
+// This matches build script logic exactly: process.env.OPENCODE_SKIP_WINDOWS_BASELINE !== "false"
+// On Windows, this defaults to skipping baseline unless explicitly overridden
+const SKIP_WINDOWS_BASELINE = process.env.OPENCODE_SKIP_WINDOWS_BASELINE !== "false"
+const useBaseline = process.platform !== "win32" || !SKIP_WINDOWS_BASELINE
 
-await (sidecarConfig.ocBinary.includes("-baseline")
-  ? $`cd ../opencode && bun run build --single --baseline`
-  : $`cd ../opencode && bun run build --single`)
+// Use correct binary name based on whether we're doing baseline build
+const binaryName = process.platform === "win32" && sidecarConfig.ocBinary.includes("-baseline")
+  ? sidecarConfig.ocBinary.replace("-baseline", "")
+  : sidecarConfig.ocBinary
 
+const binaryPath = windowsify(`../opencode/dist/${binaryName}/bin/opencode`)
+
+await (useBaseline ? $`cd ../opencode && bun run build --single --baseline` : $`cd ../opencode && bun run build --single`)
 await copyBinaryToSidecarFolder(binaryPath, RUST_TARGET)
+
+// Give Windows/Antivirus a moment to release the file handle
+if (process.platform === "win32") {
+  await new Promise(resolve => setTimeout(resolve, 1000))
+}

@@ -59,7 +59,7 @@ export namespace Keybind {
 
     return key.split(",").map((combo) => {
       // Handle <leader> syntax by replacing with leader+
-      const normalized = combo.replace(/<leader>/g, "leader+")
+      const normalized = combo.trim().replace(/<leader>/g, "leader+")
       const parts = normalized.toLowerCase().split("+")
       const info: Info = {
         ctrl: false,
@@ -69,7 +69,8 @@ export namespace Keybind {
         name: "",
       }
 
-      for (const part of parts) {
+      for (let part of parts) {
+        part = part.trim()
         switch (part) {
           case "ctrl":
             info.ctrl = true

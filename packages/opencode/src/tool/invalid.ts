@@ -8,9 +8,10 @@ export const InvalidTool = Tool.define("invalid", {
     error: z.string(),
   }),
   async execute(params) {
+    const output = `The arguments provided to the tool are invalid: ${params.error}`
     return {
       title: "Invalid Tool",
-      output: `The arguments provided to the tool are invalid: ${params.error}`,
+      output,
       metadata: {},
     }
   },

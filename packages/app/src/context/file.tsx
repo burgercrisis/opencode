@@ -63,6 +63,12 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
     const path = createPathHelpers(scope)
     const tabs = layout.tabs(() => `${params.dir}${params.id ? "/" + params.id : ""}`)
 
+    function ensure(path: string) {
+      if (!path) return
+      if (store.file[path]) return
+      setStore("file", path, { path, name: getFilename(path) })
+    }
+
     const inflight = new Map<string, Promise<void>>()
     const [store, setStore] = createStore<{
       file: Record<string, FileState>
@@ -110,10 +116,17 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
     const viewCache = createFileViewCache()
     const view = createMemo(() => viewCache.load(scope(), params.id))
 
-    const ensure = (file: string) => {
-      if (!file) return
-      if (store.file[file]) return
-      setStore("file", file, { path: file, name: getFilename(file) })
+    const get = (input: string) => {
+      const file = path.normalize(input)
+      const state = store.file[file]
+      const content = state?.content
+      if (!content) return state
+      if (hasFileContent(file)) {
+        touchFileContent(file)
+        return state
+      }
+      touchFileContent(file, approxBytes(content))
+      return state
     }
 
     const setLoading = (file: string) => {
@@ -154,6 +167,14 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
         description: message,
       })
     }
+
+    const active = createMemo(() => {
+      const tabValue = tabs.active()
+      if (!tabValue) return
+      const file = path.pathFromTab(tabValue)
+      if (!file) return
+      return get(file)
+    })
 
     const load = (input: string, options?: { force?: boolean }) => {
       const file = path.normalize(input)
@@ -216,29 +237,30 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
       })
     })
 
-    const get = (input: string) => {
-      const file = path.normalize(input)
-      const state = store.file[file]
-      const content = state?.content
-      if (!content) return state
-      if (hasFileContent(file)) {
-        touchFileContent(file)
-        return state
-      }
-      touchFileContent(file, approxBytes(content))
-      return state
-    }
-
     function withPath(input: string, action: (file: string) => unknown) {
       return action(path.normalize(input))
     }
     const scrollTop = (input: string) => withPath(input, (file) => view().scrollTop(file))
     const scrollLeft = (input: string) => withPath(input, (file) => view().scrollLeft(file))
     const selectedLines = (input: string) => withPath(input, (file) => view().selectedLines(file))
+    const selection = (input: string) => withPath(input, (file) => view().selection(file))
+    const folded = (input: string) => withPath(input, (file) => view().folded(file))
+    const changeIndex = (input: string) => withPath(input, (file) => view().changeIndex(file))
     const setScrollTop = (input: string, top: number) => withPath(input, (file) => view().setScrollTop(file, top))
     const setScrollLeft = (input: string, left: number) => withPath(input, (file) => view().setScrollLeft(file, left))
     const setSelectedLines = (input: string, range: SelectedLineRange | null) =>
       withPath(input, (file) => view().setSelectedLines(file, range))
+    const setSelection = (input: string, sel: FileSelection | null) => {
+      view().setSelection(path.normalize(input), sel)
+    }
+
+    const unfold = (input: string, key: string) => {
+      view().unfold(path.normalize(input), key)
+    }
+
+    const setChangeIndex = (input: string, index: number) => {
+      view().setChangeIndex(path.normalize(input), index)
+    }
 
     onCleanup(() => {
       stop()
@@ -267,12 +289,19 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
       },
       get,
       load,
+      active,
       scrollTop,
       scrollLeft,
       setScrollTop,
       setScrollLeft,
       selectedLines,
       setSelectedLines,
+      selection,
+      setSelection,
+      folded,
+      unfold,
+      changeIndex,
+      setChangeIndex,
       searchFiles: (query: string) => search(query, "false"),
       searchFilesAndDirectories: (query: string) => search(query, "true"),
     }

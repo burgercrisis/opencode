@@ -34,7 +34,7 @@ export namespace SessionCompaction {
     const config = await Config.get()
     if (config.compaction?.auto === false) return false
     const context = input.model.limit.context
-    if (context === 0) return false
+    if (context === 0) return true
 
     const count =
       input.tokens.total ||

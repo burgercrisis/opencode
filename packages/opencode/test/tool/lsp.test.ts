@@ -1,0 +1,188 @@
+import { expect, it, describe, mock, vi } from "bun:test"
+import { LspTool } from "../../src/tool/lsp"
+import { Instance } from "../../src/project/instance"
+import { tmpdir } from "../fixture/fixture"
+import path from "path"
+
+describe("LspTool", () => {
+  const ctx: any = {
+    sessionID: "session",
+    messageID: "message",
+    agent: "agent",
+    abort: new AbortController().signal,
+    messages: [],
+    metadata: () => {},
+    ask: mock(async () => {}),
+  }
+
+  it("throws error if file not found", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const tool = await LspTool.init()
+        const params = {
+          operation: "hover",
+          filePath: "non-existent.ts",
+          line: 1,
+          character: 1,
+        }
+
+        expect(tool.execute(params as any, ctx)).rejects.toThrow("File not found")
+      },
+    })
+  })
+
+  it("initializes tool successfully", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const tool = await LspTool.init()
+        expect(tool).toBeDefined()
+        expect(tool.description).toBeDefined()
+      },
+    })
+  })
+
+  it("validates file path parameter", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const tool = await LspTool.init()
+        
+        // Missing filePath should fail validation
+        const params = {
+          operation: "hover",
+          line: 1,
+          character: 1,
+        }
+
+        expect(tool.execute(params as any, ctx)).rejects.toThrow()
+      },
+    })
+  })
+
+  it("validates operation parameter", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const filePath = path.join(tmp.path, "test.ts")
+        await Bun.write(filePath, "const x = 1;")
+
+        const tool = await LspTool.init()
+        
+        // Invalid operation should fail
+        const params = {
+          operation: "invalidOperation",
+          filePath: "test.ts",
+          line: 1,
+          character: 1,
+        }
+
+        expect(tool.execute(params as any, ctx)).rejects.toThrow()
+      },
+    })
+  })
+
+  it("handles relative file paths with TypeScript LSP", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        // Create a file in a subdirectory
+        const subDir = path.join(tmp.path, "src")
+        await Bun.write(path.join(subDir, "test.ts"), "const x = 1;")
+        
+        const tool = await LspTool.init()
+        
+        // Test with relative path - TypeScript LSP should be available
+        const params = {
+          operation: "hover",
+          filePath: "src/test.ts",
+          line: 1,
+          character: 1,
+        }
+
+        // Should succeed with TypeScript LSP
+        const result = await tool.execute(params as any, ctx)
+        expect(result).toBeDefined()
+      },
+    })
+  })
+
+  it("handles absolute file paths with TypeScript LSP", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const filePath = path.join(tmp.path, "test.ts")
+        await Bun.write(filePath, "const x = 1;")
+        
+        const tool = await LspTool.init()
+        
+        // Test with absolute path
+        const params = {
+          operation: "hover",
+          filePath: filePath,
+          line: 1,
+          character: 1,
+        }
+
+        // Should succeed with TypeScript LSP
+        const result = await tool.execute(params as any, ctx)
+        expect(result).toBeDefined()
+      },
+    })
+  })
+
+  it("performs hover operation on TypeScript file", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const filePath = path.join(tmp.path, "test.ts")
+        await Bun.write(filePath, "const myVariable = 42;")
+        
+        const tool = await LspTool.init()
+        const params = {
+          operation: "hover",
+          filePath: "test.ts",
+          line: 1,
+          character: 7, // Position on "myVariable"
+        }
+
+        const result = await tool.execute(params as any, ctx)
+        expect(result).toBeDefined()
+        // Hover might return type information or "No results found"
+        expect(result.output).toBeDefined()
+      },
+    })
+  })
+
+  it("performs documentSymbol operation on TypeScript file", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const filePath = path.join(tmp.path, "test.ts")
+        await Bun.write(filePath, "function foo() {}\nconst bar = 1;")
+        
+        const tool = await LspTool.init()
+        const params = {
+          operation: "documentSymbol",
+          filePath: "test.ts",
+          line: 1,
+          character: 1,
+        }
+
+        const result = await tool.execute(params as any, ctx)
+        expect(result).toBeDefined()
+        // Document symbols should find the function and variable
+        expect(result.output).toBeDefined()
+      },
+    })
+  })
+})

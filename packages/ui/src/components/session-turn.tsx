@@ -76,6 +76,7 @@ function unwrap(message: string) {
 
 function same<T>(a: readonly T[], b: readonly T[]) {
   if (a === b) return true
+  if (!a || !b) return false
   if (a.length !== b.length) return false
   return a.every((x, i) => x === b[i])
 }
@@ -167,12 +168,17 @@ export function SessionTurn(
   const emptyDiffs: FileDiff[] = []
   const idle = { type: "idle" as const }
 
-  const allMessages = createMemo(() => props.messages ?? list(data.store.message?.[props.sessionID], emptyMessages))
+  const allMessages = createMemo(() => props.messages ?? {
+    const messages = data.store.message?.[props.sessionID]
+    if (!messages) return emptyMessages
+    // Filter out any undefined items
+    return messages.filter((m) => m) as MessageType[]
+  })
 
   const messageIndex = createMemo(() => {
-    const messages = allMessages() ?? emptyMessages
+    const messages = allMessages()
+    if (!messages || messages.length === 0) return -1
     const result = Binary.search(messages, props.messageID, (m) => m.id)
-
     const index = result.found ? result.index : messages.findIndex((m) => m.id === props.messageID)
     if (index < 0) return -1
 

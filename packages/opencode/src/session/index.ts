@@ -19,6 +19,7 @@ import { MessageV2 } from "./message-v2"
 import { Instance } from "../project/instance"
 import { SessionPrompt } from "./prompt"
 import { fn } from "@/util/fn"
+import { iife } from "@/util/iife"
 import { Command } from "../command"
 import { Snapshot } from "@/snapshot"
 import { WorkspaceContext } from "../control-plane/workspace-context"
@@ -31,7 +32,6 @@ import { ModelID, ProviderID } from "@/provider/schema"
 import { Permission } from "@/permission"
 import { Global } from "@/global"
 import type { LanguageModelV2Usage } from "@ai-sdk/provider"
-import { iife } from "@/util/iife"
 
 export namespace Session {
   const log = Log.create({ service: "session" })
@@ -55,11 +55,11 @@ export namespace Session {
     const summary =
       row.summary_additions !== null || row.summary_deletions !== null || row.summary_files !== null
         ? {
-            additions: row.summary_additions ?? 0,
-            deletions: row.summary_deletions ?? 0,
-            files: row.summary_files ?? 0,
-            diffs: row.summary_diffs ?? undefined,
-          }
+          additions: row.summary_additions ?? 0,
+          deletions: row.summary_deletions ?? 0,
+          files: row.summary_files ?? 0,
+          diffs: row.summary_diffs ?? undefined,
+        }
         : undefined
     const share = row.share_url ? { url: row.share_url } : undefined
     const revert = row.revert ?? undefined
@@ -122,7 +122,7 @@ export namespace Session {
   export const Info = z
     .object({
       id: SessionID.zod,
-      slug: z.string(),
+      slug: z.string().optional(),
       projectID: ProjectID.zod,
       workspaceID: WorkspaceID.zod.optional(),
       directory: z.string(),
@@ -251,14 +251,20 @@ export namespace Session {
         title,
       })
       const msgs = await messages({ sessionID: input.sessionID })
-      const idMap = new Map<string, MessageID>()
 
-      for (const msg of msgs) {
-        if (input.messageID && msg.info.id >= input.messageID) break
+      const processMessages = async (
+        remaining: MessageV2.WithParts[],
+        idMap: Map<string, MessageID>,
+      ): Promise<void> => {
+        const msg = remaining[0]
+        if (!msg || (input.messageID && msg.info.id >= input.messageID)) return
+
         const newID = MessageID.ascending()
-        idMap.set(msg.info.id, newID)
+        const nextIdMap = new Map(idMap).set(msg.info.id, newID)
 
-        const parentID = msg.info.role === "assistant" && msg.info.parentID ? idMap.get(msg.info.parentID) : undefined
+        const parentID =
+          msg.info.role === "assistant" && msg.info.parentID ? nextIdMap.get(msg.info.parentID) : undefined
+
         const cloned = await updateMessage({
           ...msg.info,
           sessionID: session.id,
@@ -266,15 +272,21 @@ export namespace Session {
           ...(parentID && { parentID }),
         })
 
-        for (const part of msg.parts) {
-          await updatePart({
-            ...part,
-            id: PartID.ascending(),
-            messageID: cloned.id,
-            sessionID: session.id,
-          })
-        }
+        await Promise.all(
+          msg.parts.map((part) =>
+            updatePart({
+              ...part,
+              id: PartID.ascending(),
+              messageID: cloned.id,
+              sessionID: session.id,
+            }),
+          ),
+        )
+
+        return processMessages(remaining.slice(1), nextIdMap)
       }
+
+      await processMessages(msgs, new Map())
       return session
     },
   )
@@ -527,13 +539,14 @@ export namespace Session {
       limit: z.number().optional(),
     }),
     async (input) => {
-      const result = [] as MessageV2.WithParts[]
-      for await (const msg of MessageV2.stream(input.sessionID)) {
-        if (input.limit && result.length >= input.limit) break
-        result.push(msg)
+      const stream = MessageV2.stream(input.sessionID)
+      const processStream = async (acc: MessageV2.WithParts[]): Promise<MessageV2.WithParts[]> => {
+        const next = await stream.next()
+        if (next.done || (input.limit && acc.length >= input.limit)) return acc
+        return processStream([...acc, next.value])
       }
-      result.reverse()
-      return result
+      const result = await processStream([])
+      return result.reverse()
     },
   )
 
@@ -665,10 +678,15 @@ export namespace Session {
     const project = Instance.project
     try {
       const session = await get(sessionID)
-      for (const child of await children(sessionID)) {
+      const childs = await children(sessionID)
+
+      const removeChildren = async (remaining: Session.Info[]): Promise<void> => {
+        const child = remaining[0]
+        if (!child) return
         await remove(child.id)
+        return removeChildren(remaining.slice(1))
       }
-      await unshare(sessionID).catch(() => {})
+      await unshare(sessionID).catch(() => { })
       // CASCADE delete handles messages and parts automatically
       Database.use((db) => {
         db.delete(SessionTable).where(eq(SessionTable.id, sessionID)).run()
@@ -840,6 +858,7 @@ export namespace Session {
         input: adjustedInputTokens,
         output: outputTokens,
         reasoning: reasoningTokens,
+        sent: 0,
         cache: {
           write: cacheWriteInputTokens,
           read: cacheReadInputTokens,

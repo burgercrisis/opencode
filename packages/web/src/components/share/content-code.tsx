@@ -1,4 +1,3 @@
-import { codeToHtml, bundledLanguages } from "shiki"
 import { createResource, Suspense } from "solid-js"
 import style from "./content-code.module.css"
 
@@ -7,12 +6,16 @@ interface Props {
   lang?: string
   flush?: boolean
 }
+
 export function ContentCode(props: Props) {
   const [html] = createResource(
     () => [props.code, props.lang],
     async ([code, lang]) => {
-      // TODO: For testing delays
-      // await new Promise((resolve) => setTimeout(resolve, 3000))
+      const [{ codeToHtml, bundledLanguages }, { transformerNotationDiff }] = await Promise.all([
+        import("shiki"),
+        import("@shikijs/transformers"),
+      ])
+
       return (await codeToHtml(code || "", {
         lang: lang && lang in bundledLanguages ? lang : "text",
         themes: {

@@ -1,7 +1,6 @@
 import style from "./content-bash.module.css"
 import { createResource, createSignal } from "solid-js"
 import { createOverflow, useShareMessages } from "./common"
-import { codeToHtml } from "shiki"
 
 interface Props {
   command: string
@@ -15,6 +14,7 @@ export function ContentBash(props: Props) {
   const [commandHtml] = createResource(
     () => props.command,
     async (command) => {
+      const { codeToHtml } = await import("shiki")
       return codeToHtml(command || "", {
         lang: "bash",
         themes: {
@@ -28,6 +28,7 @@ export function ContentBash(props: Props) {
   const [outputHtml] = createResource(
     () => props.output,
     async (output) => {
+      const { codeToHtml } = await import("shiki")
       return codeToHtml(output || "", {
         lang: "console",
         themes: {

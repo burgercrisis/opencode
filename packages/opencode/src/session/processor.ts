@@ -11,6 +11,7 @@ import { Plugin } from "@/plugin"
 import type { Provider } from "@/provider/provider"
 import { LLM } from "./llm"
 import { Config } from "@/config/config"
+import { Token } from "@/util/token"
 import { SessionCompaction } from "./compaction"
 import { Permission } from "@/permission"
 import { Question } from "@/question"
@@ -36,6 +37,10 @@ export namespace SessionProcessor {
     let attempt = 0
     let needsCompaction = false
 
+    // Track character accumulation for accurate token calculation during streaming
+    let reasoningCharCount = 0
+    let textCharCount = 0
+
     const result = {
       get message() {
         return input.assistantMessage
@@ -51,7 +56,17 @@ export namespace SessionProcessor {
           try {
             let currentText: MessageV2.TextPart | undefined
             let reasoningMap: Record<string, MessageV2.ReasoningPart> = {}
+            reasoningCharCount = 0
+            textCharCount = 0
             const stream = await LLM.stream(streamInput)
+
+            // Create snapshot BEFORE processing stream to ensure it's captured even if aborted
+            let snapshot: string | undefined
+            try {
+              snapshot = await Snapshot.track()
+            } catch (error) {
+              log.warn("failed to create snapshot before stream", { error: String(error) })
+            }
 
             for await (const value of stream.fullStream) {
               input.abort.throwIfAborted()
@@ -83,6 +98,7 @@ export namespace SessionProcessor {
                   if (value.id in reasoningMap) {
                     const part = reasoningMap[value.id]
                     part.text += value.text
+                    reasoningCharCount += value.text.length
                     if (value.providerMetadata) part.metadata = value.providerMetadata
                     await Session.updatePartDelta({
                       sessionID: part.sessionID,
@@ -232,7 +248,14 @@ export namespace SessionProcessor {
                   throw value.error
 
                 case "start-step":
-                  snapshot = await Snapshot.track()
+                  // Only create new snapshot if one doesn't exist from before stream
+                  if (!snapshot) {
+                    try {
+                      snapshot = await Snapshot.track()
+                    } catch (error) {
+                      log.warn("failed to create snapshot in start-step", { error: String(error) })
+                    }
+                  }
                   await Session.updatePart({
                     id: PartID.ascending(),
                     messageID: input.assistantMessage.id,
@@ -248,6 +271,15 @@ export namespace SessionProcessor {
                     usage: value.usage,
                     metadata: value.providerMetadata,
                   })
+
+                  // Use character-based estimates for reasoning and text if not provided by provider
+                  if (usage.tokens.reasoning === 0 && reasoningCharCount > 0) {
+                    usage.tokens.reasoning = Token.toTokenEstimate(reasoningCharCount)
+                  }
+                  if (usage.tokens.sent === 0 && textCharCount > 0) {
+                    usage.tokens.sent = Token.toTokenEstimate(textCharCount)
+                  }
+
                   input.assistantMessage.finish = value.finishReason
                   input.assistantMessage.cost += usage.cost
                   input.assistantMessage.tokens = usage.tokens
@@ -306,6 +338,7 @@ export namespace SessionProcessor {
                 case "text-delta":
                   if (currentText) {
                     currentText.text += value.text
+                    textCharCount += value.text.length
                     if (value.providerMetadata) currentText.metadata = value.providerMetadata
                     await Session.updatePartDelta({
                       sessionID: currentText.sessionID,

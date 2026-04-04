@@ -1,33 +1,79 @@
-Use the `apply_patch` tool to edit files. Your patch language is a stripped‑down, file‑oriented diff format designed to be easy to parse and safe to apply. You can think of it as a high‑level envelope:
+Use the `apply_patch` tool to edit multiple files efficiently. This tool applies a patch to modify multiple files with support for adding, updating, moving, and deleting files with context-aware changes and LSP diagnostics.
 
+## Patch Format
+
+The patch must be enclosed in markers:
+```
 *** Begin Patch
 [ one or more file sections ]
 *** End Patch
+```
 
-Within that envelope, you get a sequence of file operations.
-You MUST include a header to specify the action you are taking.
-Each operation starts with one of three headers:
+## File Operations
 
-*** Add File: <path> - create a new file. Every following line is a + line (the initial contents).
-*** Delete File: <path> - remove an existing file. Nothing follows.
-*** Update File: <path> - patch an existing file in place (optionally with a rename).
+### Add File
+Create a new file with specified content:
+```
+*** Add File: <path>
++Line 1 content
++Line 2 content
++Line N content
+```
 
-Example patch:
+### Delete File
+Remove an existing file:
+```
+*** Delete File: <path>
+```
+
+### Update File
+Modify an existing file (optionally with rename/move):
+```
+*** Update File: <path>
+*** Move to: <new_path> (optional)
+@@ <context_line>
+- <old_line>
++ <new_line>
+  <unchanged_line>
+*** End of File (optional)
+```
+
+## Complete Example
 
 ```
 *** Begin Patch
-*** Add File: hello.txt
-+Hello world
-*** Update File: src/app.py
-*** Move to: src/main.py
-@@ def greet():
--print("Hi")
-+print("Hello, world!")
-*** Delete File: obsolete.txt
+*** Add File: README.md
++# Project Documentation
+
+This project demonstrates patch operations.
+
+*** Update File: src/app.js
+*** Move to: src/main.js
+@@ function greet() {
+-  console.log("Hello");
++  console.log("Hello, world!");
+}
+
+*** Delete File: old-script.js
 *** End Patch
 ```
 
-It is important to remember:
+## Important Notes
 
-- You must include a header with your intended action (Add/Delete/Update)
-- You must prefix new lines with `+` even when creating a new file
+- **Headers Required**: Each operation must start with the appropriate header
+- **Line Prefixes**: New lines must be prefixed with `+` even when creating new files
+- **Context**: Update operations support context lines for precise modifications
+- **Moves**: Use `*** Move to:` header to rename/move files during updates
+- **Safety**: Files must be read before they can be modified (FileTime tracking)
+- **Diagnostics**: LSP diagnostics are automatically reported after patch application
+
+## Features
+
+- ✅ Multi-file operations in single patch
+- ✅ File addition, deletion, update, and move operations
+- ✅ Context-aware updates with line-by-line precision
+- ✅ Automatic directory creation for new files
+- ✅ File time tracking and safety checks
+- ✅ LSP diagnostics integration
+- ✅ Change statistics (additions/deletions)
+- ✅ Atomic operations with proper error handling

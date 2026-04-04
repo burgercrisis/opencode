@@ -245,32 +245,30 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
             setStore("message", event.properties.info.sessionID, result.index, reconcile(event.properties.info))
             break
           }
-          setStore(
-            "message",
-            event.properties.info.sessionID,
-            produce((draft) => {
-              draft.splice(result.index, 0, event.properties.info)
-            }),
-          )
-          const updated = store.message[event.properties.info.sessionID]
-          if (updated.length > 100) {
-            const oldest = updated[0]
-            batch(() => {
-              setStore(
-                "message",
-                event.properties.info.sessionID,
-                produce((draft) => {
-                  draft.shift()
-                }),
-              )
+
+          const gone: { id?: string } = {}
+          const protectedIDs = pins(store.permission)
+
+          batch(() => {
+            setStore(
+              "message",
+              event.properties.info.sessionID,
+              produce((draft) => {
+                draft.splice(result.index, 0, event.properties.info)
+                if (draft.length > 100) {
+                  gone.id = draft.shift()?.id
+                }
+              }),
+            )
+            if (gone.id && !protectedIDs.has(gone.id)) {
               setStore(
                 "part",
                 produce((draft) => {
-                  delete draft[oldest.id]
+                  delete draft[gone.id!]
                 }),
               )
-            })
-          }
+            }
+          })
           break
         }
         case "message.removed": {
@@ -354,6 +352,17 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
 
     const exit = useExit()
     const args = useArgs()
+
+    const pins = (permission: typeof store.permission) => {
+      const out = new Set<string>()
+      for (const list of Object.values(permission)) {
+        for (const req of list) {
+          const id = req.tool?.messageID
+          if (id) out.add(id)
+        }
+      }
+      return out
+    }
 
     async function bootstrap() {
       console.log("bootstrapping")
@@ -442,6 +451,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
     })
 
     const fullSyncedSessions = new Set<string>()
+
     const result = {
       data: store,
       set: setStore,
@@ -475,16 +485,30 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
             sdk.client.session.todo({ sessionID }),
             sdk.client.session.diff({ sessionID }),
           ])
+
+          const protectedIDs = pins(store.permission)
+
           setStore(
             produce((draft) => {
               const match = Binary.search(draft.session, sessionID, (s) => s.id)
               if (match.found) draft.session[match.index] = session.data!
               if (!match.found) draft.session.splice(match.index, 0, session.data!)
               draft.todo[sessionID] = todo.data ?? []
+
+              const previous = new Set((draft.message[sessionID] ?? []).map((m) => m.id))
+              const next = new Set(messages.data!.map((x) => x.info.id))
+
               draft.message[sessionID] = messages.data!.map((x) => x.info)
               for (const message of messages.data!) {
                 draft.part[message.info.id] = message.parts
               }
+
+              for (const id of previous) {
+                if (next.has(id)) continue
+                if (protectedIDs.has(id)) continue
+                delete draft.part[id]
+              }
+
               draft.session_diff[sessionID] = diff.data ?? []
             }),
           )

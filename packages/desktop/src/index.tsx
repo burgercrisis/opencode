@@ -64,8 +64,15 @@ const listenForDeepLinks = async () => {
 
 const createPlatform = (): Platform => {
   const os = (() => {
-    const type = ostype()
-    if (type === "macos" || type === "windows" || type === "linux") return type
+    try {
+      // Check if we are in a Tauri environment before calling plugin functions
+      if (typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__) {
+        const type = ostype()
+        if (type === "macos" || type === "windows" || type === "linux") return type
+      }
+    } catch (e) {
+      console.warn("Failed to detect OS type via Tauri:", e)
+    }
     return undefined
   })()
 

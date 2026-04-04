@@ -99,7 +99,7 @@ export namespace Command {
           hints: hints(PROMPT_REVIEW),
         }
 
-        for (const [name, command] of Object.entries(cfg.command ?? {})) {
+        for (const [name, command] of Object.entries(cfg.command ?? {}) as [string, any][]) {
           commands[name] = {
             name,
             agent: command.agent,

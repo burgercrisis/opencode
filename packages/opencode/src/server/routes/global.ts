@@ -171,7 +171,7 @@ export const GlobalRoutes = lazy(() =>
     .post(
       "/dispose",
       describeRoute({
-        summary: "Dispose instance",
+        summary: "Dispose all instances",
         description: "Clean up and dispose all OpenCode instances, releasing all resources.",
         operationId: "global.dispose",
         responses: {

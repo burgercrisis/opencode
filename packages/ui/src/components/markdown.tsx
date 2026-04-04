@@ -9,6 +9,7 @@ import { isServer } from "solid-js/web"
 type Entry = {
   hash: string
   html: string
+  enhanced: boolean
 }
 
 const max = 200
@@ -210,17 +211,15 @@ function setupCodeCopy(root: HTMLDivElement, labels: CopyLabels) {
   decorate(root, labels)
 
   const buttons = Array.from(root.querySelectorAll('[data-slot="markdown-copy-button"]'))
-  for (const button of buttons) {
+  buttons.forEach((button) => {
     if (button instanceof HTMLButtonElement) updateLabel(button)
-  }
+  })
 
   root.addEventListener("click", handleClick)
 
   return () => {
     root.removeEventListener("click", handleClick)
-    for (const timeout of timeouts.values()) {
-      clearTimeout(timeout)
-    }
+    Array.from(timeouts.values()).forEach(clearTimeout)
   }
 }
 
@@ -247,7 +246,7 @@ export function Markdown(
   const marked = useMarked()
   const i18n = useI18n()
   const [root, setRoot] = createSignal<HTMLDivElement>()
-  const [html] = createResource(
+  const [html, { mutate }] = createResource(
     () => local.text,
     async (markdown) => {
       if (isServer) return fallback(markdown)
@@ -259,14 +258,38 @@ export function Markdown(
         const cached = cache.get(key)
         if (cached && cached.hash === hash) {
           touch(key, cached)
+          if (cached.enhanced || !marked.enhance) {
+            return cached.html
+          }
+          // If cached but not enhanced, return cached and trigger enhancement
+          marked.enhance(cached.html).then((enhanced) => {
+            const safeEnhanced = sanitize(enhanced)
+            touch(key, { hash, html: safeEnhanced, enhanced: true })
+            mutate(safeEnhanced)
+          })
           return cached.html
         }
       }
 
+      if (marked.fastParse && marked.enhance) {
+        const fast = await marked.fastParse(markdown)
+        const safeFast = sanitize(fast)
+
+        // Trigger enhancement in the background
+        marked.enhance(fast).then((enhanced) => {
+          const safeEnhanced = sanitize(enhanced)
+          if (key && hash) touch(key, { hash, html: safeEnhanced, enhanced: true })
+          mutate(safeEnhanced)
+        })
+
+        return safeFast
+      }
+
       const next = await marked.parse(markdown)
-      const safe = sanitize(next)
-      if (key && hash) touch(key, { hash, html: safe })
-      return safe
+      const finalHtml = sanitize(next)
+
+      if (key && hash) touch(key, { hash, html: finalHtml, enhanced: false })
+      return finalHtml
     },
     { initialValue: isServer ? fallback(local.text) : "" },
   )
@@ -314,7 +337,6 @@ export function Markdown(
     if (copySetupTimer) clearTimeout(copySetupTimer)
     if (copyCleanup) copyCleanup()
   })
-
   return (
     <div
       data-component="markdown"

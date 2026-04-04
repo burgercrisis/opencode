@@ -115,6 +115,7 @@ export const dict = {
   "command.session.unshare": "取消分享会话",
   "command.session.unshare.description": "停止分享此会话",
 
+  "dialog.releaseNotes.title": "更新内容",
   "palette.search.placeholder": "搜索文件、命令和会话",
   "palette.empty": "未找到结果",
   "palette.group.commands": "命令",
@@ -125,13 +126,13 @@ export const dict = {
   "dialog.provider.group.popular": "热门",
   "dialog.provider.group.other": "其他",
   "dialog.provider.tag.recommended": "推荐",
-  "dialog.provider.opencode.note": "使用 OpenCode Zen 或 API 密钥连接",
   "dialog.provider.opencode.tagline": "可靠的优化模型",
   "dialog.provider.opencodeGo.tagline": "适合所有人的低成本订阅",
   "dialog.provider.anthropic.note": "使用 Claude Pro/Max 或 API 密钥连接",
-  "dialog.provider.copilot.note": "使用 Copilot 或 API 密钥连接",
   "dialog.provider.openai.note": "使用 ChatGPT Pro/Plus 或 API 密钥连接",
   "dialog.provider.google.note": "使用 Google 账号或 API 密钥连接",
+  "dialog.provider.copilot.note": "使用 GitHub Copilot 连接",
+  "dialog.provider.opencode.note": "使用 OpenCode Cloud 连接",
   "dialog.provider.openrouter.note": "使用 OpenRouter 账号或 API 密钥连接",
   "dialog.provider.vercel.note": "使用 Vercel 账号或 API 密钥连接",
 

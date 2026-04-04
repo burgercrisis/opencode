@@ -1,50 +1,40 @@
-import { describe, expect, test } from "bun:test"
-import { lazy } from "../../src/util/lazy"
+import { expect, test, describe } from "bun:test"
+import { lazy as localLazy } from "../../src/util/lazy"
+import { lazy as sharedLazy } from "@opencode-ai/util/lazy"
 
 describe("util.lazy", () => {
-  test("should call function only once", () => {
-    let callCount = 0
-    const getValue = () => {
-      callCount++
-      return "expensive value"
-    }
+  ;[
+    { name: "local", lazyImpl: localLazy },
+    { name: "shared", lazyImpl: sharedLazy },
+  ].forEach(({ name, lazyImpl }) => {
+    describe(name, () => {
+      test("lazy should initialize once", () => {
+        let calls = 0
+        const l = lazyImpl(() => {
+          calls++
+          return "foo"
+        })
+        
+        expect(calls).toBe(0)
+        expect(l()).toBe("foo")
+        expect(calls).toBe(1)
+        expect(l()).toBe("foo")
+        expect(calls).toBe(1)
+      })
 
-    const lazyValue = lazy(getValue)
-
-    expect(callCount).toBe(0)
-
-    const result1 = lazyValue()
-    expect(result1).toBe("expensive value")
-    expect(callCount).toBe(1)
-
-    const result2 = lazyValue()
-    expect(result2).toBe("expensive value")
-    expect(callCount).toBe(1)
-  })
-
-  test("should preserve the same reference", () => {
-    const obj = { value: 42 }
-    const lazyObj = lazy(() => obj)
-
-    const result1 = lazyObj()
-    const result2 = lazyObj()
-
-    expect(result1).toBe(obj)
-    expect(result2).toBe(obj)
-    expect(result1).toBe(result2)
-  })
-
-  test("should work with different return types", () => {
-    const lazyString = lazy(() => "string")
-    const lazyNumber = lazy(() => 123)
-    const lazyBoolean = lazy(() => true)
-    const lazyNull = lazy(() => null)
-    const lazyUndefined = lazy(() => undefined)
-
-    expect(lazyString()).toBe("string")
-    expect(lazyNumber()).toBe(123)
-    expect(lazyBoolean()).toBe(true)
-    expect(lazyNull()).toBe(null)
-    expect(lazyUndefined()).toBe(undefined)
+      test("lazy should reset", () => {
+        let calls = 0
+        const l = lazyImpl(() => {
+          calls++
+          return "foo"
+        })
+        
+        l()
+        expect(calls).toBe(1)
+        l.reset()
+        expect(l()).toBe("foo")
+        expect(calls).toBe(2)
+      })
+    })
   })
 })

@@ -2,7 +2,7 @@ import { createEffect, createRoot } from "solid-js"
 import { createStore, produce } from "solid-js/store"
 import { Persist, persisted } from "@/utils/persist"
 import { createScopedCache } from "@/utils/scoped-cache"
-import type { FileViewState, SelectedLineRange } from "./types"
+import type { FileViewState, SelectedLineRange, FileSelection } from "./types"
 
 const WORKSPACE_KEY = "__workspace__"
 const MAX_FILE_VIEW_SESSIONS = 20
@@ -73,6 +73,9 @@ function createViewSession(dir: string, id: string | undefined) {
   const scrollTop = (path: string) => view.file[path]?.scrollTop
   const scrollLeft = (path: string) => view.file[path]?.scrollLeft
   const selectedLines = (path: string) => view.file[path]?.selectedLines
+  const selection = (path: string) => view.file[path]?.selection
+  const folded = (path: string) => view.file[path]?.folded
+  const changeIndex = (path: string) => view.file[path]?.changeIndex
 
   const setScrollTop = (path: string, top: number) => {
     setView(
@@ -108,14 +111,47 @@ function createViewSession(dir: string, id: string | undefined) {
     pruneView(path)
   }
 
+  const setSelection = (path: string, selection: FileSelection | null) => {
+    setView("file", path, (current) => {
+      if (current?.selection === selection) return current
+      return {
+        ...(current ?? {}),
+        selection,
+      }
+    })
+    pruneView(path)
+  }
+
+  const unfold = (path: string, key: string) => {
+    setView("file", path, "folded", key, false)
+    pruneView(path)
+  }
+
+  const setChangeIndex = (path: string, index: number) => {
+    setView("file", path, (current) => {
+      if (current?.changeIndex === index) return current
+      return {
+        ...(current ?? {}),
+        changeIndex: index,
+      }
+    })
+    pruneView(path)
+  }
+
   return {
     ready,
     scrollTop,
     scrollLeft,
     selectedLines,
+    selection,
+    folded,
+    changeIndex,
     setScrollTop,
     setScrollLeft,
     setSelectedLines,
+    setSelection,
+    unfold,
+    setChangeIndex,
   }
 }
 

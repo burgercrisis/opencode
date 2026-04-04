@@ -5,11 +5,8 @@ import fs from "fs/promises"
 import z from "zod"
 import { NamedError } from "@opencode-ai/util/error"
 import { lazy } from "../util/lazy"
-
+import { $ } from "bun"
 import { Filesystem } from "../util/filesystem"
-import { Process } from "../util/process"
-import { which } from "../util/which"
-import { text } from "node:stream/consumers"
 
 import { ZipReader, BlobReader, BlobWriter } from "@zip.js/zip.js"
 import { Log } from "@/util/log"
@@ -100,7 +97,6 @@ export namespace Ripgrep {
     },
     "x64-darwin": { platform: "x86_64-apple-darwin", extension: "tar.gz" },
     "x64-linux": { platform: "x86_64-unknown-linux-musl", extension: "tar.gz" },
-    "arm64-win32": { platform: "aarch64-pc-windows-msvc", extension: "zip" },
     "x64-win32": { platform: "x86_64-pc-windows-msvc", extension: "zip" },
   } as const
 
@@ -128,7 +124,7 @@ export namespace Ripgrep {
   )
 
   const state = lazy(async () => {
-    const system = which("rg")
+    const system = Bun.which("rg")
     if (system) {
       const stat = await fs.stat(system).catch(() => undefined)
       if (stat?.isFile()) return { filepath: system }
@@ -157,19 +153,17 @@ export namespace Ripgrep {
         if (platformKey.endsWith("-darwin")) args.push("--include=*/rg")
         if (platformKey.endsWith("-linux")) args.push("--wildcards", "*/rg")
 
-        const proc = Process.spawn(args, {
+        const proc = Bun.spawn(args, {
           cwd: Global.Path.bin,
           stderr: "pipe",
           stdout: "pipe",
         })
-        const exit = await proc.exited
-        if (exit !== 0) {
-          const stderr = proc.stderr ? await text(proc.stderr) : ""
+        await proc.exited
+        if (proc.exitCode !== 0)
           throw new ExtractionFailedError({
             filepath,
-            stderr,
+            stderr: await Bun.readableStreamToText(proc.stderr),
           })
-        }
       }
       if (config.extension === "zip") {
         const zipFileReader = new ZipReader(new BlobReader(new Blob([arrayBuffer])))
@@ -233,7 +227,8 @@ export namespace Ripgrep {
       }
     }
 
-    // Guard against invalid cwd to provide a consistent ENOENT error.
+    // Bun.spawn should throw this, but it incorrectly reports that the executable does not exist.
+    // See https://github.com/oven-sh/bun/issues/24012
     if (!(await fs.stat(input.cwd).catch(() => undefined))?.isDirectory()) {
       throw Object.assign(new Error(`No such file or directory: '${input.cwd}'`), {
         code: "ENOENT",
@@ -242,94 +237,252 @@ export namespace Ripgrep {
       })
     }
 
-    const proc = Process.spawn(args, {
+    const proc = Bun.spawn(args, {
       cwd: input.cwd,
       stdout: "pipe",
       stderr: "ignore",
-      abort: input.signal,
+      maxBuffer: 1024 * 1024 * 20,
+      signal: input.signal,
     })
 
-    if (!proc.stdout) {
-      throw new Error("Process output not available")
-    }
-
+    const reader = proc.stdout.getReader()
+    const decoder = new TextDecoder()
     let buffer = ""
-    const stream = proc.stdout as AsyncIterable<Buffer | string>
-    for await (const chunk of stream) {
-      input.signal?.throwIfAborted()
 
-      buffer += typeof chunk === "string" ? chunk : chunk.toString()
-      // Handle both Unix (\n) and Windows (\r\n) line endings
-      const lines = buffer.split(/\r?\n/)
-      buffer = lines.pop() || ""
+    try {
+      while (true) {
+        input.signal?.throwIfAborted()
 
-      for (const line of lines) {
-        if (line) yield line
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        // Handle both Unix (\n) and Windows (\r\n) line endings
+        const lines = buffer.split(/\r?\n/)
+        buffer = lines.pop() || ""
+
+        for (const line of lines) {
+          if (line) yield line
+        }
       }
-    }
 
-    if (buffer) yield buffer
-    await proc.exited
+      if (buffer) yield buffer
+    } finally {
+      reader.releaseLock()
+      await proc.exited
+    }
 
     input.signal?.throwIfAborted()
   }
 
+  /**
+   * Generates an indented tree view of files in a directory.
+   *
+   * Directories are listed before files at each level, both sorted alphabetically.
+   * Uses BFS traversal to ensure breadth-first coverage when truncating.
+   *
+   * @example
+   * ```
+   * src/
+   *     components/
+   *         Button.tsx
+   *         Input.tsx
+   *         [3 truncated]
+   *     index.ts
+   * package.json
+   * ```
+   *
+   * @param input.cwd - The directory to scan
+   * @param input.limit - Max entries to include (default: 50). When exceeded,
+   *   remaining siblings are collapsed into `[N truncated]` markers.
+   * @param input.signal - Optional AbortSignal to cancel the operation
+   * @returns Newline-separated tree with tab indentation per depth level
+   */
   export async function tree(input: { cwd: string; limit?: number; signal?: AbortSignal }) {
     log.info("tree", input)
     const files = await Array.fromAsync(Ripgrep.files({ cwd: input.cwd, signal: input.signal }))
-    interface Node {
-      name: string
-      children: Map<string, Node>
+    const limit = input.limit ?? 50
+
+    /**
+     * Tree node with parent reference for ancestor traversal.
+     *
+     * Each node represents a file or directory. Directories have children,
+     * files don't. Uses Map for O(1) child lookup during tree construction
+     * (critical for repos with 40k+ files).
+     *
+     * The parent reference enables bottom-up selection: when we select a deep
+     * file, we automatically select all its ancestors so the path renders.
+     */
+    class FileNode {
+      readonly children: FileNode[] = []
+      private readonly lookup = new Map<string, FileNode>()
+      private sorted = false
+      selected = false
+
+      constructor(
+        readonly name: string = "",
+        readonly parent: FileNode | null = null,
+      ) {}
+
+      /**
+       * Gets an existing child by name, or creates it if it doesn't exist.
+       *
+       * Uses Map lookup for O(1) access. When creating, establishes the
+       * parent link so the child can propagate selection upward.
+       *
+       * @param name - The directory or file name (not a path)
+       * @returns The existing or newly created child node
+       */
+      child(name: string): FileNode {
+        let node = this.lookup.get(name)
+        if (!node) {
+          node = new FileNode(name, this)
+          this.children.push(node)
+          this.lookup.set(name, node)
+        }
+        return node
+      }
+
+      /**
+       * Inserts a file path into the tree, creating intermediate directories.
+       *
+       * @example
+       * root.insert(["src", "utils", "format.ts"])
+       * // Creates: root -> src/ -> utils/ -> format.ts
+       *
+       * @param parts - Path segments from root to file
+       */
+      insert(parts: string[]): void {
+        let node: FileNode = this
+        for (const part of parts) node = node.child(part)
+      }
+
+      /**
+       * Sorts children: directories first, then alphabetically.
+       *
+       * Lazy - only sorts once per node. Called during BFS traversal,
+       * so we only sort nodes we actually visit. For a 40k file repo
+       * with limit=200, this saves sorting thousands of unvisited nodes.
+       */
+      sort(): void {
+        if (this.sorted) return
+        this.children.sort((a, b) => {
+          if (a.isDir !== b.isDir) return b.isDir ? 1 : -1
+          return a.name.localeCompare(b.name)
+        })
+        this.sorted = true
+      }
+
+      /** A node is a directory if it has children (files are leaves). */
+      get isDir(): boolean {
+        return this.children.length > 0
+      }
+
+      /**
+       * Marks this node for rendering, propagating up to ancestors.
+       *
+       * Called during BFS when this node is chosen within the limit.
+       * Recursively selects the parent chain so the full path renders.
+       *
+       * @example
+       * // Selecting "format.ts" also selects "utils/" and "src/"
+       * formatNode.select()
+       * // Now: root.selected=true, src.selected=true,
+       * //      utils.selected=true, format.selected=true
+       */
+      select(): void {
+        this.selected = true
+        this.parent?.select()
+      }
+
+      /**
+       * Renders this subtree as an indented string.
+       *
+       * Only renders selected nodes. Appends "/" to directories.
+       * Shows "[N truncated]" for directories with unselected children,
+       * so users know there's more content they're not seeing.
+       *
+       * @param indentLevel - Current indentation level (0 for root's children)
+       * @returns Newline-separated tree with tab indentation
+       */
+      render(indentLevel = 0): string {
+        if (!this.selected) return ""
+
+        const outputLines: string[] = []
+        // Root node has no name, so children stay at same indent level
+        const childIndentLevel = this.name ? indentLevel + 1 : indentLevel
+
+        if (this.name) {
+          outputLines.push("\t".repeat(indentLevel) + this.name + (this.isDir ? "/" : ""))
+        }
+
+        for (const child of this.children) {
+          const renderedChild = child.render(childIndentLevel)
+          if (renderedChild) outputLines.push(renderedChild)
+        }
+
+        const unselectedChildCount = this.children.filter((c) => !c.selected).length
+        if (unselectedChildCount > 0) {
+          outputLines.push("\t".repeat(childIndentLevel) + `[${unselectedChildCount} truncated]`)
+        }
+
+        return outputLines.join("\n")
+      }
     }
 
-    function dir(node: Node, name: string) {
-      const existing = node.children.get(name)
-      if (existing) return existing
-      const next = { name, children: new Map() }
-      node.children.set(name, next)
-      return next
-    }
-
-    const root: Node = { name: "", children: new Map() }
+    // Build complete tree from file list
+    const root = new FileNode()
     for (const file of files) {
-      if (file.includes(".opencode")) continue
-      const parts = file.split(path.sep)
-      if (parts.length < 2) continue
-      let node = root
-      for (const part of parts.slice(0, -1)) {
-        node = dir(node, part)
+      if (!file.includes(".opencode")) {
+        // Use path.sep for cross-platform compatibility, but ripgrep usually 
+        // returns forward slashes even on Windows. Use a regex to split on both.
+        root.insert(file.split(/[\\\/]/))
       }
     }
 
-    function count(node: Node): number {
-      let total = 0
-      for (const child of node.children.values()) {
-        total += 1 + count(child)
+    // Select up to `limit` entries using BFS with round-robin.
+    //
+    // Why BFS? Ensures we show top-level structure before diving deep.
+    // A repo with src/, docs/, tests/ should show all three before
+    // showing src/components/Button/styles/...
+    //
+    // Why round-robin? Distributes selection evenly across siblings.
+    // Instead of showing all of src/'s children before any of docs/,
+    // we alternate: src/index.ts, docs/README.md, src/utils.ts, docs/api.md...
+    // This gives a balanced view of the entire repo structure.
+    let selectedCount = 0
+    const selectNodes = (predicate: (node: FileNode) => boolean) => {
+      let nodesAtCurrentDepth: FileNode[] = [root]
+      while (nodesAtCurrentDepth.length > 0 && selectedCount < limit) {
+        // Collect all children for the next BFS depth level
+        const nodesAtNextDepth: FileNode[] = []
+        for (const parent of nodesAtCurrentDepth) {
+          parent.sort()
+          nodesAtNextDepth.push(...parent.children)
+        }
+
+        // Round-robin: take 1st child from each parent, then 2nd from each, etc.
+        // This ensures fair distribution across all branches at this depth.
+        const mostChildrenAnyParentHas = Math.max(0, ...nodesAtCurrentDepth.map((n) => n.children.length))
+        roundRobin: for (let childIndex = 0; childIndex < mostChildrenAnyParentHas; childIndex++) {
+          for (const parent of nodesAtCurrentDepth) {
+            const child = parent.children[childIndex]
+            if (!child || child.selected || !predicate(child)) continue
+            child.select() // Also selects ancestors via parent chain
+            if (++selectedCount >= limit) return
+          }
+        }
+
+        nodesAtCurrentDepth = nodesAtNextDepth
       }
-      return total
     }
 
-    const total = count(root)
-    const limit = input.limit ?? total
-    const lines: string[] = []
-    const queue: { node: Node; path: string }[] = []
-    for (const child of Array.from(root.children.values()).sort((a, b) => a.name.localeCompare(b.name))) {
-      queue.push({ node: child, path: child.name })
-    }
+    // Pass 1: Prioritize folder structure and main root before any files
+    selectNodes((n) => n.isDir)
+    // Pass 2: Fill remaining limit with files
+    selectNodes((n) => !n.isDir)
 
-    let used = 0
-    for (let i = 0; i < queue.length && used < limit; i++) {
-      const { node, path } = queue[i]
-      lines.push(path)
-      used++
-      for (const child of Array.from(node.children.values()).sort((a, b) => a.name.localeCompare(b.name))) {
-        queue.push({ node: child, path: `${path}/${child.name}` })
-      }
-    }
-
-    if (total > used) lines.push(`[${total - used} truncated]`)
-
-    return lines.join("\n")
+    return root.render()
   }
 
   export async function search(input: {
@@ -339,32 +492,18 @@ export namespace Ripgrep {
     limit?: number
     follow?: boolean
   }) {
-    const args = [`${await filepath()}`, "--json", "--hidden", "--glob=!.git/*"]
-    if (input.follow) args.push("--follow")
-
-    if (input.glob) {
-      for (const g of input.glob) {
-        args.push(`--glob=${g}`)
-      }
-    }
-
-    if (input.limit) {
-      args.push(`--max-count=${input.limit}`)
-    }
-
-    args.push("--")
-    args.push(input.pattern)
-
-    const result = await Process.text(args, {
+    const bin = await filepath()
+    const proc = Bun.spawn([bin, "--json", "--hidden", "--glob=!.git/*", ...(input.follow ? ["--follow"] : []), ...(input.glob ? input.glob.map(g => `--glob=${g}`) : []), ...(input.limit ? [`--max-count=${input.limit}`] : []), "--", input.pattern], {
       cwd: input.cwd,
-      nothrow: true,
+      stdout: "pipe",
+      stderr: "ignore",
     })
-    if (result.code !== 0) {
-      return []
-    }
+
+    const text = await new Response(proc.stdout).text()
+    await proc.exited
 
     // Handle both Unix (\n) and Windows (\r\n) line endings
-    const lines = result.text.trim().split(/\r?\n/).filter(Boolean)
+    const lines = text.trim().split(/\r?\n/).filter(Boolean)
     // Parse JSON lines from ripgrep output
 
     return lines

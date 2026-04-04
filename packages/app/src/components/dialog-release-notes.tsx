@@ -1,23 +1,15 @@
 import { createSignal } from "solid-js"
 import { Dialog } from "@opencode-ai/ui/dialog"
-import { Button } from "@opencode-ai/ui/button"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { useLanguage } from "@/context/language"
 import { useSettings } from "@/context/settings"
-
-export type Highlight = {
-  title: string
-  description: string
-  media?: {
-    type: "image" | "video"
-    src: string
-    alt?: string
-  }
-}
+import { type Highlight } from "@/context/highlights"
+import { Button } from "@opencode-ai/ui/button"
+import { For, Show } from "solid-js"
 
 export function DialogReleaseNotes(props: { highlights: Highlight[] }) {
-  const dialog = useDialog()
   const language = useLanguage()
+  const dialog = useDialog()
   const settings = useSettings()
   const [index, setIndex] = createSignal(0)
 
@@ -48,7 +40,6 @@ export function DialogReleaseNotes(props: { highlights: Highlight[] }) {
       handleClose()
       return
     }
-
     if (!paged()) return
     if (e.key === "ArrowLeft" && !isFirst()) {
       e.preventDefault()
@@ -62,14 +53,18 @@ export function DialogReleaseNotes(props: { highlights: Highlight[] }) {
 
   return (
     <Dialog
+      title={language.t("dialog.releaseNotes.title")}
       size="large"
-      fit
-      class="w-[min(calc(100vw-40px),720px)] h-[min(calc(100vh-40px),400px)] -mt-20 min-h-0 overflow-hidden"
     >
-      <div class="flex flex-1 min-w-0 min-h-0" tabIndex={0} autofocus onKeyDown={handleKeyDown}>
+      <div 
+        class="flex flex-1 min-w-0 min-h-0" 
+        tabIndex={0} 
+        autofocus 
+        onKeyDown={handleKeyDown}
+      >
         {/* Left side - Text content */}
         <div class="flex flex-col flex-1 min-w-0 p-8">
-          {/* Top section - feature content (fixed position from top) */}
+          {/* Top section */}
           <div class="flex flex-col gap-2 pt-22">
             <div class="flex items-center gap-2">
               <h1 class="text-16-medium text-text-strong">{feature()?.title ?? ""}</h1>
@@ -77,10 +72,10 @@ export function DialogReleaseNotes(props: { highlights: Highlight[] }) {
             <p class="text-14-regular text-text-base">{feature()?.description ?? ""}</p>
           </div>
 
-          {/* Spacer to push buttons to bottom */}
+          {/* Spacer */}
           <div class="flex-1" />
 
-          {/* Bottom section - buttons and indicators (fixed position) */}
+          {/* Bottom section - buttons and indicators */}
           <div class="flex flex-col gap-12">
             <div class="flex flex-col items-start gap-3">
               {isLast() ? (
@@ -92,7 +87,6 @@ export function DialogReleaseNotes(props: { highlights: Highlight[] }) {
                   {language.t("dialog.releaseNotes.action.next")}
                 </Button>
               )}
-
               <Button variant="ghost" size="small" onClick={handleDisable}>
                 {language.t("dialog.releaseNotes.action.hideFuture")}
               </Button>
@@ -100,44 +94,72 @@ export function DialogReleaseNotes(props: { highlights: Highlight[] }) {
 
             {paged() && (
               <div class="flex items-center gap-1.5 -my-2.5">
-                {props.highlights.map((_, i) => (
-                  <button
-                    type="button"
-                    class="h-6 flex items-center cursor-pointer bg-transparent border-none p-0 transition-all duration-200"
-                    classList={{
-                      "w-8": i === index(),
-                      "w-3": i !== index(),
-                    }}
-                    onClick={() => setIndex(i)}
-                  >
-                    <div
-                      class="w-full h-0.5 rounded-[1px] transition-colors duration-200"
+                <For each={props.highlights}>
+                  {(highlight, i) => (
+                    <button
+                      type="button"
+                      class="h-6 flex items-center cursor-pointer bg-transparent border-none p-0 transition-all duration-200 rounded"
                       classList={{
-                        "bg-icon-strong-base": i === index(),
-                        "bg-icon-weak-base": i !== index(),
+                        "w-8": i() === index(),
+                        "w-3": i() !== index(),
                       }}
-                    />
-                  </button>
-                ))}
+                      onClick={() => setIndex(i())}
+                    >
+                      <Show when={highlight.media}>
+                        {(media) => (
+                          <Show
+                            when={media().type === "image"}
+                            fallback={
+                              <video
+                                src={media().src}
+                                autoplay
+                                loop
+                                muted
+                                playsinline
+                                class="rounded border bg-muted h-6 w-6 object-cover"
+                              />
+                            }
+                          >
+                            <img
+                              src={media().src}
+                              alt={media().alt ?? highlight.title ?? language.t("dialog.releaseNotes.media.alt")}
+                              class="rounded border bg-muted h-6 w-6 object-cover"
+                            />
+                          </Show>
+                        )}
+                      </Show>
+                    </button>
+                  )}
+                </For>
               </div>
             )}
           </div>
         </div>
 
-        {/* Right side - Media content (edge to edge) */}
-        {feature()?.media && (
+        {/* Right side - Media content */}
+        <Show when={feature()?.media}>
           <div class="flex-1 min-w-0 bg-surface-base overflow-hidden rounded-r-xl">
-            {feature()!.media!.type === "image" ? (
+            <Show 
+              when={feature()!.media!.type === "image"}
+              fallback={
+                <video 
+                  src={feature()!.media!.src} 
+                  autoplay 
+                  loop 
+                  muted 
+                  playsinline 
+                  class="w-full h-full object-cover"
+                />
+              }
+            >
               <img
                 src={feature()!.media!.src}
                 alt={feature()!.media!.alt ?? feature()?.title ?? language.t("dialog.releaseNotes.media.alt")}
                 class="w-full h-full object-cover"
               />
-            ) : (
-              <video src={feature()!.media!.src} autoplay loop muted playsinline class="w-full h-full object-cover" />
-            )}
+            </Show>
           </div>
-        )}
+        </Show>
       </div>
     </Dialog>
   )

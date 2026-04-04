@@ -1,0 +1,637 @@
+import { beforeAll, beforeEach, describe, expect, mock, test } from "bun:test"
+import type { Prompt } from "@/context/prompt"
+import { createPromptSubmit } from "./submit"
+
+let createPromptSubmit: typeof import("./submit").createPromptSubmit
+
+// Test tracking variables
+const createdClients: string[] = []
+const createdSessions: string[] = []
+const sentShell: string[] = []
+const sentCommands: Array<{ name: string; args: string }> = []
+const syncedDirectories: string[] = []
+const toastMessages: Array<{ title: string; description: string }> = []
+const optimisticMessages: Array<{ directory: string; sessionID: string; message: any }> = []
+const removedOptimisticMessages: Array<{ directory: string; sessionID: string; messageID: string }> = []
+
+const promptValue: Prompt = [{ type: "text", content: "test command", start: 0, end: 12 }]
+
+const clientFor = (directory: string) => {
+  createdClients.push(directory)
+  return {
+    session: {
+      create: async () => {
+        createdSessions.push(directory)
+        return { data: { id: `session-${createdSessions.length}` } }
+      },
+      shell: async (params: any) => {
+        sentShell.push(directory)
+        return { data: undefined }
+      },
+      prompt: async () => ({ data: undefined }),
+      promptAsync: async () => ({ data: undefined }),
+      command: async (params: any) => {
+        sentCommands.push({ name: params.command, args: params.arguments })
+        return { data: undefined }
+      },
+      abort: async () => ({ data: undefined }),
+    },
+    worktree: {
+      create: async () => ({ data: { directory: `${directory}/new-worktree` } }),
+    },
+  }
+}
+
+beforeAll(async () => {
+  const rootClient = clientFor("/repo/main")
+
+  mock.module("@solidjs/router", () => ({
+    useNavigate: () => (path: string) => {
+      // Mock navigation
+      return Promise.resolve()
+    },
+    useParams: () => ({ id: undefined }),
+  }))
+
+  mock.module("@opencode-ai/sdk/v2/client", () => ({
+    createOpencodeClient: (input: { directory: string }) => {
+      createdClients.push(input.directory)
+      return clientFor(input.directory)
+    },
+  }))
+
+  mock.module("@opencode-ai/ui/toast", () => ({
+    showToast: (options: any) => {
+      toastMessages.push({ title: options.title, description: options.description })
+      return 1
+    },
+  }))
+
+  mock.module("@opencode-ai/util/encode", () => ({
+    base64Encode: (value: string) => value,
+  }))
+
+  mock.module("@/context/local", () => ({
+    useLocal: () => ({
+      model: {
+        current: () => ({ id: "test-model", provider: { id: "test-provider" } }),
+        variant: { current: () => "test-variant" },
+      },
+      agent: {
+        current: () => ({ name: "test-agent" }),
+      },
+    }),
+  }))
+
+  mock.module("@/context/prompt", () => ({
+    usePrompt: () => ({
+      current: () => promptValue,
+      reset: () => undefined,
+      set: () => undefined,
+      context: {
+        add: (item: any) => undefined,
+        remove: (key: string) => undefined,
+        items: () => [],
+      },
+    }),
+  }))
+
+  mock.module("@/context/layout", () => ({
+    useLayout: () => ({
+      handoff: {
+        setTabs: (directory: string, sessionID: string) => undefined,
+      },
+    }),
+  }))
+
+  mock.module("@/context/sdk", () => ({
+    useSDK: () => ({
+      directory: "/repo/main",
+      client: rootClient,
+      url: "http://localhost:4096",
+      createClient(opts: any) {
+        return clientFor(opts.directory)
+      },
+    }),
+  }))
+
+  mock.module("@/context/sync", () => ({
+    useSync: () => ({
+      data: { command: [] },
+      session: {
+        optimistic: {
+          add: (params: any) => optimisticMessages.push(params),
+          remove: (params: any) => removedOptimisticMessages.push(params),
+        },
+      },
+      set: (key: string, sessionID: string, value: any) => undefined,
+    }),
+  }))
+
+  mock.module("@/context/global-sync", () => ({
+    useGlobalSync: () => ({
+      child: (directory: string) => {
+        syncedDirectories.push(directory)
+        return [
+          {
+            todo: {
+              set: (sessionID: string, value: any[]) => undefined,
+            },
+          },
+          (key: string, sessionID: string, value: any) => undefined,
+        ]
+      },
+    }),
+  }))
+
+  mock.module("@/context/language", () => ({
+    useLanguage: () => ({
+      t: (key: string) => key,
+    }),
+  }))
+
+  mock.module("./build-request-parts", () => ({
+    buildRequestParts: () => ({
+      requestParts: [{ type: "text", content: "test" }],
+      optimisticParts: [{ type: "text", content: "test" }],
+    }),
+  }))
+
+  mock.module("./editor-dom", () => ({
+    setCursorPosition: () => undefined,
+  }))
+
+  mock.module("@/utils/id", () => ({
+    Identifier: {
+      ascending: (prefix: string) => `${prefix}-${Date.now()}`,
+    },
+  }))
+
+  mock.module("@/utils/worktree", () => ({
+    Worktree: {
+      pending: (directory: string) => undefined,
+      get: (directory: string) => ({ status: "ready" }),
+      wait: (directory: string) => Promise.resolve({ status: "ready" }),
+    },
+  }))
+
+  const mod = await import("./submit")
+  createPromptSubmit = mod.createPromptSubmit
+})
+
+beforeEach(() => {
+  // Reset all tracking variables
+  createdClients.length = 0
+  createdSessions.length = 0
+  sentShell.length = 0
+  sentCommands.length = 0
+  syncedDirectories.length = 0
+  toastMessages.length = 0
+  optimisticMessages.length = 0
+  removedOptimisticMessages.length = 0
+})
+
+describe("createPromptSubmit error handling", () => {
+  test("extracts error messages correctly", () => {
+    const submit = createPromptSubmit({
+      info: () => undefined,
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      mode: () => "normal",
+      working: () => false,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+    })
+
+    // Test the errorMessage function indirectly through error scenarios
+    expect(submit).toBeDefined()
+  })
+
+  test("handles empty prompt submission", async () => {
+    const submit = createPromptSubmit({
+      info: () => ({ id: "test-session" }),
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      mode: () => "normal",
+      working: () => false,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: () => 0,
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+    })
+
+    const event = { preventDefault: () => undefined } as unknown as Event
+    await submit.handleSubmit(event)
+
+    // Should not create session or send anything
+    expect(createdSessions).toHaveLength(0)
+    expect(sentShell).toHaveLength(0)
+    expect(sentCommands).toHaveLength(0)
+  })
+
+  test("shows toast when model or agent is missing", async () => {
+    // Mock missing model/agent
+    mock.module("@/context/local", () => ({
+      useLocal: () => ({
+        model: { current: () => null },
+        agent: { current: () => null },
+      }),
+    }))
+
+    const submit = createPromptSubmit({
+      info: () => undefined,
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      mode: () => "normal",
+      working: () => false,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: () => 1,
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+    })
+
+    const event = { preventDefault: () => undefined } as unknown as Event
+    await submit.handleSubmit(event)
+
+    expect(toastMessages).toHaveLength(1)
+    expect(toastMessages[0].title).toBe("prompt.toast.modelAgentRequired.title")
+  })
+})
+
+describe("prompt submission workflows", () => {
+  test("creates new session with main worktree", async () => {
+    const submit = createPromptSubmit({
+      info: () => undefined,
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      mode: () => "normal",
+      working: () => false,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: () => 1,
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+      newSessionWorktree: () => "main",
+    })
+
+    const event = { preventDefault: () => undefined } as unknown as Event
+    await submit.handleSubmit(event)
+
+    expect(createdSessions).toHaveLength(1)
+    expect(createdSessions[0]).toBe("/repo/main")
+    expect(createdClients).toHaveLength(0) // Should use root client for main
+  })
+
+  test("creates new worktree when selected", async () => {
+    const submit = createPromptSubmit({
+      info: () => undefined,
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      mode: () => "normal",
+      working: () => false,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: () => 1,
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+      newSessionWorktree: () => "create",
+    })
+
+    const event = { preventDefault: () => undefined } as unknown as Event
+    await submit.handleSubmit(event)
+
+    expect(createdClients).toContain("/repo/main/new-worktree")
+    expect(createdSessions).toHaveLength(1)
+  })
+
+  test("uses existing worktree when specified", async () => {
+    const submit = createPromptSubmit({
+      info: () => undefined,
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      mode: () => "normal",
+      working: () => false,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: () => 1,
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+      newSessionWorktree: () => "/repo/existing-worktree",
+    })
+
+    const event = { preventDefault: () => undefined } as unknown as Event
+    await submit.handleSubmit(event)
+
+    expect(createdClients).toContain("/repo/existing-worktree")
+    expect(syncedDirectories).toContain("/repo/existing-worktree")
+  })
+
+  test("handles shell mode submission", async () => {
+    const submit = createPromptSubmit({
+      info: () => ({ id: "existing-session" }),
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      mode: () => "shell",
+      working: () => false,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: () => 1,
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+    })
+
+    const event = { preventDefault: () => undefined } as unknown as Event
+    await submit.handleSubmit(event)
+
+    expect(sentShell).toHaveLength(1)
+    expect(sentShell[0]).toBe("/repo/main")
+  })
+
+  test("handles custom command submission", async () => {
+    // Mock custom command
+    mock.module("@/context/sync", () => ({
+      useSync: () => ({
+        data: { 
+          command: [
+            { name: "test-command", description: "Test command" }
+          ]
+        },
+        session: {
+          optimistic: {
+            add: (params: any) => optimisticMessages.push(params),
+            remove: (params: any) => removedOptimisticMessages.push(params),
+          },
+        },
+        set: () => undefined,
+      }),
+    }))
+
+    // Update prompt to start with /
+    const customPrompt: Prompt = [{ type: "text", content: "/test-command arg1 arg2", start: 0, end: 21 }]
+
+    mock.module("@/context/prompt", () => ({
+      usePrompt: () => ({
+        current: () => customPrompt,
+        reset: () => undefined,
+        set: () => undefined,
+        context: {
+          add: () => undefined,
+          remove: () => undefined,
+          items: () => [],
+        },
+      }),
+    }))
+
+    const submit = createPromptSubmit({
+      info: () => ({ id: "existing-session" }),
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      mode: () => "normal",
+      working: () => false,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: () => 1,
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+    })
+
+    const event = { preventDefault: () => undefined } as unknown as Event
+    await submit.handleSubmit(event)
+
+    expect(sentCommands).toHaveLength(1)
+    expect(sentCommands[0]).toEqual({ name: "test-command", args: "arg1 arg2" })
+  })
+
+  test("handles normal prompt submission with optimistic updates", async () => {
+    const submit = createPromptSubmit({
+      info: () => ({ id: "existing-session" }),
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      mode: () => "normal",
+      working: () => false,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: () => 1,
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+    })
+
+    const event = { preventDefault: () => undefined } as unknown as Event
+    await submit.handleSubmit(event)
+
+    expect(optimisticMessages).toHaveLength(1)
+    expect(optimisticMessages[0].sessionID).toBe("existing-session")
+    expect(optimisticMessages[0].directory).toBe("/repo/main")
+  })
+})
+
+describe("abort functionality", () => {
+  test("aborts pending prompt submission", async () => {
+    // Mock worktree wait to be pending
+    mock.module("@/utils/worktree", () => ({
+      Worktree: {
+        pending: () => undefined,
+        get: () => ({ status: "pending" }),
+        wait: () => new Promise(() => {}), // Never resolves
+      },
+    }))
+
+    const submit = createPromptSubmit({
+      info: () => undefined,
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      mode: () => "normal",
+      working: () => false,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: () => 1,
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+    })
+
+    // Start submission (will hang)
+    const event = { preventDefault: () => undefined } as unknown as Event
+    const submitPromise = submit.handleSubmit(event)
+
+    // Wait a bit for it to start
+    await new Promise(resolve => setTimeout(resolve, 10))
+
+    // Now abort
+    await submit.abort()
+
+    // Should clean up optimistic message
+    expect(removedOptimisticMessages).toHaveLength(1)
+  })
+
+  test("handles abort when no pending submission", async () => {
+    const submit = createPromptSubmit({
+      info: () => ({ id: "test-session" }),
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      mode: () => "normal",
+      working: () => false,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: () => 1,
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+    })
+
+    // Should not throw
+    await expect(submit.abort()).resolves.toBeUndefined()
+  })
+})
+
+describe("comment handling", () => {
+  test("processes comment items correctly", async () => {
+    // Mock prompt context with comments
+    mock.module("@/context/prompt", () => ({
+      usePrompt: () => ({
+        current: () => promptValue,
+        reset: () => undefined,
+        set: () => undefined,
+        context: {
+          add: (item: any) => undefined,
+          remove: (key: string) => undefined,
+          items: () => [
+            {
+              type: "file",
+              path: "test.js",
+              comment: "Test comment",
+              commentID: "comment-1",
+              commentOrigin: "review" as const,
+              preview: "preview",
+            },
+          ],
+        },
+      }),
+    }))
+
+    const submit = createPromptSubmit({
+      info: () => ({ id: "existing-session" }),
+      imageAttachments: () => [],
+      commentCount: () => 1,
+      mode: () => "normal",
+      working: () => false,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: () => 1,
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+    })
+
+    const event = { preventDefault: () => undefined } as unknown as Event
+    await submit.handleSubmit(event)
+
+    // Should process optimistic message with comment context
+    expect(optimisticMessages).toHaveLength(1)
+  })
+})
+
+describe("image attachment handling", () => {
+  test("processes image attachments correctly", async () => {
+    const imageAttachments = [
+      {
+        mime: "image/png",
+        filename: "test.png",
+        dataUrl: "data:image/png;base64,test",
+      },
+    ]
+
+    const submit = createPromptSubmit({
+      info: () => ({ id: "existing-session" }),
+      imageAttachments: () => imageAttachments,
+      commentCount: () => 0,
+      mode: () => "normal",
+      working: () => false,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: () => 1,
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+    })
+
+    const event = { preventDefault: () => undefined } as unknown as Event
+    await submit.handleSubmit(event)
+
+    expect(optimisticMessages).toHaveLength(1)
+  })
+})
+
+describe("worktree timeout handling", () => {
+  test("handles worktree preparation timeout", async () => {
+    // Mock worktree wait to timeout
+    mock.module("@/utils/worktree", () => ({
+      Worktree: {
+        pending: () => undefined,
+        get: () => ({ status: "pending" }),
+        wait: () => new Promise(() => {}), // Never resolves
+      },
+    }))
+
+    // Mock setTimeout to resolve immediately
+    const originalSetTimeout = global.setTimeout
+    global.setTimeout = (callback, delay) => {
+      if (delay === 5 * 60 * 1000) { // 5 minutes
+        callback()
+        return 1 as any
+      }
+      return originalSetTimeout(callback, delay)
+    }
+
+    const submit = createPromptSubmit({
+      info: () => undefined,
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      mode: () => "normal",
+      working: () => false,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: () => 1,
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+    })
+
+    const event = { preventDefault: () => undefined } as unknown as Event
+    await submit.handleSubmit(event)
+
+    // Should show timeout toast
+    expect(toastMessages.some(msg => msg.description.includes("stillPreparing"))).toBe(true)
+
+    // Restore original setTimeout
+    global.setTimeout = originalSetTimeout
+  })
+})

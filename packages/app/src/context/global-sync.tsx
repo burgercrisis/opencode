@@ -9,7 +9,7 @@ import type {
 } from "@opencode-ai/sdk/v2/client"
 import { showToast } from "@opencode-ai/ui/toast"
 import { getFilename } from "@opencode-ai/util/path"
-import { createContext, getOwner, onCleanup, onMount, type ParentProps, untrack, useContext } from "solid-js"
+import { batch, createContext, createEffect, createMemo, getOwner, onCleanup, onMount, type ParentProps, untrack, useContext } from "solid-js"
 import { createStore, produce, reconcile } from "solid-js/store"
 import { useLanguage } from "@/context/language"
 import { Persist, persisted } from "@/utils/persist"
@@ -73,6 +73,10 @@ function createGlobalSync() {
   let bootedAt = 0
   let bootingRoot = false
 
+  const projectCacheReady = () => {
+    return !(projectInit instanceof Promise) || projectInit instanceof Promise && projectInit.status === "fulfilled"
+  }
+
   onCleanup(() => {
     active = false
   })
@@ -120,6 +124,27 @@ function createGlobalSync() {
       setGlobalStore("project", cached)
     })
   }
+
+  // Enhanced cache synchronization from incoming
+  createEffect(() => {
+    if (!projectCacheReady()) return
+    if (globalStore.project.length !== 0) return
+    const cached = projectCache.value
+    if (cached.length === 0) return
+    setGlobalStore("project", cached)
+  })
+
+  createEffect(() => {
+    if (!projectCacheReady()) return
+    const cacheLen = untrack(() => projectCache.value.length)
+    if (globalStore.project.length === 0 && cacheLen !== 0) return
+    setProjectCache("value", globalStore.project.map(sanitizeProject))
+  })
+
+  createEffect(() => {
+    if (globalStore.reload !== "complete") return
+    setGlobalStore("reload", undefined)
+  })
 
   const setSessionTodo = (sessionID: string, todos: Todo[] | undefined) => {
     if (!sessionID) return

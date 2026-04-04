@@ -2,7 +2,7 @@ import { describe, expect, test, afterEach } from "bun:test"
 import { Ide } from "../../src/ide"
 
 describe("ide", () => {
-  const original = { ...process.env }
+  const original = { ...process.env } as Record<string, string>
 
   afterEach(() => {
     Object.keys(process.env).forEach((key) => {

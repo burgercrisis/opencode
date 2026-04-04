@@ -583,7 +583,7 @@ export function MessageTimeline(props: {
         </div>
         <ScrollView
           viewportRef={props.setScrollRef}
-          onWheel={(e) => {
+          onWheel={(e: WheelEvent & { currentTarget: HTMLDivElement; target: Element }) => {
             const root = e.currentTarget
             const delta = normalizeWheelDelta({
               deltaY: e.deltaY,

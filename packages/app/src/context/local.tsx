@@ -1,15 +1,17 @@
+import { createStore, produce, reconcile } from "solid-js/store"
+import { batch, createEffect, createMemo, onCleanup } from "solid-js"
+import { uniqueBy } from "remeda"
 import { createSimpleContext } from "@opencode-ai/ui/context"
 import { base64Encode } from "@opencode-ai/util/encode"
 import { useParams } from "@solidjs/router"
-import { batch, createEffect, createMemo, onCleanup } from "solid-js"
-import { createStore } from "solid-js/store"
+import { useLayout } from "./layout"
+import { useSDK } from "./sdk"
+import { useSync } from "./sync"
 import { useModels } from "@/context/models"
 import { useProviders } from "@/hooks/use-providers"
 import { modelEnabled, modelProbe } from "@/testing/model-selection"
 import { Persist, persisted } from "@/utils/persist"
 import { cycleModelVariant, getConfiguredAgentVariant, resolveModelVariant } from "./model-variant"
-import { useSDK } from "./sdk"
-import { useSync } from "./sync"
 
 export type ModelKey = { providerID: string; modelID: string }
 
@@ -58,6 +60,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
     const params = useParams()
     const sdk = useSDK()
     const sync = useSync()
+    const layout = useLayout()
     const providers = useProviders()
     const models = useModels()
 
@@ -95,7 +98,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       return !!provider?.models[model.modelID] && connected().has(model.providerID)
     }
 
-    const firstModel = (...items: Array<() => ModelKey | undefined>) => {
+    const getFirstValidModel = (...items: Array<() => ModelKey | undefined>) => {
       for (const item of items) {
         const model = item()
         if (!model) continue
@@ -103,74 +106,70 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       }
     }
 
-    const pickAgent = (name: string | undefined) => {
-      const items = list()
-      if (items.length === 0) return undefined
-      return items.find((item) => item.name === name) ?? items[0]
-    }
+    const firstModel = getFirstValidModel
 
-    createEffect(() => {
-      const items = list()
-      if (items.length === 0) {
-        if (store.current !== undefined) setStore("current", undefined)
-        return
-      }
-      if (items.some((item) => item.name === store.current)) return
-      setStore("current", items[0]?.name)
-    })
-
-    const scope = createMemo<State | undefined>(() => {
-      const session = id()
-      if (!session) return store.draft
-      return saved.session[session] ?? handoff.get(handoffKey(sdk.directory, session))
-    })
-
-    createEffect(() => {
-      const session = id()
-      if (!session) return
-
-      const key = handoffKey(sdk.directory, session)
-      const next = handoff.get(key)
-      if (!next) return
-      if (saved.session[session] !== undefined) {
-        handoff.delete(key)
-        return
-      }
-
-      setSaved("session", session, clone(next))
-      handoff.delete(key)
-    })
-
-    const configuredModel = () => {
+    const resolveConfigured = () => {
       if (!sync.data.config.model) return
       const [providerID, modelID] = sync.data.config.model.split("/")
-      const model = { providerID, modelID }
-      if (validModel(model)) return model
+      const key = { providerID, modelID }
+      if (validModel(key)) return key
     }
 
-    const recentModel = () => {
+    const resolveRecent = () => {
       for (const item of models.recent.list()) {
         if (validModel(item)) return item
       }
     }
 
-    const defaultModel = () => {
+    const resolveDefault = () => {
       const defaults = providers.default()
       for (const provider of providers.connected()) {
         const configured = defaults[provider.id]
         if (configured) {
-          const model = { providerID: provider.id, modelID: configured }
-          if (validModel(model)) return model
+          const key = { providerID: provider.id, modelID: configured }
+          if (validModel(key)) return key
         }
 
         const first = Object.values(provider.models)[0]
         if (!first) continue
-        const model = { providerID: provider.id, modelID: first.id }
-        if (validModel(model)) return model
+        const key = { providerID: provider.id, modelID: first.id }
+        if (validModel(key)) return key
       }
     }
 
-    const fallback = createMemo<ModelKey | undefined>(() => configuredModel() ?? recentModel() ?? defaultModel())
+    // Prioritize OpenCode Zen models, especially big-pickle for Windows/shell
+    const resolveOpenCode = () => {
+      const allProviders = providers.all()
+      // OpenCode provider first
+      const opencodeProvider = allProviders.find(p => p.id === "opencode")
+      if (opencodeProvider) {
+        const pModels = Object.values(opencodeProvider.models)
+        const bigPickle = pModels.find(m => m.id === "big-pickle")
+        if (bigPickle) {
+          return { providerID: "opencode", modelID: "big-pickle" }
+        }
+        if (pModels.length > 0) {
+          return { providerID: "opencode", modelID: pModels[0].id }
+        }
+      }
+
+      // Fallback to any available
+      for (const p of allProviders) {
+        const pModels = Object.values(p.models)
+        if (pModels.length > 0) {
+          return { providerID: p.id, modelID: pModels[0].id }
+        }
+      }
+      return undefined
+    }
+
+    const fallbackModel = createMemo(() => resolveConfigured() ?? resolveRecent() ?? resolveDefault() ?? resolveOpenCode())
+
+    const pickAgent = (name: string | undefined) => {
+      const items = list()
+      if (items.length === 0) return undefined
+      return items.find((item) => item.name === name) ?? items[0]
+    }
 
     const agent = {
       list,
@@ -222,15 +221,20 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       },
     }
 
-    const current = () => {
-      const item = firstModel(
+    const scope = createMemo<State | undefined>(() => {
+      const session = id()
+      if (!session) return store.draft
+      return saved.session[session] ?? handoff.get(handoffKey(sdk.directory, session))
+    })
+
+    const current = createMemo(() => {
+      const item = getFirstValidModel(
         () => scope()?.model,
         () => agent.current()?.model,
-        fallback,
+        fallbackModel,
       )
-      if (!item) return undefined
-      return models.find(item)
-    }
+      return item ? models.find(item) : undefined
+    })
 
     const configured = () => {
       const item = agent.current()
@@ -243,6 +247,8 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
     }
 
     const selected = () => scope()?.variant
+
+    const recent = createMemo(() => models.recent.list().map(models.find).filter(Boolean))
 
     const snapshot = () => {
       const model = current()
@@ -266,8 +272,6 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       }
       setStore("draft", state)
     }
-
-    const recent = createMemo(() => models.recent.list().map(models.find).filter(Boolean))
 
     const model = {
       ready: models.ready,

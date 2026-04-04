@@ -1774,6 +1774,15 @@ function BlockTool(props: {
   )
 }
 
+function shellprompt(): string {
+  if (process.platform !== "win32") return "$"
+  const sh = (process.env.SHELL ?? "").toLowerCase()
+  if (sh.includes("bash") || sh.includes("msys") || sh.includes("cygwin")) return "$"
+  const c = (process.env.COMSPEC ?? "").toLowerCase()
+  if (c.includes("powershell") || c.includes("pwsh")) return ">"
+  return ">"
+}
+
 function Bash(props: ToolProps<typeof BashTool>) {
   const { theme } = useTheme()
   const sync = useSync()
@@ -1822,7 +1831,9 @@ function Bash(props: ToolProps<typeof BashTool>) {
           onClick={overflow() ? () => setExpanded((prev) => !prev) : undefined}
         >
           <box gap={1}>
-            <text fg={theme.text}>$ {props.input.command}</text>
+            <text fg={theme.text}>
+              {shellprompt()} {props.input.command}
+            </text>
             <Show when={output()}>
               <text fg={theme.text}>{limited()}</text>
             </Show>
@@ -1833,7 +1844,7 @@ function Bash(props: ToolProps<typeof BashTool>) {
         </BlockTool>
       </Match>
       <Match when={true}>
-        <InlineTool icon="$" pending="Writing command..." complete={props.input.command} part={props.part}>
+        <InlineTool icon={shellprompt()} pending="Writing command..." complete={props.input.command} part={props.part}>
           {props.input.command}
         </InlineTool>
       </Match>

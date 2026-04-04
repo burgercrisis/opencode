@@ -11,8 +11,11 @@ import { Command } from "../command"
 import { Instance } from "./instance"
 import { Log } from "@/util/log"
 import { ShareNext } from "@/share/share-next"
+import { Flag } from "../flag/flag"
+import { LLMConcurrencyMachine } from "../session/llm-concurrency-machine"
 
 export async function InstanceBootstrap() {
+  if (Flag.OPENCODE_EXPERIMENTAL_NO_BOOTSTRAP) return
   Log.Default.info("bootstrapping", { directory: Instance.directory })
   await Plugin.init()
   ShareNext.init()

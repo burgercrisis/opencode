@@ -794,7 +794,8 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
           },
           review: {
             open: createMemo(() => s().reviewOpen ?? []),
-            setOpen(open: string[]) {
+            setOpen(raw: string[]) {
+              const open = raw.map((p) => p.replace(/\\/g, "/"))
               const session = key()
               const next = Array.from(new Set(open))
               const current = store.sessionView[session]

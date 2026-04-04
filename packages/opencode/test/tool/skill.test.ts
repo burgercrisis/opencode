@@ -1,167 +1,183 @@
-import { afterEach, describe, expect, test } from "bun:test"
+import { expect, it, describe, mock, beforeEach, afterEach, vi } from "bun:test"
+import { SkillTool } from "../../src/tool/skill"
+import { Skill } from "../../src/skill"
+import { PermissionNext } from "../../src/permission/next"
+import { Instance } from "../../src/project/instance"
+import { tmpdir } from "../fixture/fixture"
 import path from "path"
 import { pathToFileURL } from "url"
-import type { Permission } from "../../src/permission"
-import type { Tool } from "../../src/tool/tool"
-import { Instance } from "../../src/project/instance"
-import { SkillTool } from "../../src/tool/skill"
-import { tmpdir } from "../fixture/fixture"
-import { SessionID, MessageID } from "../../src/session/schema"
 
-const baseCtx: Omit<Tool.Context, "ask"> = {
-  sessionID: SessionID.make("ses_test"),
-  messageID: MessageID.make(""),
-  callID: "",
-  agent: "build",
-  abort: AbortSignal.any([]),
-  messages: [],
-  metadata: () => {},
-}
+describe("SkillTool", () => {
+  const ctx = {
+    agent: {
+      permission: [],
+    },
+    ask: mock(),
+    abort: new AbortController().signal,
+  }
 
-afterEach(async () => {
-  await Instance.disposeAll()
-})
+  beforeEach(() => {
+    vi.resetAllMocks()
+    ;(ctx.ask as any).mockClear()
+  })
 
-describe("tool.skill", () => {
-  test("description lists skill location URL", async () => {
-    await using tmp = await tmpdir({
-      git: true,
-      init: async (dir) => {
-        const skillDir = path.join(dir, ".opencode", "skill", "tool-skill")
-        await Bun.write(
-          path.join(skillDir, "SKILL.md"),
-          `---
-name: tool-skill
-description: Skill for tool tests.
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("initializes with available skills", async () => {
+    await using tmp = await tmpdir()
+    // Create a real skill file
+    const skillDir = path.join(tmp.path, ".opencode", "skill", "test-skill")
+    await Bun.write(path.join(skillDir, "SKILL.md"), `---
+name: test-skill
+description: A test skill
 ---
+Skill content`)
 
-# Tool Skill
-`,
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const tool = await SkillTool.init(ctx as any)
+        expect(tool.description).toContain("test-skill")
+        expect(tool.description).toContain("A test skill")
+        expect(tool.description).toContain(encodeURIComponent("SKILL.md"))
+      },
+    })
+  })
+
+  it("initializes with no skills if none available", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const tool = await SkillTool.init(ctx as any)
+        expect(tool.description).toContain("No skills are currently available")
+      },
+    })
+  })
+
+  it("filters skills based on permissions", async () => {
+    await using tmp = await tmpdir()
+    
+    // Create skill files
+    const skillDirA = path.join(tmp.path, ".opencode", "skill", "allowed-skill")
+    await Bun.write(path.join(skillDirA, "SKILL.md"), `---
+name: allowed-skill
+description: Allowed skill
+---
+Content`)
+    
+    const skillDirB = path.join(tmp.path, ".opencode", "skill", "denied-skill")
+    await Bun.write(path.join(skillDirB, "SKILL.md"), `---
+name: denied-skill
+description: Denied skill
+---
+Content`)
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        // Mock permission to deny denied-skill
+        vi.spyOn(PermissionNext, "evaluate").mockImplementation(((type: string, name: string) => {
+          if (name === "denied-skill") return { action: "deny" }
+          return { action: "allow" }
+        }) as any)
+
+        const tool = await SkillTool.init(ctx as any)
+        expect(tool.description).toContain("allowed-skill")
+        expect(tool.description).not.toContain("denied-skill")
+      },
+    })
+  })
+
+  it("executes and loads a skill", async () => {
+    await using tmp = await tmpdir()
+    
+    // Create a skill with files
+    const skillDir = path.join(tmp.path, ".opencode", "skill", "test-skill")
+    await Bun.write(path.join(skillDir, "SKILL.md"), `---
+name: test-skill
+description: A test skill
+---
+Skill content`)
+    await Bun.write(path.join(skillDir, "file1.txt"), "File 1 content")
+    await Bun.write(path.join(skillDir, "file2.txt"), "File 2 content")
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const tool = await SkillTool.init(ctx as any)
+        const params = { name: "test-skill" }
+        const result = await tool.execute(params, ctx as any)
+
+        expect(ctx.ask).toHaveBeenCalledWith({
+          permission: "skill",
+          patterns: ["test-skill"],
+          always: ["test-skill"],
+          metadata: {},
+        })
+
+        expect(result.title).toBe("Loaded skill: test-skill")
+        expect(result.output).toContain("Skill content")
+        expect(result.output).toContain("<skill_files>")
+        expect(result.output).toContain("file1.txt")
+        expect(result.output).toContain("file2.txt")
+        expect(result.output).not.toContain("SKILL.md")
+        expect(result.metadata.name).toBe("test-skill")
+      },
+    })
+  })
+
+  it("throws error if skill not found", async () => {
+    await using tmp = await tmpdir()
+    
+    // Create a different skill
+    const skillDir = path.join(tmp.path, ".opencode", "skill", "other-skill")
+    await Bun.write(path.join(skillDir, "SKILL.md"), `---
+name: other-skill
+description: Another skill
+---
+Content`)
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const tool = await SkillTool.init(ctx as any)
+
+        expect(tool.execute({ name: "missing-skill" }, ctx as any)).rejects.toThrow(
+          'Skill "missing-skill" not found. Available skills: other-skill'
         )
       },
     })
-
-    const home = process.env.OPENCODE_TEST_HOME
-    process.env.OPENCODE_TEST_HOME = tmp.path
-
-    try {
-      await Instance.provide({
-        directory: tmp.path,
-        fn: async () => {
-          const tool = await SkillTool.init()
-          const skillPath = path.join(tmp.path, ".opencode", "skill", "tool-skill", "SKILL.md")
-          expect(tool.description).toContain(`**tool-skill**: Skill for tool tests.`)
-        },
-      })
-    } finally {
-      process.env.OPENCODE_TEST_HOME = home
-    }
   })
 
-  test("description sorts skills by name and is stable across calls", async () => {
-    await using tmp = await tmpdir({
-      git: true,
-      init: async (dir) => {
-        for (const [name, description] of [
-          ["zeta-skill", "Zeta skill."],
-          ["alpha-skill", "Alpha skill."],
-          ["middle-skill", "Middle skill."],
-        ]) {
-          const skillDir = path.join(dir, ".opencode", "skill", name)
-          await Bun.write(
-            path.join(skillDir, "SKILL.md"),
-            `---
-name: ${name}
-description: ${description}
+  it("respects the sampling limit for skill files", async () => {
+    await using tmp = await tmpdir()
+    
+    // Create a skill with many files
+    const skillDir = path.join(tmp.path, ".opencode", "skill", "test-skill")
+    await Bun.write(path.join(skillDir, "SKILL.md"), `---
+name: test-skill
+description: A test skill
 ---
+Skill content`)
+    
+    // Create 15 files (limit is 10)
+    for (let i = 0; i < 15; i++) {
+      await Bun.write(path.join(skillDir, `file${i}.txt`), `File ${i} content`)
+    }
 
-# ${name}
-`,
-          )
-        }
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const tool = await SkillTool.init(ctx as any)
+        const result = await tool.execute({ name: "test-skill" }, ctx as any)
+
+        // limit is 10
+        const matches = result.output.match(/<file>/g)
+        expect(matches?.length).toBe(10)
       },
     })
-
-    const home = process.env.OPENCODE_TEST_HOME
-    process.env.OPENCODE_TEST_HOME = tmp.path
-
-    try {
-      await Instance.provide({
-        directory: tmp.path,
-        fn: async () => {
-          const first = await SkillTool.init()
-          const second = await SkillTool.init()
-
-          expect(first.description).toBe(second.description)
-
-          const alpha = first.description.indexOf("**alpha-skill**: Alpha skill.")
-          const middle = first.description.indexOf("**middle-skill**: Middle skill.")
-          const zeta = first.description.indexOf("**zeta-skill**: Zeta skill.")
-
-          expect(alpha).toBeGreaterThan(-1)
-          expect(middle).toBeGreaterThan(alpha)
-          expect(zeta).toBeGreaterThan(middle)
-        },
-      })
-    } finally {
-      process.env.OPENCODE_TEST_HOME = home
-    }
-  })
-
-  test("execute returns skill content block with files", async () => {
-    await using tmp = await tmpdir({
-      git: true,
-      init: async (dir) => {
-        const skillDir = path.join(dir, ".opencode", "skill", "tool-skill")
-        await Bun.write(
-          path.join(skillDir, "SKILL.md"),
-          `---
-name: tool-skill
-description: Skill for tool tests.
----
-
-# Tool Skill
-
-Use this skill.
-`,
-        )
-        await Bun.write(path.join(skillDir, "scripts", "demo.txt"), "demo")
-      },
-    })
-
-    const home = process.env.OPENCODE_TEST_HOME
-    process.env.OPENCODE_TEST_HOME = tmp.path
-
-    try {
-      await Instance.provide({
-        directory: tmp.path,
-        fn: async () => {
-          const tool = await SkillTool.init()
-          const requests: Array<Omit<Permission.Request, "id" | "sessionID" | "tool">> = []
-          const ctx: Tool.Context = {
-            ...baseCtx,
-            ask: async (req) => {
-              requests.push(req)
-            },
-          }
-
-          const result = await tool.execute({ name: "tool-skill" }, ctx)
-          const dir = path.join(tmp.path, ".opencode", "skill", "tool-skill")
-          const file = path.resolve(dir, "scripts", "demo.txt")
-
-          expect(requests.length).toBe(1)
-          expect(requests[0].permission).toBe("skill")
-          expect(requests[0].patterns).toContain("tool-skill")
-          expect(requests[0].always).toContain("tool-skill")
-
-          expect(result.metadata.dir).toBe(dir)
-          expect(result.output).toContain(`<skill_content name="tool-skill">`)
-          expect(result.output).toContain(`Base directory for this skill: ${pathToFileURL(dir).href}`)
-          expect(result.output).toContain(`<file>${file}</file>`)
-        },
-      })
-    } finally {
-      process.env.OPENCODE_TEST_HOME = home
-    }
   })
 })

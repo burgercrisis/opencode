@@ -8,10 +8,15 @@ import { Flag } from "@/flag/flag"
 import { Global } from "@/global"
 
 export namespace ConfigPaths {
+  function worktreeStop(directory: string, worktree: string) {
+    return worktree === directory ? process.env.OPENCODE_TEST_HOME || Global.Path.home : worktree
+  }
+
   export async function projectFiles(name: string, directory: string, worktree: string) {
     const files: string[] = []
+    const stop = worktreeStop(directory, worktree)
     for (const file of [`${name}.jsonc`, `${name}.json`]) {
-      const found = await Filesystem.findUp(file, directory, worktree)
+      const found = await Filesystem.findUp(file, directory, stop)
       for (const resolved of found.toReversed()) {
         files.push(resolved)
       }
@@ -20,6 +25,7 @@ export namespace ConfigPaths {
   }
 
   export async function directories(directory: string, worktree: string) {
+    const stop = worktreeStop(directory, worktree)
     return [
       Global.Path.config,
       ...(!Flag.OPENCODE_DISABLE_PROJECT_CONFIG
@@ -27,7 +33,7 @@ export namespace ConfigPaths {
             Filesystem.up({
               targets: [".opencode"],
               start: directory,
-              stop: worktree,
+              stop,
             }),
           )
         : []),

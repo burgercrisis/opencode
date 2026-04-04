@@ -99,7 +99,7 @@ export namespace LSP {
 
       filterExperimentalServers(servers)
 
-      for (const [name, item] of Object.entries(cfg.lsp ?? {})) {
+      for (const [name, item] of Object.entries(cfg.lsp ?? {}) as [string, any][]) {
         const existing = servers[name]
         if (item.disabled) {
           log.info(`LSP server ${name} is disabled`)
@@ -111,7 +111,7 @@ export namespace LSP {
           id: name,
           root: existing?.root ?? (async () => Instance.directory),
           extensions: item.extensions ?? existing?.extensions ?? [],
-          spawn: async (root) => {
+          spawn: async (root: string) => {
             return {
               process: lspspawn(item.command[0], item.command.slice(1), {
                 cwd: root,
@@ -123,7 +123,7 @@ export namespace LSP {
               initialization: item.initialization,
             }
           },
-        }
+        } as any
       }
 
       log.info("enabled LSP servers", {

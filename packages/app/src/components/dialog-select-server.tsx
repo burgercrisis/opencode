@@ -643,6 +643,12 @@ export function DialogSelectServer() {
             </Button>
           </Show>
         </div>
+        <Show when={canDefault()}>
+          <div class="px-5 pb-5 flex flex-col gap-1.5">
+            <h3 class="text-14-regular text-text-weak">{language.t("dialog.server.default.title")}</h3>
+            <p class="text-12-regular text-text-weak">{language.t("dialog.server.default.description")}</p>
+          </div>
+        </Show>
       </div>
     </Dialog>
   )

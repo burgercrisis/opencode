@@ -6,7 +6,14 @@ import { invoke } from "@tauri-apps/api/core"
 import { type as ostype } from "@tauri-apps/plugin-os"
 import { createSignal } from "solid-js"
 
-const OS_NAME = ostype()
+// Handle the async nature of plugin initialization if needed, 
+// or default to a safe value if the plugin isn't ready.
+let OS_NAME = "windows" 
+try {
+  OS_NAME = ostype()
+} catch (e) {
+  console.warn("Failed to get OS type, defaulting to windows", e)
+}
 
 const [webviewZoom, setWebviewZoom] = createSignal(1)
 

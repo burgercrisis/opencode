@@ -18,6 +18,9 @@ export type FileViewState = {
   scrollTop?: number
   scrollLeft?: number
   selectedLines?: SelectedLineRange | null
+  selection?: FileSelection | null
+  folded?: Record<string, boolean>
+  changeIndex?: number
 }
 
 export type FileState = {

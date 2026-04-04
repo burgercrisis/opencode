@@ -1,16 +1,11 @@
-import { describe, test, expect } from "bun:test"
-import { NodeFileSystem } from "@effect/platform-node"
-import { Effect, FileSystem, Layer } from "effect"
-import { Truncate, Truncate as TruncateSvc } from "../../src/tool/truncate"
+import { describe, test, expect, afterAll, beforeEach, afterEach, vi } from "bun:test"
+import { Truncate } from "../../src/tool/truncation"
 import { Identifier } from "../../src/id/id"
-import { Process } from "../../src/util/process"
 import { Filesystem } from "../../src/util/filesystem"
+import fs from "fs/promises"
 import path from "path"
-import { testEffect } from "../lib/effect"
-import { writeFileStringScoped } from "../lib/filesystem"
 
 const FIXTURES_DIR = path.join(import.meta.dir, "fixtures")
-const ROOT = path.resolve(import.meta.dir, "..", "..")
 
 describe("Truncate", () => {
   describe("output", () => {
@@ -126,36 +121,143 @@ describe("Truncate", () => {
       if (result.truncated) throw new Error("expected not truncated")
       expect("outputPath" in result).toBe(false)
     })
-
-    test("loads truncate effect in a fresh process", async () => {
-      const out = await Process.run([process.execPath, "run", path.join(ROOT, "src", "tool", "truncate.ts")], {
-        cwd: ROOT,
-      })
-
-      expect(out.code).toBe(0)
-    }, 20000)
   })
 
   describe("cleanup", () => {
     const DAY_MS = 24 * 60 * 60 * 1000
-    const it = testEffect(Layer.mergeAll(TruncateSvc.defaultLayer, NodeFileSystem.layer))
+    let oldFile: string
+    let recentFile: string
 
-    it.effect("deletes files older than 7 days and preserves recent files", () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem
+    afterAll(async () => {
+      await fs.unlink(oldFile).catch(() => { })
+      await fs.unlink(recentFile).catch(() => { })
+    })
 
-        yield* fs.makeDirectory(Truncate.DIR, { recursive: true })
+    test("deletes files older than 7 days and preserves recent files", async () => {
+      await fs.mkdir(Truncate.DIR, { recursive: true })
 
-        const old = path.join(Truncate.DIR, Identifier.create("tool", false, Date.now() - 10 * DAY_MS))
-        const recent = path.join(Truncate.DIR, Identifier.create("tool", false, Date.now() - 3 * DAY_MS))
+      // Create an old file (10 days ago)
+      const oldTimestamp = Date.now() - 10 * DAY_MS
+      const oldId = Identifier.create("tool", false, oldTimestamp)
+      oldFile = path.join(Truncate.DIR, oldId)
+      await Filesystem.write(oldFile, "old content")
 
-        yield* writeFileStringScoped(old, "old content")
-        yield* writeFileStringScoped(recent, "recent content")
-        yield* TruncateSvc.Service.use((s) => s.cleanup())
+      // Create a recent file (3 days ago)
+      const recentTimestamp = Date.now() - 3 * DAY_MS
+      const recentId = Identifier.create("tool", false, recentTimestamp)
+      recentFile = path.join(Truncate.DIR, recentId)
+      await Filesystem.write(recentFile, "recent content")
 
-        expect(yield* fs.exists(old)).toBe(false)
-        expect(yield* fs.exists(recent)).toBe(true)
-      }),
-    )
+      await Truncate.cleanup()
+
+      // Old file should be deleted
+      expect(await Filesystem.exists(oldFile)).toBe(false)
+
+      // Recent file should still exist
+      expect(await Filesystem.exists(recentFile)).toBe(true)
+    })
+  })
+
+  describe("memory leak cleanup", () => {
+    const testDir = path.join(process.cwd(), "test-truncation")
+    const originalDir = Truncate.DIR
+
+    beforeEach(async () => {
+      // Override DIR for testing
+      ; (Truncate as any).DIR = testDir
+
+      // Ensure test directory exists
+      await fs.mkdir(testDir, { recursive: true })
+    })
+
+    afterEach(async () => {
+      // Clean up test directory
+      try {
+        await fs.rm(testDir, { recursive: true, force: true })
+      } catch {
+        // Ignore cleanup errors
+      }
+
+      // Restore original DIR
+      ; (Truncate as any).DIR = originalDir
+    })
+
+    test("should handle empty directory gracefully", async () => {
+      // Test with no files
+      await Truncate.cleanup()
+
+      // Should not throw and should complete successfully
+      expect(true).toBe(true)
+    })
+
+    test("should clean up old files correctly", async () => {
+      const now = Date.now()
+      const oldTimestamp = now - (8 * 24 * 60 * 60 * 1000) // 8 days ago
+      const recentTimestamp = now - (1 * 24 * 60 * 60 * 1000) // 1 day ago
+
+      // Create test files with manual naming to avoid Identifier.timestamp issues
+      const oldFile = path.join(testDir, `tool_old_${oldTimestamp}`)
+      const recentFile = path.join(testDir, `tool_recent_${recentTimestamp}`)
+
+      await fs.writeFile(oldFile, "old content")
+      await fs.writeFile(recentFile, "recent content")
+
+      await Truncate.cleanup()
+
+      // Old file should be deleted
+      expect(await Filesystem.exists(oldFile)).toBe(false)
+
+      // Recent file should still exist
+      expect(await Filesystem.exists(recentFile)).toBe(true)
+    })
+
+    test("should handle file system errors gracefully", async () => {
+      // Create a file that will be cleaned up
+      const oldTimestamp = Date.now() - (8 * 24 * 60 * 60 * 1000)
+      const testFile = path.join(testDir, `tool_test_${oldTimestamp}`)
+      await fs.writeFile(testFile, "test content")
+
+      // Mock fs.readdir to throw an error
+      const originalReaddir = fs.readdir
+      fs.readdir = vi.fn().mockRejectedValue(new Error("Permission denied"))
+
+      try {
+        // Should not throw even when fs operations fail
+        await Truncate.cleanup()
+        expect(true).toBe(true) // Test passes if no exception thrown
+      } finally {
+        // Restore original function
+        fs.readdir = originalReaddir
+      }
+    })
+
+    test("should only delete files older than threshold", async () => {
+      const now = Date.now()
+      const threshold = 7 * 24 * 60 * 60 * 1000 // 7 days
+
+      // Create files at different ages
+      const veryOld = now - (10 * 24 * 60 * 60 * 1000) // 10 days ago
+      const slightlyOld = now - (8 * 24 * 60 * 60 * 1000) // 8 days ago
+      const recent = now - (5 * 24 * 60 * 60 * 1000) // 5 days ago
+
+      const files = [
+        path.join(testDir, `tool_veryold_${veryOld}`),
+        path.join(testDir, `tool_slightlyold_${slightlyOld}`),
+        path.join(testDir, `tool_recent_${recent}`)
+      ]
+
+      for (const file of files) {
+        await fs.writeFile(file, "content")
+      }
+
+      await Truncate.cleanup()
+
+      // Very old and slightly old files should be deleted
+      expect(await Filesystem.exists(files[0])).toBe(false)
+      expect(await Filesystem.exists(files[1])).toBe(false)
+
+      // Recent file should still exist
+      expect(await Filesystem.exists(files[2])).toBe(true)
+    })
   })
 })

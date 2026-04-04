@@ -1,6 +1,6 @@
-export const logo = {
-  left: ["                   ", "█▀▀█ █▀▀█ █▀▀█ █▀▀▄", "█__█ █__█ █^^^ █__█", "▀▀▀▀ █▀▀▀ ▀▀▀▀ ▀~~▀"],
-  right: ["             ▄     ", "█▀▀▀ █▀▀█ █▀▀█ █▀▀█", "█___ █__█ █__█ █^^^", "▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀"],
-}
+/**
+ * CLI logo exports
+ * Re-exports shared logo for CLI usage
+ */
 
-export const marks = "_^~"
+export { burgercodeLogo as logo, marks } from "@opencode-ai/shared/logo"

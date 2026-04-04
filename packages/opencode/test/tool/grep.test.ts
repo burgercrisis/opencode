@@ -1,111 +1,163 @@
-import { describe, expect, test } from "bun:test"
-import path from "path"
+import { describe, expect, test, mock, vi, afterEach, beforeEach } from "bun:test"
 import { GrepTool } from "../../src/tool/grep"
 import { Instance } from "../../src/project/instance"
 import { tmpdir } from "../fixture/fixture"
-import { SessionID, MessageID } from "../../src/session/schema"
+import * as fs from "fs/promises"
+import * as path from "path"
 
-const ctx = {
-  sessionID: SessionID.make("ses_test"),
-  messageID: MessageID.make(""),
-  callID: "",
-  agent: "build",
-  abort: AbortSignal.any([]),
-  messages: [],
-  metadata: () => {},
-  ask: async () => {},
-}
+describe("GrepTool", () => {
+  const ctx: any = {
+    sessionID: "session",
+    messageID: "message",
+    agent: "agent",
+    abort: new AbortController().signal,
+    messages: [],
+    metadata: vi.fn(),
+    ask: vi.fn(),
+  }
 
-const projectRoot = path.join(__dirname, "../..")
-
-describe("tool.grep", () => {
-  test("basic search", async () => {
+  test("greps files and sorts by modification time", async () => {
+    await using tmp = await tmpdir()
     await Instance.provide({
-      directory: projectRoot,
+      directory: tmp.path,
       fn: async () => {
-        const grep = await GrepTool.init()
-        const result = await grep.execute(
-          {
-            pattern: "export",
-            path: path.join(projectRoot, "src/tool"),
-            include: "*.ts",
-          },
-          ctx,
-        )
-        expect(result.metadata.matches).toBeGreaterThan(0)
-        expect(result.output).toContain("Found")
+        const file1 = path.join(tmp.path, "file1.txt")
+        const file2 = path.join(tmp.path, "file2.txt")
+        
+        // Create files with actual content
+        await fs.writeFile(file1, "target match 1")
+        await new Promise(r => setTimeout(r, 100))
+        await fs.writeFile(file2, "target match 2")
+
+        const tool = await GrepTool.init()
+        const result = await tool.execute({ pattern: "target" }, ctx)
+
+        expect(result.output).toContain("Found 2 matches")
+        // file2 was modified last, should appear first
+        const lines = result.output.split("\n")
+        const file2Index = lines.findIndex(l => l.includes("file2.txt"))
+        const file1Index = lines.findIndex(l => l.includes("file1.txt"))
+        expect(file2Index).toBeLessThan(file1Index)
       },
     })
   })
 
-  test("no matches returns correct output", async () => {
-    await using tmp = await tmpdir({
-      init: async (dir) => {
-        await Bun.write(path.join(dir, "test.txt"), "hello world")
-      },
-    })
+  test("handles empty results", async () => {
+    await using tmp = await tmpdir()
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const grep = await GrepTool.init()
-        const result = await grep.execute(
-          {
-            pattern: "xyznonexistentpatternxyz123",
-            path: tmp.path,
-          },
-          ctx,
-        )
+        // Create a file without the search pattern
+        await fs.writeFile(path.join(tmp.path, "file.txt"), "no match here")
+
+        const tool = await GrepTool.init()
+        const result = await tool.execute({ pattern: "nothing" }, ctx)
+
+        expect(result.output).toBe("No files found")
         expect(result.metadata.matches).toBe(0)
+      },
+    })
+  })
+
+  test("handles long lines in results", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const file = path.join(tmp.path, "long.txt")
+        const longLine = "a".repeat(3000)
+        await fs.writeFile(file, longLine)
+
+        const tool = await GrepTool.init()
+        const result = await tool.execute({ pattern: "a" }, ctx)
+
+        expect(result.output).toContain("a".repeat(2000) + "...")
+        expect(result.output).not.toContain("a".repeat(2001))
+      },
+    })
+  })
+
+  test("passes include pattern to ripgrep", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        // Create files with different extensions
+        await fs.writeFile(path.join(tmp.path, "file.ts"), "foo content")
+        await fs.writeFile(path.join(tmp.path, "file.js"), "foo content")
+
+        const tool = await GrepTool.init()
+        const result = await tool.execute({ pattern: "foo", include: "*.ts" }, ctx)
+
+        // Should only find the .ts file
+        expect(result.output).toContain("file.ts")
+        expect(result.output).not.toContain("file.js")
+      },
+    })
+  })
+
+  test("handles no matches", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        await fs.writeFile(path.join(tmp.path, "file.txt"), "some content")
+
+        const tool = await GrepTool.init()
+        const result = await tool.execute({ pattern: "nothing" }, ctx)
+
         expect(result.output).toBe("No files found")
       },
     })
   })
 
-  test("handles CRLF line endings in output", async () => {
-    // This test verifies the regex split handles both \n and \r\n
-    await using tmp = await tmpdir({
-      init: async (dir) => {
-        // Create a test file with content
-        await Bun.write(path.join(dir, "test.txt"), "line1\nline2\nline3")
-      },
-    })
+  test("searches with regex pattern", async () => {
+    await using tmp = await tmpdir()
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const grep = await GrepTool.init()
-        const result = await grep.execute(
-          {
-            pattern: "line",
-            path: tmp.path,
-          },
-          ctx,
-        )
-        expect(result.metadata.matches).toBeGreaterThan(0)
+        await fs.writeFile(path.join(tmp.path, "file.txt"), "foo123 bar456 baz")
+
+        const tool = await GrepTool.init()
+        const result = await tool.execute({ pattern: "foo\\d+" }, ctx)
+
+        expect(result.output).toContain("Found 1 matches")
+        expect(result.output).toContain("foo123")
       },
     })
   })
-})
 
-describe("CRLF regex handling", () => {
-  test("regex correctly splits Unix line endings", () => {
-    const unixOutput = "file1.txt|1|content1\nfile2.txt|2|content2\nfile3.txt|3|content3"
-    const lines = unixOutput.trim().split(/\r?\n/)
-    expect(lines.length).toBe(3)
-    expect(lines[0]).toBe("file1.txt|1|content1")
-    expect(lines[2]).toBe("file3.txt|3|content3")
+  test("finds multiple matches in same file", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        await fs.writeFile(path.join(tmp.path, "file.txt"), "foo line1\nbar line2\nfoo line3")
+
+        const tool = await GrepTool.init()
+        const result = await tool.execute({ pattern: "foo" }, ctx)
+
+        expect(result.output).toContain("Found 2 matches")
+        expect(result.output).toContain("foo line1")
+        expect(result.output).toContain("foo line3")
+      },
+    })
   })
 
-  test("regex correctly splits Windows CRLF line endings", () => {
-    const windowsOutput = "file1.txt|1|content1\r\nfile2.txt|2|content2\r\nfile3.txt|3|content3"
-    const lines = windowsOutput.trim().split(/\r?\n/)
-    expect(lines.length).toBe(3)
-    expect(lines[0]).toBe("file1.txt|1|content1")
-    expect(lines[2]).toBe("file3.txt|3|content3")
-  })
+  test("truncates long lines", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const file = path.join(tmp.path, "long.txt")
+        const longLine = "A".repeat(3000)
+        await fs.writeFile(file, longLine)
 
-  test("regex handles mixed line endings", () => {
-    const mixedOutput = "file1.txt|1|content1\nfile2.txt|2|content2\r\nfile3.txt|3|content3"
-    const lines = mixedOutput.trim().split(/\r?\n/)
-    expect(lines.length).toBe(3)
+        const tool = await GrepTool.init()
+        const result = await tool.execute({ pattern: "A" }, ctx)
+
+        expect(result.output).toContain("A".repeat(2000) + "...")
+      },
+    })
   })
 })

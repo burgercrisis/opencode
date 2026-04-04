@@ -28,7 +28,6 @@ const parameters = z.object({
 export const TaskTool = Tool.define("task", async (ctx) => {
   const agents = await Agent.list().then((x) => x.filter((a) => a.mode !== "primary"))
 
-  // Filter agents by permissions if agent provided
   const caller = ctx?.agent
   const accessibleAgents = caller
     ? agents.filter((a) => Permission.evaluate("task", a.name, caller.permission).action !== "deny")
@@ -48,20 +47,17 @@ export const TaskTool = Tool.define("task", async (ctx) => {
       const config = await Config.get()
 
       // Skip permission check when user explicitly invoked via @ or command subtask
-      if (!ctx.extra?.bypassAgentCheck) {
-        await ctx.ask({
-          permission: "task",
-          patterns: [params.subagent_type],
-          always: ["*"],
-          metadata: {
-            description: params.description,
-            subagent_type: params.subagent_type,
-          },
-        })
-      }
+      !ctx.extra?.bypassAgentCheck && (await ctx.ask({
+        permission: "task",
+        patterns: [params.subagent_type],
+        always: ["*"],
+        metadata: {
+          description: params.description,
+          subagent_type: params.subagent_type,
+        },
+      }))
 
-      const agent = await Agent.get(params.subagent_type)
-      if (!agent) throw new Error(`Unknown agent type: ${params.subagent_type} is not a valid agent type`)
+      const agent = await Agent.get(params.subagent_type) || (() => { throw new Error(`Unknown agent type: ${params.subagent_type} is not a valid agent type`) })()
 
       const hasTaskPermission = agent.permission.some((rule) => rule.permission === "task")
 
@@ -94,7 +90,7 @@ export const TaskTool = Tool.define("task", async (ctx) => {
                     action: "deny" as const,
                   },
                 ]),
-            ...(config.experimental?.primary_tools?.map((t) => ({
+            ...(config.experimental?.primary_tools?.map((t: string) => ({
               pattern: "*",
               action: "allow" as const,
               permission: t,
@@ -102,6 +98,7 @@ export const TaskTool = Tool.define("task", async (ctx) => {
           ],
         })
       })
+
       const msg = await MessageV2.get({ sessionID: ctx.sessionID, messageID: ctx.messageID })
       if (msg.info.role !== "assistant") throw new Error("Not an assistant message")
 
@@ -124,7 +121,7 @@ export const TaskTool = Tool.define("task", async (ctx) => {
         SessionPrompt.cancel(session.id)
       }
       ctx.abort.addEventListener("abort", cancel)
-      using _ = defer(() => ctx.abort.removeEventListener("abort", cancel))
+      using _abort = defer(() => ctx.abort.removeEventListener("abort", cancel))
       const promptParts = await SessionPrompt.resolvePromptParts(params.prompt)
 
       const result = await SessionPrompt.prompt({
@@ -139,7 +136,9 @@ export const TaskTool = Tool.define("task", async (ctx) => {
           todowrite: false,
           todoread: false,
           ...(hasTaskPermission ? {} : { task: false }),
-          ...Object.fromEntries((config.experimental?.primary_tools ?? []).map((t) => [t, false])),
+          ...Object.fromEntries(
+            (config.experimental?.primary_tools ?? []).map((t: string) => [t, false] as const),
+          ),
         },
         parts: promptParts,
       })

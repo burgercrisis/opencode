@@ -1,13 +1,17 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test, mock, beforeEach, afterEach, beforeAll, vi } from "bun:test"
 import os from "os"
 import path from "path"
-import { BashTool } from "../../src/tool/bash"
+import { BashTool, processPowerShellOutput, processCmdOutput } from "../../src/tool/bash"
 import { Instance } from "../../src/project/instance"
 import { Filesystem } from "../../src/util/filesystem"
 import { tmpdir } from "../fixture/fixture"
 import type { Permission } from "../../src/permission"
 import { Truncate } from "../../src/tool/truncate"
 import { SessionID, MessageID } from "../../src/session/schema"
+import { Shell } from "../../src/shell/shell"
+import { Config } from "../../src/config/config"
+import { Plugin } from "../../src/plugin"
+import * as childProcess from "child_process"
 
 const ctx = {
   sessionID: SessionID.make("ses_test"),
@@ -16,28 +20,189 @@ const ctx = {
   agent: "build",
   abort: AbortSignal.any([]),
   messages: [],
-  metadata: () => {},
-  ask: async () => {},
+  metadata: () => { },
+  ask: async () => { },
 }
 
 const projectRoot = path.join(__dirname, "../..")
 
 describe("tool.bash", () => {
-  test("basic", async () => {
-    await Instance.provide({
-      directory: projectRoot,
-      fn: async () => {
-        const bash = await BashTool.init()
-        const result = await bash.execute(
-          {
-            command: "echo 'test'",
-            description: "Echo test message",
-          },
-          ctx,
-        )
-        expect(result.metadata.exit).toBe(0)
-        expect(result.metadata.output).toContain("test")
-      },
+  describe("basic functionality", () => {
+    test("basic", async () => {
+      await Instance.provide({
+        directory: projectRoot,
+        fn: async () => {
+          const bash = await BashTool.init()
+          const result = await bash.execute(
+            {
+              command: "echo 'test'",
+              description: "Echo test message",
+            },
+            ctx,
+          )
+          expect(result.metadata.exit).toBe(0)
+          expect(result.metadata.output).toContain("test")
+        },
+      })
+    })
+  })
+
+  describe("fallback parsing", () => {
+    let mocks: {
+      pluginTrigger: any
+      configGet: any
+      shellKillTree: any
+      childProcessSpawn: any
+    }
+
+    beforeEach(() => {
+      mocks = {
+        pluginTrigger: vi.spyOn(Plugin, "trigger").mockResolvedValue({ env: {} }),
+        configGet: vi.spyOn(Config, "get").mockResolvedValue({ shell: process.platform === "win32" ? "powershell" : "bash" } as any),
+        shellKillTree: vi.spyOn(Shell, "killTree").mockResolvedValue(undefined),
+        childProcessSpawn: vi.spyOn(childProcess, "spawn"),
+      }
+    })
+
+    afterEach(() => {
+      vi.restoreAllMocks()
+    })
+
+    const fallbackCtx: any = {
+      sessionID: "session",
+      messageID: "message",
+      ask: vi.fn().mockResolvedValue(true),
+      abort: new AbortController().signal,
+      metadata: vi.fn(),
+    }
+
+    const mockSpawn = (output: string) => {
+      const mockProc = {
+        stdout: {
+          on: vi.fn((event: string, cb: (chunk: Buffer) => void) => {
+            if (event === "data") {
+              setTimeout(() => cb(Buffer.from(output)), 0)
+            }
+          }),
+          destroy: vi.fn(),
+        },
+        stderr: {
+          on: vi.fn(),
+          destroy: vi.fn(),
+        },
+        on: vi.fn(),
+        kill: vi.fn(),
+      }
+      mocks.childProcessSpawn.mockReturnValue(mockProc)
+      return mockProc
+    }
+
+    test("handles complex commands with fallback parsing", async () => {
+      await using tmp = await tmpdir({ git: true })
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const bash = await BashTool.init()
+          const mockProc = mockSpawn("test output")
+
+          const result = await bash.execute({
+            command: "find . -name '*.ts' -exec grep 'TODO' {} \\; | xargs -I {} cp {} /tmp/backup/",
+            description: "Complex command with chaining"
+          }, fallbackCtx)
+
+          expect(result.metadata.output).toContain("test output")
+          expect(mocks.childProcessSpawn).toHaveBeenCalled()
+        }
+      })
+    })
+
+    test("handles quoted arguments correctly", async () => {
+      await using tmp = await tmpdir({ git: true })
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const bash = await BashTool.init()
+          const mockProc = mockSpawn("file processed")
+
+          const result = await bash.execute({
+            command: 'cp "file with spaces.txt" \'another file.txt\' `file with nested quotes.txt\'',
+            description: "Command with mixed quoting"
+          }, fallbackCtx)
+
+          expect(result.metadata.output).toContain("file processed")
+        }
+      })
+    })
+  })
+
+  describe("performance optimizations", () => {
+    let testDir: string
+    let perfCtx: any
+
+    beforeAll(async () => {
+      const tmp = await tmpdir({ git: true })
+      testDir = tmp.path
+      perfCtx = {
+        sessionID: "test-session",
+        messageID: "test-message",
+        callID: "test-call",
+        agent: "test-agent",
+        abort: new AbortController().signal,
+        messages: [],
+        metadata: () => { },
+        ask: async () => { },
+      }
+    })
+
+    test("PowerShell performance optimization - simple commands", async () => {
+      await Instance.provide({
+        directory: testDir,
+        fn: async () => {
+          const bash = await BashTool.init()
+
+          // Test simple command that should use direct execution
+          const startTime = Date.now()
+          const result1 = await bash.execute({
+            command: "echo hello",
+            description: "Simple echo command"
+          }, perfCtx)
+          const echoTime = Date.now() - startTime
+
+          // Test complex command that should use shell
+          const complexStartTime = Date.now()
+          const result2 = await bash.execute({
+            command: 'powershell -Command "Get-Location"',
+            description: "PowerShell command"
+          }, perfCtx)
+          const powershellTime = Date.now() - complexStartTime
+
+          expect(result1.metadata.exit).toBe(0)
+          expect(result2.metadata.exit).toBe(0)
+          expect(echoTime).toBeLessThan(1000) // Should be fast
+        }
+      })
+    })
+  })
+
+  describe("output processing upgrades", () => {
+    test("processPowerShellOutput: enhances non-existent cmdlet errors", () => {
+      const output = "The term 'Get-NonExistent' is not recognized as the name of a cmdlet, function, script file, or operable program."
+      const result = processPowerShellOutput(output, "Get-NonExistent")
+      expect(result.output).toContain("Error: Command 'Get-NonExistent' not found")
+      expect(result.output).toContain("Get-Command Get-NonExistent")
+    })
+
+    test("processPowerShellOutput: handles Format-Table -First unsupported parameter", () => {
+      const output = "Format-Table : A parameter cannot be found that matches parameter name 'First'."
+      const result = processPowerShellOutput(output, "ls | ft -First 1")
+      expect(result.output).toContain("Note: The -First parameter is not supported")
+      expect(result.output).toContain("Select-Object -First N")
+    })
+
+    test("processCmdOutput: handles command not found errors", () => {
+      const output = "'nonexistent' is not recognized as an internal or external command"
+      const result = processCmdOutput(output, "nonexistent")
+      expect(result.output).toContain("Error: Command 'nonexistent' not found")
     })
   })
 })
@@ -398,6 +563,162 @@ describe("tool.bash truncation", () => {
         expect(lines[0]).toBe("1")
         expect(lines[lineCount - 1]).toBe(String(lineCount))
       },
+    })
+  })
+
+  describe("CMD exit code capture", () => {
+    test.skipIf(process.platform !== "win32")("captures exit code 42 from cmd /c exit 42", async () => {
+      await using tmp = await tmpdir({ git: true })
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const bash = await BashTool.init()
+          const result = await bash.execute(
+            {
+              command: "cmd /c exit 42",
+              description: "Exit with code 42",
+            },
+            ctx,
+          )
+          expect(result.metadata.exit).toBe(42)
+        },
+      })
+    })
+
+    test.skipIf(process.platform !== "win32")("captures exit code 1 from cmd /c dir nonexistent", async () => {
+      await using tmp = await tmpdir({ git: true })
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const bash = await BashTool.init()
+          const result = await bash.execute(
+            {
+              command: "cmd /c dir nonexistent 2>&1",
+              description: "Dir nonexistent directory",
+            },
+            ctx,
+          )
+          expect(result.metadata.exit).toBe(1)
+        },
+      })
+    })
+
+    test.skipIf(process.platform !== "win32")("captures exit code 0 from successful cmd /c echo", async () => {
+      await using tmp = await tmpdir({ git: true })
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const bash = await BashTool.init()
+          const result = await bash.execute(
+            {
+              command: "cmd /c echo success",
+              description: "Echo success message",
+            },
+            ctx,
+          )
+          expect(result.metadata.exit).toBe(0)
+          expect(result.metadata.output).toContain("success")
+        },
+      })
+    })
+
+    test.skipIf(process.platform !== "win32")("captures exit code 1 from cmd /c call nonexistent.bat", async () => {
+      await using tmp = await tmpdir({ git: true })
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const bash = await BashTool.init()
+          const result = await bash.execute(
+            {
+              command: "cmd /c call nonexistent.bat",
+              description: "Call nonexistent batch file",
+            },
+            ctx,
+          )
+          // cmd /c returns 1 for call failure, not 2 in this environment
+          expect([1, 2, 9009]).toContain(result.metadata.exit)
+        },
+      })
+    })
+
+    test.skipIf(process.platform !== "win32")("captures exit code 255 from cmd /c exit /b 255", async () => {
+      await using tmp = await tmpdir({ git: true })
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const bash = await BashTool.init()
+          const result = await bash.execute(
+            {
+              command: "cmd /c exit /b 255",
+              description: "Exit with batch file code 255",
+            },
+            ctx,
+          )
+          expect(result.metadata.exit).toBe(255)
+        },
+      })
+    })
+
+    test.skipIf(process.platform !== "win32")("handles cmd /c echo with special characters", async () => {
+      await using tmp = await tmpdir({ git: true })
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const bash = await BashTool.init()
+          const result = await bash.execute(
+            {
+              command: 'cmd /c echo "Hello, World! & Test"',
+              description: "Echo with special characters",
+            },
+            ctx,
+          )
+          expect(result.metadata.exit).toBe(0)
+          expect(result.metadata.output).toContain("Hello, World! & Test")
+        },
+      })
+    })
+
+    test.skipIf(process.platform !== "win32")("captures output from cmd /c dir command", async () => {
+      await using tmp = await tmpdir({ git: true })
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const bash = await BashTool.init()
+          const result = await bash.execute(
+            {
+              command: "cmd /c dir",
+              description: "List directory contents",
+            },
+            ctx,
+          )
+          expect(result.metadata.exit).toBe(0)
+          expect(result.metadata.output).toContain("Directory of")
+        },
+      })
+    })
+
+    test.skipIf(process.platform !== "win32")("handles cmd /c type command for file content", async () => {
+      await using tmp = await tmpdir({ git: true })
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          // Create a test file
+          const testFile = path.join(tmp.path, "test.txt")
+          await Bun.write(testFile, "Test file content\nLine 2")
+
+          const bash = await BashTool.init()
+          const result = await bash.execute(
+            {
+              command: `cmd /c type "${testFile}"`,
+              description: "Display file content",
+            },
+            ctx,
+          )
+          expect(result.metadata.exit).toBe(0)
+          expect(result.metadata.output).toContain("Test file content")
+          expect(result.metadata.output).toContain("Line 2")
+        },
+      })
     })
   })
 })

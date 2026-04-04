@@ -47,7 +47,7 @@ export namespace Format {
             for (const item of Object.values(Formatter)) {
               formatters[item.name] = item
             }
-            for (const [name, item] of Object.entries(cfg.formatter ?? {})) {
+            for (const [name, item] of Object.entries(cfg.formatter ?? {}) as [string, any][]) {
               if (item.disabled) {
                 delete formatters[name]
                 continue
@@ -56,7 +56,7 @@ export namespace Format {
                 command: [],
                 extensions: [],
                 ...item,
-              })
+              } as any)
 
               if (info.command.length === 0) continue
 

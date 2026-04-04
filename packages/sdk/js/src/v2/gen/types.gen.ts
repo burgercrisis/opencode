@@ -138,6 +138,9 @@ export type UserMessage = {
     [key: string]: boolean
   }
   variant?: string
+  tokens?: {
+    sent?: number
+  }
 }
 
 export type ProviderAuthError = {
@@ -233,6 +236,7 @@ export type AssistantMessage = {
     input: number
     output: number
     reasoning: number
+    sent?: number
     cache: {
       read: number
       write: number
@@ -450,6 +454,7 @@ export type StepFinishPart = {
     input: number
     output: number
     reasoning: number
+    sent?: number
     cache: {
       read: number
       write: number
@@ -807,7 +812,7 @@ export type PermissionRuleset = Array<PermissionRule>
 
 export type Session = {
   id: string
-  slug: string
+  slug?: string
   projectID: string
   workspaceID?: string
   directory: string
@@ -1312,6 +1317,10 @@ export type Config = {
    * JSON schema reference for configuration validation
    */
   $schema?: string
+  /**
+   * Shell to use for command execution (e.g., bash, zsh, fish, pwsh)
+   */
+  shell?: string
   logLevel?: LogLevel
   server?: ServerConfig
   /**
@@ -1420,6 +1429,22 @@ export type Config = {
       | {
           enabled: boolean
         }
+  }
+  llm?: {
+    concurrency?: {
+      /**
+       * Maximum number of concurrent LLM requests globally
+       */
+      global?: number
+      /**
+       * Maximum number of concurrent LLM requests per model
+       */
+      model?: number
+      /**
+       * Timeout in ms after which a lease is considered stale
+       */
+      staleMs?: number
+    }
   }
   formatter?:
     | false

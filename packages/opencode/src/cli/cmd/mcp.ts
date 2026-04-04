@@ -1,7 +1,4 @@
 import { cmd } from "./cmd"
-import { Client } from "@modelcontextprotocol/sdk/client/index.js"
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
-import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js"
 import * as prompts from "@clack/prompts"
 import { UI } from "../ui"
 import { MCP } from "../../mcp"
@@ -79,8 +76,8 @@ export const McpListCommand = cmd({
         const mcpServers = config.mcp ?? {}
         const statuses = await MCP.status()
 
-        const servers = Object.entries(mcpServers).filter((entry): entry is [string, McpConfigured] =>
-          isMcpConfigured(entry[1]),
+        const servers = Object.entries(mcpServers as Record<string, any>).filter(
+          (entry: any): entry is [string, any] => isMcpConfigured(entry[1]),
         )
 
         if (servers.length === 0) {
@@ -156,8 +153,8 @@ export const McpAuthCommand = cmd({
         const mcpServers = config.mcp ?? {}
 
         // Get OAuth-capable servers (remote servers with oauth not explicitly disabled)
-        const oauthServers = Object.entries(mcpServers).filter(
-          (entry): entry is [string, McpRemote] => isMcpRemote(entry[1]) && entry[1].oauth !== false,
+        const oauthServers = Object.entries(mcpServers as Record<string, any>).filter(
+          (entry: any): entry is [string, McpRemote] => isMcpRemote(entry[1]) && entry[1].oauth !== false,
         )
 
         if (oauthServers.length === 0) {
@@ -293,8 +290,8 @@ export const McpAuthListCommand = cmd({
         const mcpServers = config.mcp ?? {}
 
         // Get OAuth-capable servers
-        const oauthServers = Object.entries(mcpServers).filter(
-          (entry): entry is [string, McpRemote] => isMcpRemote(entry[1]) && entry[1].oauth !== false,
+        const oauthServers = Object.entries(mcpServers as Record<string, any>).filter(
+          (entry: any): entry is [string, any] => isMcpRemote(entry[1]) && entry[1].oauth !== false,
         )
 
         if (oauthServers.length === 0) {
@@ -697,11 +694,15 @@ export const McpDebugCommand = cmd({
             prompts.log.info("Testing OAuth flow (without completing authorization)...")
 
             // Try creating transport with auth provider to trigger discovery
+            const { StreamableHTTPClientTransport } = await import(
+              "@modelcontextprotocol/sdk/client/streamableHttp.js"
+            )
             const transport = new StreamableHTTPClientTransport(new URL(serverConfig.url), {
               authProvider,
             })
 
             try {
+              const { Client } = await import("@modelcontextprotocol/sdk/client/index.js")
               const client = new Client({
                 name: "opencode-debug",
                 version: Installation.VERSION,
@@ -710,6 +711,7 @@ export const McpDebugCommand = cmd({
               prompts.log.success("Connection successful (already authenticated)")
               await client.close()
             } catch (error) {
+              const { UnauthorizedError } = await import("@modelcontextprotocol/sdk/client/auth.js")
               if (error instanceof UnauthorizedError) {
                 prompts.log.info(`OAuth flow triggered: ${error.message}`)
 
