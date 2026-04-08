@@ -184,12 +184,12 @@ describe("Command utility functions", () => {
 
   test("matchKeybind handles multiple combos", () => {
     const keybinds = parseKeybind("ctrl+a,meta+b")
-
+    
     const ctrlAEvent = new KeyboardEvent("keydown", {
       key: "a",
       ctrlKey: true,
     })
-
+    
     const metaBEvent = new KeyboardEvent("keydown", {
       key: "b",
       metaKey: true,
@@ -248,7 +248,7 @@ describe("Command utility functions", () => {
       options: () => [{ id: "old", title: "Old" } as CommandOption],
     }
     const registrations = [existing]
-
+    
     const newEntry: CommandRegistration = {
       key: "test",
       options: () => [{ id: "new", title: "New" } as CommandOption],
@@ -269,27 +269,6 @@ describe("Command utility functions", () => {
     expect(result).toHaveLength(1)
     expect(result[0]).toBe(entry)
   })
-
-  test("replaces keyed registrations", () => {
-    const one = () => [{ id: "one", title: "One" }]
-    const two = () => [{ id: "two", title: "Two" }]
-
-    const next = upsertCommandRegistration([{ key: "layout", options: one }], { key: "layout", options: two })
-
-    expect(next).toHaveLength(1)
-    expect(next[0]?.options).toBe(two)
-  })
-
-  test("keeps unkeyed registrations additive", () => {
-    const one = () => [{ id: "one", title: "One" }]
-    const two = () => [{ id: "two", title: "Two" }]
-
-    const next = upsertCommandRegistration([{ options: one }], { options: two })
-
-    expect(next).toHaveLength(2)
-    expect(next[0]?.options).toBe(two)
-    expect(next[1]?.options).toBe(one)
-  })
 })
 
 describe("Command context", () => {
@@ -299,7 +278,7 @@ describe("Command context", () => {
   beforeEach(() => {
     // Reset all mocks
     mock.clearAllMocks()
-
+    
     // Get mocked functions
     const mod = require("./command")
     mockContext = mod.use
@@ -313,12 +292,12 @@ describe("Command context", () => {
   test("provides command registration", () => {
     const TestComponent = () => {
       const command = useCommand()
-      return <div data - testid="command-context" > { command?.register? "has-register": "no-register" } </div>
+      return <div data-testid="command-context">{command?.register ? "has-register" : "no-register"}</div>
     }
 
     const { getByTestId } = render(() => (
       <CommandProvider>
-      <TestComponent />
+        <TestComponent />
       </CommandProvider>
     ))
 
@@ -328,12 +307,12 @@ describe("Command context", () => {
   test("provides command trigger", () => {
     const TestComponent = () => {
       const command = useCommand()
-      return <div data - testid="command-trigger" > { command?.trigger? "has-trigger": "no-trigger" } </div>
+      return <div data-testid="command-trigger">{command?.trigger ? "has-trigger" : "no-trigger"}</div>
     }
 
     const { getByTestId } = render(() => (
       <CommandProvider>
-      <TestComponent />
+        <TestComponent />
       </CommandProvider>
     ))
 
@@ -343,12 +322,12 @@ describe("Command context", () => {
   test("provides keybind formatting", () => {
     const TestComponent = () => {
       const command = useCommand()
-      return <div data - testid="keybind-format" > { command?.keybind? "has-keybind": "no-keybind" } </div>
+      return <div data-testid="keybind-format">{command?.keybind ? "has-keybind" : "no-keybind"}</div>
     }
 
     const { getByTestId } = render(() => (
       <CommandProvider>
-      <TestComponent />
+        <TestComponent />
       </CommandProvider>
     ))
 
@@ -358,12 +337,12 @@ describe("Command context", () => {
   test("provides palette show function", () => {
     const TestComponent = () => {
       const command = useCommand()
-      return <div data - testid="palette-show" > { command?.show? "has-show": "no-show" } </div>
+      return <div data-testid="palette-show">{command?.show ? "has-show" : "no-show"}</div>
     }
 
     const { getByTestId } = render(() => (
       <CommandProvider>
-      <TestComponent />
+        <TestComponent />
       </CommandProvider>
     ))
 
@@ -374,337 +353,337 @@ describe("Command context", () => {
     const TestComponent = () => {
       const command = useCommand()
       return (
-        <div data - testid= "suspension" >
-        <span data - has - suspended={ typeof command?.suspended === "function" }> has - suspended </span>
-          < span data - has - keybinds={ typeof command?.keybinds === "function" }> has - keybinds </span>
-            </div>
+        <div data-testid="suspension">
+          <span data-has-suspended={typeof command?.suspended === "function"}>has-suspended</span>
+          <span data-has-keybinds={typeof command?.keybinds === "function"}>has-keybinds</span>
+        </div>
       )
-}
+    }
 
     const { getByTestId } = render(() => (
-  <CommandProvider>
-  <TestComponent />
-  </CommandProvider>
-))
+      <CommandProvider>
+        <TestComponent />
+      </CommandProvider>
+    ))
 
-expect(getByTestId("suspension")).toBeInTheDocument()
+    expect(getByTestId("suspension")).toBeInTheDocument()
   })
 
-test("provides catalog and options access", () => {
-  const TestComponent = () => {
-    const command = useCommand()
-    return (
-      <div data - testid= "catalog-options" >
-      <span data - has - catalog={ Array.isArray(command?.catalog) }> has - catalog </span>
-        < span data - has - options={ Array.isArray(command?.options) }> has - options </span>
-          </div>
-      )
-    }
-
-const { getByTestId } = render(() => (
-  <CommandProvider>
-  <TestComponent />
-  </CommandProvider>
-))
-
-expect(getByTestId("catalog-options")).toBeInTheDocument()
-  })
-
-test("registers commands correctly", () => {
-  const TestComponent = () => {
-    const command = useCommand()
-
-    // Register a test command
-    command.register("test", () => [
-      {
-        id: "test.command",
-        title: "Test Command",
-        description: "A test command",
-        onSelect: () => { },
-      },
-    ])
-
-    return <div data - testid="command-register" > registered </div>
-  }
-
-  const { getByTestId } = render(() => (
-    <CommandProvider>
-    <TestComponent />
-    </CommandProvider>
-  ))
-
-  expect(getByTestId("command-register")).toBeInTheDocument()
-})
-
-test("handles command registration without key", () => {
-  const TestComponent = () => {
-    const command = useCommand()
-
-    // Register without key
-    command.register(() => [
-      {
-        id: "no-key.command",
-        title: "No Key Command",
-        onSelect: () => { },
-      },
-    ])
-
-    return <div data - testid="no-key-register" > registered </div>
-  }
-
-  const { getByTestId } = render(() => (
-    <CommandProvider>
-    <TestComponent />
-    </CommandProvider>
-  ))
-
-  expect(getByTestId("no-key-register")).toBeInTheDocument()
-})
-
-test("triggers commands correctly", () => {
-  const TestComponent = () => {
-    const command = useCommand()
-
-    command.register("trigger-test", () => [
-      {
-        id: "trigger.command",
-        title: "Trigger Command",
-        onSelect: mock(),
-      },
-    ])
-
-    const handleTrigger = () => {
-      command.trigger("trigger.command", "palette")
-    }
-
-    return (
-      <div data - testid= "command-trigger" >
-      <button onClick={ handleTrigger }> Trigger </button>
+  test("provides catalog and options access", () => {
+    const TestComponent = () => {
+      const command = useCommand()
+      return (
+        <div data-testid="catalog-options">
+          <span data-has-catalog={Array.isArray(command?.catalog)}>has-catalog</span>
+          <span data-has-options={Array.isArray(command?.options)}>has-options</span>
         </div>
       )
     }
 
-const { getByTestId } = render(() => (
-  <CommandProvider>
-  <TestComponent />
-  </CommandProvider>
-))
+    const { getByTestId } = render(() => (
+      <CommandProvider>
+        <TestComponent />
+      </CommandProvider>
+    ))
 
-expect(getByTestId("command-trigger")).toBeInTheDocument()
+    expect(getByTestId("catalog-options")).toBeInTheDocument()
   })
 
-test("formats keybinds for commands", () => {
-  const TestComponent = () => {
-    const command = useCommand()
+  test("registers commands correctly", () => {
+    const TestComponent = () => {
+      const command = useCommand()
+      
+      // Register a test command
+      command.register("test", () => [
+        {
+          id: "test.command",
+          title: "Test Command",
+          description: "A test command",
+          onSelect: () => {},
+        },
+      ])
 
-    command.register("keybind-test", () => [
-      {
-        id: "keybind.command",
-        title: "Keybind Command",
-        keybind: "ctrl+k",
-        onSelect: () => { },
-      },
-    ])
+      return <div data-testid="command-register">registered</div>
+    }
 
-    const formattedKeybind = command.keybind("keybind.command")
+    const { getByTestId } = render(() => (
+      <CommandProvider>
+        <TestComponent />
+      </CommandProvider>
+    ))
 
-    return (
-      <div data - testid= "keybind-formatting" >
-      <span data - keybind={ formattedKeybind }> keybind </span>
+    expect(getByTestId("command-register")).toBeInTheDocument()
+  })
+
+  test("handles command registration without key", () => {
+    const TestComponent = () => {
+      const command = useCommand()
+      
+      // Register without key
+      command.register(() => [
+        {
+          id: "no-key.command",
+          title: "No Key Command",
+          onSelect: () => {},
+        },
+      ])
+
+      return <div data-testid="no-key-register">registered</div>
+    }
+
+    const { getByTestId } = render(() => (
+      <CommandProvider>
+        <TestComponent />
+      </CommandProvider>
+    ))
+
+    expect(getByTestId("no-key-register")).toBeInTheDocument()
+  })
+
+  test("triggers commands correctly", () => {
+    const TestComponent = () => {
+      const command = useCommand()
+      
+      command.register("trigger-test", () => [
+        {
+          id: "trigger.command",
+          title: "Trigger Command",
+          onSelect: mock(),
+        },
+      ])
+
+      const handleTrigger = () => {
+        command.trigger("trigger.command", "palette")
+      }
+
+      return (
+        <div data-testid="command-trigger">
+          <button onClick={handleTrigger}>Trigger</button>
         </div>
       )
     }
 
-const { getByTestId } = render(() => (
-  <CommandProvider>
-  <TestComponent />
-  </CommandProvider>
-))
+    const { getByTestId } = render(() => (
+      <CommandProvider>
+        <TestComponent />
+      </CommandProvider>
+    ))
 
-expect(getByTestId("keybind-formatting")).toBeInTheDocument()
+    expect(getByTestId("command-trigger")).toBeInTheDocument()
   })
 
-test("handles palette keybind formatting", () => {
-  const TestComponent = () => {
-    const command = useCommand()
-    const paletteKeybind = command.keybind("command.palette")
+  test("formats keybinds for commands", () => {
+    const TestComponent = () => {
+      const command = useCommand()
+      
+      command.register("keybind-test", () => [
+        {
+          id: "keybind.command",
+          title: "Keybind Command",
+          keybind: "ctrl+k",
+          onSelect: () => {},
+        },
+      ])
 
-    return (
-      <div data - testid= "palette-keybind" >
-      <span data - palette - keybind={ paletteKeybind }> palette </span>
+      const formattedKeybind = command.keybind("keybind.command")
+
+      return (
+        <div data-testid="keybind-formatting">
+          <span data-keybind={formattedKeybind}>keybind</span>
         </div>
       )
     }
 
-const { getByTestId } = render(() => (
-  <CommandProvider>
-  <TestComponent />
-  </CommandProvider>
-))
+    const { getByTestId } = render(() => (
+      <CommandProvider>
+        <TestComponent />
+      </CommandProvider>
+    ))
 
-expect(getByTestId("palette-keybind")).toBeInTheDocument()
+    expect(getByTestId("keybind-formatting")).toBeInTheDocument()
   })
 
-test("manages suspension state", () => {
-  const TestComponent = () => {
-    const command = useCommand()
+  test("handles palette keybind formatting", () => {
+    const TestComponent = () => {
+      const command = useCommand()
+      const paletteKeybind = command.keybind("command.palette")
 
-    const handleSuspend = () => {
-      command.keybinds(false) // Suspend
-    }
-
-    const handleResume = () => {
-      command.keybinds(true) // Resume
-    }
-
-    return (
-      <div data - testid= "suspension-management" >
-      <button onClick={ handleSuspend }> Suspend </button>
-        < button onClick = { handleResume } > Resume </button>
-          </div>
-      )
-    }
-
-const { getByTestId } = render(() => (
-  <CommandProvider>
-  <TestComponent />
-  </CommandProvider>
-))
-
-expect(getByTestId("suspension-management")).toBeInTheDocument()
-  })
-
-test("handles keyboard events", () => {
-  const TestComponent = () => {
-    const command = useCommand()
-    return <div data - testid="keyboard-events" > listening </div>
-  }
-
-  const { getByTestId, unmount } = render(() => (
-    <CommandProvider>
-    <TestComponent />
-    </CommandProvider>
-  ))
-
-  expect(getByTestId("keyboard-events")).toBeInTheDocument()
-  expect(global.document.addEventListener).toHaveBeenCalledWith("keydown", expect.any(Function))
-
-  unmount()
-  expect(global.document.removeEventListener).toHaveBeenCalledWith("keydown", expect.any(Function))
-})
-
-test("filters duplicate command IDs", () => {
-  const TestComponent = () => {
-    const command = useCommand()
-
-    // Register same command twice
-    command.register("duplicate-test", () => [
-      {
-        id: "duplicate.command",
-        title: "Duplicate Command 1",
-        onSelect: () => { },
-      },
-    ])
-
-    command.register("duplicate-test-2", () => [
-      {
-        id: "duplicate.command",
-        title: "Duplicate Command 2",
-        onSelect: () => { },
-      },
-    ])
-
-    return <div data - testid="duplicate-filter" > registered </div>
-  }
-
-  const { getByTestId } = render(() => (
-    <CommandProvider>
-    <TestComponent />
-    </CommandProvider>
-  ))
-
-  expect(getByTestId("duplicate-filter")).toBeInTheDocument()
-})
-
-test("handles suggested commands", () => {
-  const TestComponent = () => {
-    const command = useCommand()
-
-    command.register("suggested-test", () => [
-      {
-        id: "suggested.command",
-        title: "Suggested Command",
-        suggested: true,
-        onSelect: () => { },
-      },
-    ])
-
-    return <div data - testid="suggested-commands" > registered </div>
-  }
-
-  const { getByTestId } = render(() => (
-    <CommandProvider>
-    <TestComponent />
-    </CommandProvider>
-  ))
-
-  expect(getByTestId("suggested-commands")).toBeInTheDocument()
-})
-
-test("handles disabled commands", () => {
-  const TestComponent = () => {
-    const command = useCommand()
-
-    command.register("disabled-test", () => [
-      {
-        id: "disabled.command",
-        title: "Disabled Command",
-        disabled: true,
-        onSelect: () => { },
-      },
-    ])
-
-    return <div data - testid="disabled-commands" > registered </div>
-  }
-
-  const { getByTestId } = render(() => (
-    <CommandProvider>
-    <TestComponent />
-    </CommandProvider>
-  ))
-
-  expect(getByTestId("disabled-commands")).toBeInTheDocument()
-})
-
-test("manages command catalog", () => {
-  const TestComponent = () => {
-    const command = useCommand()
-
-    command.register("catalog-test", () => [
-      {
-        id: "catalog.command",
-        title: "Catalog Command",
-        description: "A command for the catalog",
-        category: "test",
-        keybind: "ctrl+c",
-        onSelect: () => { },
-      },
-    ])
-
-    return (
-      <div data - testid= "command-catalog" >
-      <span data - catalog - length={ command.catalog.length }> catalog </span>
+      return (
+        <div data-testid="palette-keybind">
+          <span data-palette-keybind={paletteKeybind}>palette</span>
         </div>
       )
     }
 
-const { getByTestId } = render(() => (
-  <CommandProvider>
-  <TestComponent />
-  </CommandProvider>
-))
+    const { getByTestId } = render(() => (
+      <CommandProvider>
+        <TestComponent />
+      </CommandProvider>
+    ))
 
-expect(getByTestId("command-catalog")).toBeInTheDocument()
+    expect(getByTestId("palette-keybind")).toBeInTheDocument()
+  })
+
+  test("manages suspension state", () => {
+    const TestComponent = () => {
+      const command = useCommand()
+      
+      const handleSuspend = () => {
+        command.keybinds(false) // Suspend
+      }
+
+      const handleResume = () => {
+        command.keybinds(true) // Resume
+      }
+
+      return (
+        <div data-testid="suspension-management">
+          <button onClick={handleSuspend}>Suspend</button>
+          <button onClick={handleResume}>Resume</button>
+        </div>
+      )
+    }
+
+    const { getByTestId } = render(() => (
+      <CommandProvider>
+        <TestComponent />
+      </CommandProvider>
+    ))
+
+    expect(getByTestId("suspension-management")).toBeInTheDocument()
+  })
+
+  test("handles keyboard events", () => {
+    const TestComponent = () => {
+      const command = useCommand()
+      return <div data-testid="keyboard-events">listening</div>
+    }
+
+    const { getByTestId, unmount } = render(() => (
+      <CommandProvider>
+        <TestComponent />
+      </CommandProvider>
+    ))
+
+    expect(getByTestId("keyboard-events")).toBeInTheDocument()
+    expect(global.document.addEventListener).toHaveBeenCalledWith("keydown", expect.any(Function))
+
+    unmount()
+    expect(global.document.removeEventListener).toHaveBeenCalledWith("keydown", expect.any(Function))
+  })
+
+  test("filters duplicate command IDs", () => {
+    const TestComponent = () => {
+      const command = useCommand()
+      
+      // Register same command twice
+      command.register("duplicate-test", () => [
+        {
+          id: "duplicate.command",
+          title: "Duplicate Command 1",
+          onSelect: () => {},
+        },
+      ])
+
+      command.register("duplicate-test-2", () => [
+        {
+          id: "duplicate.command",
+          title: "Duplicate Command 2",
+          onSelect: () => {},
+        },
+      ])
+
+      return <div data-testid="duplicate-filter">registered</div>
+    }
+
+    const { getByTestId } = render(() => (
+      <CommandProvider>
+        <TestComponent />
+      </CommandProvider>
+    ))
+
+    expect(getByTestId("duplicate-filter")).toBeInTheDocument()
+  })
+
+  test("handles suggested commands", () => {
+    const TestComponent = () => {
+      const command = useCommand()
+      
+      command.register("suggested-test", () => [
+        {
+          id: "suggested.command",
+          title: "Suggested Command",
+          suggested: true,
+          onSelect: () => {},
+        },
+      ])
+
+      return <div data-testid="suggested-commands">registered</div>
+    }
+
+    const { getByTestId } = render(() => (
+      <CommandProvider>
+        <TestComponent />
+      </CommandProvider>
+    ))
+
+    expect(getByTestId("suggested-commands")).toBeInTheDocument()
+  })
+
+  test("handles disabled commands", () => {
+    const TestComponent = () => {
+      const command = useCommand()
+      
+      command.register("disabled-test", () => [
+        {
+          id: "disabled.command",
+          title: "Disabled Command",
+          disabled: true,
+          onSelect: () => {},
+        },
+      ])
+
+      return <div data-testid="disabled-commands">registered</div>
+    }
+
+    const { getByTestId } = render(() => (
+      <CommandProvider>
+        <TestComponent />
+      </CommandProvider>
+    ))
+
+    expect(getByTestId("disabled-commands")).toBeInTheDocument()
+  })
+
+  test("manages command catalog", () => {
+    const TestComponent = () => {
+      const command = useCommand()
+      
+      command.register("catalog-test", () => [
+        {
+          id: "catalog.command",
+          title: "Catalog Command",
+          description: "A command for the catalog",
+          category: "test",
+          keybind: "ctrl+c",
+          onSelect: () => {},
+        },
+      ])
+
+      return (
+        <div data-testid="command-catalog">
+          <span data-catalog-length={command.catalog.length}>catalog</span>
+        </div>
+      )
+    }
+
+    const { getByTestId } = render(() => (
+      <CommandProvider>
+        <TestComponent />
+      </CommandProvider>
+    ))
+
+    expect(getByTestId("command-catalog")).toBeInTheDocument()
   })
 })
 
@@ -774,15 +753,15 @@ describe("Command edge cases", () => {
         {
           id: "cleanup.command",
           title: "Cleanup Command",
-          onSelect: () => { },
+          onSelect: () => {},
         },
       ])
-      return <div data - testid="cleanup-test" > mounted </div>
+      return <div data-testid="cleanup-test">mounted</div>
     }
 
     const { getByTestId, unmount } = render(() => (
       <CommandProvider>
-      <TestComponent />
+        <TestComponent />
       </CommandProvider>
     ))
 

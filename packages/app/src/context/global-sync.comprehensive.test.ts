@@ -116,7 +116,7 @@ describe("GlobalSync context", () => {
   beforeEach(() => {
     // Reset all mocks
     mock.clearAllMocks()
-
+    
     // Get mocked functions
     const mod = require("./global-sync")
     mockContext = mod.useGlobalSync
@@ -132,7 +132,7 @@ describe("GlobalSync context", () => {
     // Mock useContext to return null
     const originalUseContext = useContext
     const mockUseContext = mock(() => null)
-
+    
     // Temporarily replace useContext
     require("solid-js").useContext = mockUseContext
 
@@ -148,15 +148,15 @@ describe("GlobalSync context", () => {
     const TestComponent = () => {
       try {
         const sync = useGlobalSync()
-        return <div data - testid="sync-ready" > { sync?.ready? "ready": "not-ready" } </div>
+        return <div data-testid="sync-ready">{sync?.ready ? "ready" : "not-ready"}</div>
       } catch {
-        return <div data - testid="sync-ready" > no - context </div>
+        return <div data-testid="sync-ready">no-context</div>
       }
     }
 
     const { getByTestId } = render(() => (
       <GlobalSyncProvider>
-      <TestComponent />
+        <TestComponent />
       </GlobalSyncProvider>
     ))
 
@@ -169,578 +169,455 @@ describe("GlobalSync context", () => {
       try {
         const sync = useGlobalSync()
         return (
-          <div data - testid= "sync-methods" >
-          <span data - has - data={ !!sync?.data }> data </span>
-            < span data - has - set={ !!sync?.set }> set </span>
-              < span data - has - child={ !!sync?.child }> child </span>
-                < span data - has - bootstrap={ !!sync?.bootstrap }> bootstrap </span>
-                  < span data - has - project={ !!sync?.project }> project </span>
-                    < span data - has - todo={ !!sync?.todo }> todo </span>
-                      </div>
-        )
-} catch {
-  return <div data - testid="sync-methods" > no - context </div>
-}
-    }
-
-const { getByTestId } = render(() => (
-  <GlobalSyncProvider>
-  <TestComponent />
-  </GlobalSyncProvider>
-))
-
-expect(getByTestId("sync-methods")).toBeInTheDocument()
-  })
-
-test("handles error state correctly", () => {
-  // Mock bootstrapGlobal to throw an error
-  mock.module("./global-sync/bootstrap", () => ({
-    bootstrapDirectory: mock(() => Promise.resolve()),
-    bootstrapGlobal: mock(() => Promise.reject(new Error("Test error"))),
-  }))
-
-  const TestComponent = () => {
-    try {
-      const sync = useGlobalSync()
-      return <div data - testid="sync-error" > { sync?.error? "has-error": "no-error" } </div>
-    } catch {
-      return <div data - testid="sync-error" > no - context </div>
-    }
-  }
-
-  const { getByTestId } = render(() => (
-    <GlobalSyncProvider>
-    <TestComponent />
-    </GlobalSyncProvider>
-  ))
-
-  expect(getByTestId("sync-error")).toBeInTheDocument()
-})
-
-test("provides project API methods", () => {
-  const TestComponent = () => {
-    try {
-      const sync = useGlobalSync()
-      const projectApi = sync?.project
-      return (
-        <div data - testid= "project-api" >
-        <span data - has - load - sessions={ !!projectApi?.loadSessions }> loadSessions </span>
-          < span data - has - meta={ !!projectApi?.meta }> meta </span>
-            < span data - has - icon={ !!projectApi?.icon }> icon </span>
-              </div>
-        )
-      } catch {
-  return <div data - testid="project-api" > no - context </div>
-}
-    }
-
-const { getByTestId } = render(() => (
-  <GlobalSyncProvider>
-  <TestComponent />
-  </GlobalSyncProvider>
-))
-
-expect(getByTestId("project-api")).toBeInTheDocument()
-  })
-
-test("provides todo management", () => {
-  const TestComponent = () => {
-    try {
-      const sync = useGlobalSync()
-      return (
-        <div data - testid= "todo-management" >
-        <span data - has - todo - set={ !!sync?.todo?.set }> todo - set </span>
+          <div data-testid="sync-methods">
+            <span data-has-data={!!sync?.data}>data</span>
+            <span data-has-set={!!sync?.set}>set</span>
+            <span data-has-child={!!sync?.child}>child</span>
+            <span data-has-bootstrap={!!sync?.bootstrap}>bootstrap</span>
+            <span data-has-project={!!sync?.project}>project</span>
+            <span data-has-todo={!!sync?.todo}>todo</span>
           </div>
         )
       } catch {
-  return <div data - testid="todo-management" > no - context </div>
-}
+        return <div data-testid="sync-methods">no-context</div>
+      }
     }
 
-const { getByTestId } = render(() => (
-  <GlobalSyncProvider>
-  <TestComponent />
-  </GlobalSyncProvider>
-))
+    const { getByTestId } = render(() => (
+      <GlobalSyncProvider>
+        <TestComponent />
+      </GlobalSyncProvider>
+    ))
 
-expect(getByTestId("todo-management")).toBeInTheDocument()
+    expect(getByTestId("sync-methods")).toBeInTheDocument()
   })
 
-test("handles config updates", async () => {
-  const TestComponent = () => {
-    try {
-      const sync = useGlobalSync()
-      const handleConfigUpdate = async () => {
-        try {
-          await sync?.updateConfig({ test: "config" })
-          return "success"
-        } catch {
-          return "error"
+  test("handles error state correctly", () => {
+    // Mock bootstrapGlobal to throw an error
+    mock.module("./global-sync/bootstrap", () => ({
+      bootstrapDirectory: mock(() => Promise.resolve()),
+      bootstrapGlobal: mock(() => Promise.reject(new Error("Test error"))),
+    }))
+
+    const TestComponent = () => {
+      try {
+        const sync = useGlobalSync()
+        return <div data-testid="sync-error">{sync?.error ? "has-error" : "no-error"}</div>
+      } catch {
+        return <div data-testid="sync-error">no-context</div>
+      }
+    }
+
+    const { getByTestId } = render(() => (
+      <GlobalSyncProvider>
+        <TestComponent />
+      </GlobalSyncProvider>
+    ))
+
+    expect(getByTestId("sync-error")).toBeInTheDocument()
+  })
+
+  test("provides project API methods", () => {
+    const TestComponent = () => {
+      try {
+        const sync = useGlobalSync()
+        const projectApi = sync?.project
+        return (
+          <div data-testid="project-api">
+            <span data-has-load-sessions={!!projectApi?.loadSessions}>loadSessions</span>
+            <span data-has-meta={!!projectApi?.meta}>meta</span>
+            <span data-has-icon={!!projectApi?.icon}>icon</span>
+          </div>
+        )
+      } catch {
+        return <div data-testid="project-api">no-context</div>
+      }
+    }
+
+    const { getByTestId } = render(() => (
+      <GlobalSyncProvider>
+        <TestComponent />
+      </GlobalSyncProvider>
+    ))
+
+    expect(getByTestId("project-api")).toBeInTheDocument()
+  })
+
+  test("provides todo management", () => {
+    const TestComponent = () => {
+      try {
+        const sync = useGlobalSync()
+        return (
+          <div data-testid="todo-management">
+            <span data-has-todo-set={!!sync?.todo?.set}>todo-set</span>
+          </div>
+        )
+      } catch {
+        return <div data-testid="todo-management">no-context</div>
+      }
+    }
+
+    const { getByTestId } = render(() => (
+      <GlobalSyncProvider>
+        <TestComponent />
+      </GlobalSyncProvider>
+    ))
+
+    expect(getByTestId("todo-management")).toBeInTheDocument()
+  })
+
+  test("handles config updates", async () => {
+    const TestComponent = () => {
+      try {
+        const sync = useGlobalSync()
+        const handleConfigUpdate = async () => {
+          try {
+            await sync?.updateConfig({ test: "config" })
+            return "success"
+          } catch {
+            return "error"
+          }
         }
-      }
-      return (
-        <div data - testid= "config-update" >
-        <button onClick={ handleConfigUpdate }> Update Config </button>
+        return (
+          <div data-testid="config-update">
+            <button onClick={handleConfigUpdate}>Update Config</button>
           </div>
         )
       } catch {
-  return <div data - testid="config-update" > no - context </div>
-}
-    }
-
-const { getByTestId } = render(() => (
-  <GlobalSyncProvider>
-  <TestComponent />
-  </GlobalSyncProvider>
-))
-
-expect(getByTestId("config-update")).toBeInTheDocument()
-  })
-
-test("manages session todos correctly", () => {
-  const TestComponent = () => {
-    try {
-      const sync = useGlobalSync()
-      const handleSetTodo = () => {
-        sync?.todo.set("test-session", [{ id: "1", content: "test" }])
+        return <div data-testid="config-update">no-context</div>
       }
-      const handleClearTodo = () => {
-        sync?.todo.set("test-session", undefined)
-      }
-      return (
-        <div data - testid= "todo-management" >
-        <button onClick={ handleSetTodo }> Set Todo </button>
-          < button onClick = { handleClearTodo } > Clear Todo </button>
-            </div>
-        )
-      } catch {
-  return <div data - testid="todo-management" > no - context </div>
-}
     }
 
-const { getByTestId } = render(() => (
-  <GlobalSyncProvider>
-  <TestComponent />
-  </GlobalSyncProvider>
-))
+    const { getByTestId } = render(() => (
+      <GlobalSyncProvider>
+        <TestComponent />
+      </GlobalSyncProvider>
+    ))
 
-expect(getByTestId("todo-management")).toBeInTheDocument()
+    expect(getByTestId("config-update")).toBeInTheDocument()
   })
 
-test("handles child store management", () => {
-  const TestComponent = () => {
-    try {
-      const sync = useGlobalSync()
-      const handleChildAccess = () => {
-        const [store, setStore] = sync?.child("test-directory", { bootstrap: true })
-        return { store, setStore }
-      }
-      return (
-        <div data - testid= "child-store" >
-        <button onClick={ handleChildAccess }> Access Child </button>
-          </div>
-        )
-      } catch {
-  return <div data - testid="child-store" > no - context </div>
-}
-    }
-
-const { getByTestId } = render(() => (
-  <GlobalSyncProvider>
-  <TestComponent />
-  </GlobalSyncProvider>
-))
-
-expect(getByTestId("child-store")).toBeInTheDocument()
-  })
-
-test("manages SDK caching", () => {
-  const TestComponent = () => {
-    try {
-      const sync = useGlobalSync()
-      return (
-        <div data - testid= "sdk-caching" >
-        <span data - has - sdk={ !!sync }> has - sdk </span>
-          </div>
-        )
-      } catch {
-  return <div data - testid="sdk-caching" > no - context </div>
-}
-    }
-
-const { getByTestId } = render(() => (
-  <GlobalSyncProvider>
-  <TestComponent />
-  </GlobalSyncProvider>
-))
-
-expect(getByTestId("sdk-caching")).toBeInTheDocument()
-  })
-
-test("handles session loading", async () => {
-  const TestComponent = () => {
-    try {
-      const sync = useGlobalSync()
-      const handleLoadSessions = async () => {
-        try {
-          await sync?.project.loadSessions("test-directory")
-          return "loaded"
-        } catch {
-          return "error"
+  test("manages session todos correctly", () => {
+    const TestComponent = () => {
+      try {
+        const sync = useGlobalSync()
+        const handleSetTodo = () => {
+          sync?.todo.set("test-session", [{ id: "1", content: "test" }])
         }
-      }
-      return (
-        <div data - testid= "session-loading" >
-        <button onClick={ handleLoadSessions }> Load Sessions </button>
-          </div>
-        )
-      } catch {
-  return <div data - testid="session-loading" > no - context </div>
-}
-    }
-
-const { getByTestId } = render(() => (
-  <GlobalSyncProvider>
-  <TestComponent />
-  </GlobalSyncProvider>
-))
-
-expect(getByTestId("session-loading")).toBeInTheDocument()
-  })
-
-test("handles project metadata", () => {
-  const TestComponent = () => {
-    try {
-      const sync = useGlobalSync()
-      const handleProjectMeta = () => {
-        sync?.project.meta("test-directory", { limit: 100 })
-      }
-      return (
-        <div data - testid= "project-metadata" >
-        <button onClick={ handleProjectMeta }> Set Meta </button>
-          </div>
-        )
-      } catch {
-  return <div data - testid="project-metadata" > no - context </div>
-}
-    }
-
-const { getByTestId } = render(() => (
-  <GlobalSyncProvider>
-  <TestComponent />
-  </GlobalSyncProvider>
-))
-
-expect(getByTestId("project-metadata")).toBeInTheDocument()
-  })
-
-test("handles project icons", () => {
-  const TestComponent = () => {
-    try {
-      const sync = useGlobalSync()
-      const handleProjectIcon = () => {
-        sync?.project.icon("test-directory", "test-icon")
-      }
-      return (
-        <div data - testid= "project-icons" >
-        <button onClick={ handleProjectIcon }> Set Icon </button>
-          </div>
-        )
-      } catch {
-  return <div data - testid="project-icons" > no - context </div>
-}
-    }
-
-const { getByTestId } = render(() => (
-  <GlobalSyncProvider>
-  <TestComponent />
-  </GlobalSyncProvider>
-))
-
-expect(getByTestId("project-icons")).toBeInTheDocument()
-  })
-
-test("manages project cache persistence", () => {
-  const TestComponent = () => {
-    try {
-      const sync = useGlobalSync()
-      return (
-        <div data - testid= "project-cache" >
-        <span data - has - projects={ Array.isArray(sync?.data?.project) }> has - projects </span>
-          </div>
-        )
-      } catch {
-  return <div data - testid="project-cache" > no - context </div>
-}
-    }
-
-const { getByTestId } = render(() => (
-  <GlobalSyncProvider>
-  <TestComponent />
-  </GlobalSyncProvider>
-))
-
-expect(getByTestId("project-cache")).toBeInTheDocument()
-  })
-
-test("handles global events", () => {
-  const TestComponent = () => {
-    try {
-      const sync = useGlobalSync()
-      return (
-        <div data - testid= "global-events" >
-        <span data - has - ready={ typeof sync?.ready === "boolean" }> has - ready </span>
-          < span data - has - error={ !!sync?.error }> has - error </span>
-            </div>
-        )
-      } catch {
-  return <div data - testid="global-events" > no - context </div>
-}
-    }
-
-const { getByTestId } = render(() => (
-  <GlobalSyncProvider>
-  <TestComponent />
-  </GlobalSyncProvider>
-))
-
-expect(getByTestId("global-events")).toBeInTheDocument()
-  })
-
-test("manages queue operations", () => {
-  const TestComponent = () => {
-    try {
-      const sync = useGlobalSync()
-      return (
-        <div data - testid= "queue-operations" >
-        <span data - has - sync={ !!sync }> has - sync </span>
-          </div>
-        )
-      } catch {
-  return <div data - testid="queue-operations" > no - context </div>
-}
-    }
-
-const { getByTestId } = render(() => (
-  <GlobalSyncProvider>
-  <TestComponent />
-  </GlobalSyncProvider>
-))
-
-expect(getByTestId("queue-operations")).toBeInTheDocument()
-  })
-
-test("handles cleanup on unmount", () => {
-  const TestComponent = () => {
-    try {
-      const sync = useGlobalSync()
-      return <div data - testid="cleanup-test" > mounted </div>
-    } catch {
-      return <div data - testid="cleanup-test" > no - context </div>
-    }
-  }
-
-  const { getByTestId, unmount } = render(() => (
-    <GlobalSyncProvider>
-    <TestComponent />
-    </GlobalSyncProvider>
-  ))
-
-  expect(getByTestId("cleanup-test")).toHaveTextContent("mounted")
-
-  // Unmount should trigger cleanup
-  unmount()
-})
-
-test("error message extraction works correctly", () => {
-  // Test the errorMessage function logic
-  const testError = new Error("Test error message")
-  expect(testError.message).toBe("Test error message")
-
-  const testString = "String error"
-  expect(testString).toBe("String error")
-
-  const testNull = null
-  expect(testNull).toBe(null)
-
-  const testUndefined = undefined
-  expect(testUndefined).toBe(undefined)
-})
-
-test("paused state detection works correctly", () => {
-  const TestComponent = () => {
-    try {
-      const sync = useGlobalSync()
-      return (
-        <div data - testid= "paused-state" >
-        <span data - has - reload={ !!sync?.data?.reload }> has - reload </span>
-          </div>
-        )
-      } catch {
-  return <div data - testid="paused-state" > no - context </div>
-}
-    }
-
-const { getByTestId } = render(() => (
-  <GlobalSyncProvider>
-  <TestComponent />
-  </GlobalSyncProvider>
-))
-
-expect(getByTestId("paused-state")).toBeInTheDocument()
-  })
-
-test("bootstrap instance management", () => {
-  const TestComponent = () => {
-    try {
-      const sync = useGlobalSync()
-      const handleBootstrap = async () => {
-        try {
-          await sync?.bootstrap()
-          return "bootstrapped"
-        } catch {
-          return "error"
+        const handleClearTodo = () => {
+          sync?.todo.set("test-session", undefined)
         }
-      }
-      return (
-        <div data - testid= "bootstrap-management" >
-        <button onClick={ handleBootstrap }> Bootstrap </button>
+        return (
+          <div data-testid="todo-management">
+            <button onClick={handleSetTodo}>Set Todo</button>
+            <button onClick={handleClearTodo}>Clear Todo</button>
           </div>
         )
       } catch {
-  return <div data - testid="bootstrap-management" > no - context </div>
-}
+        return <div data-testid="todo-management">no-context</div>
+      }
     }
 
-const { getByTestId } = render(() => (
-  <GlobalSyncProvider>
-  <TestComponent />
-  </GlobalSyncProvider>
-))
+    const { getByTestId } = render(() => (
+      <GlobalSyncProvider>
+        <TestComponent />
+      </GlobalSyncProvider>
+    ))
 
-expect(getByTestId("bootstrap-management")).toBeInTheDocument()
+    expect(getByTestId("todo-management")).toBeInTheDocument()
   })
 
-// Basic utility function tests from global-sync.test.ts
-describe("utility functions", () => {
-  test("keeps pinned stores and evicts idle stores", () => {
-    const now = 5_000
-    const picks = pickDirectoriesToEvict({
-      stores: ["a", "b", "c", "d"],
-      state: new Map([
-        ["a", { lastAccessAt: 1_000 }],
-        ["b", { lastAccessAt: 4_900 }],
-        ["c", { lastAccessAt: 4_800 }],
-        ["d", { lastAccessAt: 3_000 }],
-      ]),
-      pins: new Set(["a"]),
-      max: 2,
-      ttl: 1_500,
-      now,
-    })
-
-    expect(picks).toEqual(["d", "c"])
-  })
-
-  test("uses limited roots query when supported", async () => {
-    const calls: Array<{ directory: string; roots: true; limit?: number }> = []
-
-    const result = await loadRootSessionsWithFallback({
-      directory: "dir",
-      limit: 10,
-      list: async (query) => {
-        calls.push(query)
-        return { data: [] }
-      },
-    })
-
-    expect(result.data).toEqual([])
-    expect(result.limited).toBe(true)
-    expect(calls).toEqual([{ directory: "dir", roots: true, limit: 10 }])
-  })
-
-  test("falls back to full roots query on limited-query failure", async () => {
-    const calls: Array<{ directory: string; roots?: boolean; limit?: number }> = []
-
-    const result = await loadRootSessionsWithFallback({
-      directory: "dir",
-      limit: 10,
-      list: async (query) => {
-        calls.push(query)
-        if (query.roots) {
-          throw new Error("Limited query not supported")
+  test("handles child store management", () => {
+    const TestComponent = () => {
+      try {
+        const sync = useGlobalSync()
+        const handleChildAccess = () => {
+          const [store, setStore] = sync?.child("test-directory", { bootstrap: true })
+          return { store, setStore }
         }
-        return { data: [] }
-      },
-    })
+        return (
+          <div data-testid="child-store">
+            <button onClick={handleChildAccess}>Access Child</button>
+          </div>
+        )
+      } catch {
+        return <div data-testid="child-store">no-context</div>
+      }
+    }
 
-    expect(result.data).toEqual([])
-    expect(result.limited).toBe(false)
-    expect(calls).toEqual([
-      { directory: "dir", roots: true, limit: 10 },
-      { directory: "dir" }
-    ])
+    const { getByTestId } = render(() => (
+      <GlobalSyncProvider>
+        <TestComponent />
+      </GlobalSyncProvider>
+    ))
+
+    expect(getByTestId("child-store")).toBeInTheDocument()
   })
 
-  test("estimates root session total correctly", () => {
-    const estimate = estimateRootSessionTotal({
-      stores: ["a", "b", "c"],
-      state: new Map([
-        ["a", { sessionCount: 5 }],
-        ["b", { sessionCount: 3 }],
-        ["c", { sessionCount: 2 }],
-      ]),
-    })
+  test("manages SDK caching", () => {
+    const TestComponent = () => {
+      try {
+        const sync = useGlobalSync()
+        return (
+          <div data-testid="sdk-caching">
+            <span data-has-sdk={!!sync}>has-sdk</span>
+          </div>
+        )
+      } catch {
+        return <div data-testid="sdk-caching">no-context</div>
+      }
+    }
 
-    expect(estimate).toBe(10)
+    const { getByTestId } = render(() => (
+      <GlobalSyncProvider>
+        <TestComponent />
+      </GlobalSyncProvider>
+    ))
+
+    expect(getByTestId("sdk-caching")).toBeInTheDocument()
   })
 
-  test("rejects pinned directories", () => {
-    expect(
-      canDisposeDirectory({
-        directory: "dir",
-        hasStore: true,
-        pinned: true,
-        booting: false,
-        loadingSessions: false,
-      }),
-    ).toBe(false)
+  test("handles session loading", async () => {
+    const TestComponent = () => {
+      try {
+        const sync = useGlobalSync()
+        const handleLoadSessions = async () => {
+          try {
+            await sync?.project.loadSessions("test-directory")
+            return "loaded"
+          } catch {
+            return "error"
+          }
+        }
+        return (
+          <div data-testid="session-loading">
+            <button onClick={handleLoadSessions}>Load Sessions</button>
+          </div>
+        )
+      } catch {
+        return <div data-testid="session-loading">no-context</div>
+      }
+    }
+
+    const { getByTestId } = render(() => (
+      <GlobalSyncProvider>
+        <TestComponent />
+      </GlobalSyncProvider>
+    ))
+
+    expect(getByTestId("session-loading")).toBeInTheDocument()
   })
 
-  test("rejects booting directories", () => {
-    expect(
-      canDisposeDirectory({
-        directory: "dir",
-        hasStore: true,
-        pinned: false,
-        booting: true,
-        loadingSessions: false,
-      }),
-    ).toBe(false)
+  test("handles project metadata", () => {
+    const TestComponent = () => {
+      try {
+        const sync = useGlobalSync()
+        const handleProjectMeta = () => {
+          sync?.project.meta("test-directory", { limit: 100 })
+        }
+        return (
+          <div data-testid="project-metadata">
+            <button onClick={handleProjectMeta}>Set Meta</button>
+          </div>
+        )
+      } catch {
+        return <div data-testid="project-metadata">no-context</div>
+      }
+    }
+
+    const { getByTestId } = render(() => (
+      <GlobalSyncProvider>
+        <TestComponent />
+      </GlobalSyncProvider>
+    ))
+
+    expect(getByTestId("project-metadata")).toBeInTheDocument()
   })
 
-  test("rejects directories loading sessions", () => {
-    expect(
-      canDisposeDirectory({
-        directory: "dir",
-        hasStore: true,
-        pinned: false,
-        booting: false,
-        loadingSessions: true,
-      }),
-    ).toBe(false)
+  test("handles project icons", () => {
+    const TestComponent = () => {
+      try {
+        const sync = useGlobalSync()
+        const handleProjectIcon = () => {
+          sync?.project.icon("test-directory", "test-icon")
+        }
+        return (
+          <div data-testid="project-icons">
+            <button onClick={handleProjectIcon}>Set Icon</button>
+          </div>
+        )
+      } catch {
+        return <div data-testid="project-icons">no-context</div>
+      }
+    }
+
+    const { getByTestId } = render(() => (
+      <GlobalSyncProvider>
+        <TestComponent />
+      </GlobalSyncProvider>
+    ))
+
+    expect(getByTestId("project-icons")).toBeInTheDocument()
   })
 
-  test("accepts idle unpinned directory store", () => {
-    expect(
-      canDisposeDirectory({
-        directory: "dir",
-        hasStore: true,
-        pinned: false,
-        booting: false,
-        loadingSessions: false,
-      }),
-    ).toBe(true)
+  test("manages project cache persistence", () => {
+    const TestComponent = () => {
+      try {
+        const sync = useGlobalSync()
+        return (
+          <div data-testid="project-cache">
+            <span data-has-projects={Array.isArray(sync?.data?.project)}>has-projects</span>
+          </div>
+        )
+      } catch {
+        return <div data-testid="project-cache">no-context</div>
+      }
+    }
+
+    const { getByTestId } = render(() => (
+      <GlobalSyncProvider>
+        <TestComponent />
+      </GlobalSyncProvider>
+    ))
+
+    expect(getByTestId("project-cache")).toBeInTheDocument()
   })
-})
+
+  test("handles global events", () => {
+    const TestComponent = () => {
+      try {
+        const sync = useGlobalSync()
+        return (
+          <div data-testid="global-events">
+            <span data-has-ready={typeof sync?.ready === "boolean"}>has-ready</span>
+            <span data-has-error={!!sync?.error}>has-error</span>
+          </div>
+        )
+      } catch {
+        return <div data-testid="global-events">no-context</div>
+      }
+    }
+
+    const { getByTestId } = render(() => (
+      <GlobalSyncProvider>
+        <TestComponent />
+      </GlobalSyncProvider>
+    ))
+
+    expect(getByTestId("global-events")).toBeInTheDocument()
+  })
+
+  test("manages queue operations", () => {
+    const TestComponent = () => {
+      try {
+        const sync = useGlobalSync()
+        return (
+          <div data-testid="queue-operations">
+            <span data-has-sync={!!sync}>has-sync</span>
+          </div>
+        )
+      } catch {
+        return <div data-testid="queue-operations">no-context</div>
+      }
+    }
+
+    const { getByTestId } = render(() => (
+      <GlobalSyncProvider>
+        <TestComponent />
+      </GlobalSyncProvider>
+    ))
+
+    expect(getByTestId("queue-operations")).toBeInTheDocument()
+  })
+
+  test("handles cleanup on unmount", () => {
+    const TestComponent = () => {
+      try {
+        const sync = useGlobalSync()
+        return <div data-testid="cleanup-test">mounted</div>
+      } catch {
+        return <div data-testid="cleanup-test">no-context</div>
+      }
+    }
+
+    const { getByTestId, unmount } = render(() => (
+      <GlobalSyncProvider>
+        <TestComponent />
+      </GlobalSyncProvider>
+    ))
+
+    expect(getByTestId("cleanup-test")).toHaveTextContent("mounted")
+
+    // Unmount should trigger cleanup
+    unmount()
+  })
+
+  test("error message extraction works correctly", () => {
+    // Test the errorMessage function logic
+    const testError = new Error("Test error message")
+    expect(testError.message).toBe("Test error message")
+
+    const testString = "String error"
+    expect(testString).toBe("String error")
+
+    const testNull = null
+    expect(testNull).toBe(null)
+
+    const testUndefined = undefined
+    expect(testUndefined).toBe(undefined)
+  })
+
+  test("paused state detection works correctly", () => {
+    const TestComponent = () => {
+      try {
+        const sync = useGlobalSync()
+        return (
+          <div data-testid="paused-state">
+            <span data-has-reload={!!sync?.data?.reload}>has-reload</span>
+          </div>
+        )
+      } catch {
+        return <div data-testid="paused-state">no-context</div>
+      }
+    }
+
+    const { getByTestId } = render(() => (
+      <GlobalSyncProvider>
+        <TestComponent />
+      </GlobalSyncProvider>
+    ))
+
+    expect(getByTestId("paused-state")).toBeInTheDocument()
+  })
+
+  test("bootstrap instance management", () => {
+    const TestComponent = () => {
+      try {
+        const sync = useGlobalSync()
+        const handleBootstrap = async () => {
+          try {
+            await sync?.bootstrap()
+            return "bootstrapped"
+          } catch {
+            return "error"
+          }
+        }
+        return (
+          <div data-testid="bootstrap-management">
+            <button onClick={handleBootstrap}>Bootstrap</button>
+          </div>
+        )
+      } catch {
+        return <div data-testid="bootstrap-management">no-context</div>
+      }
+    }
+
+    const { getByTestId } = render(() => (
+      <GlobalSyncProvider>
+        <TestComponent />
+      </GlobalSyncProvider>
+    ))
+
+    expect(getByTestId("bootstrap-management")).toBeInTheDocument()
+  })
 })
