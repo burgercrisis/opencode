@@ -16,9 +16,9 @@ export const SIDECAR_BINARIES: Array<{ rustTarget: string; ocBinary: string; ass
     ocBinary: "opencode-windows-arm64",
     assetExt: "zip",
   },
-  {
+{
     rustTarget: "x86_64-pc-windows-msvc",
-    ocBinary: "opencode-windows-x64-baseline",
+    ocBinary: "opencode-windows-x64",
     assetExt: "zip",
   },
   {
@@ -36,7 +36,17 @@ export const SIDECAR_BINARIES: Array<{ rustTarget: string; ocBinary: string; ass
 export const RUST_TARGET = Bun.env.RUST_TARGET
 
 export function getCurrentSidecar(target = RUST_TARGET) {
-  if (!target && !RUST_TARGET) throw new Error("RUST_TARGET not set")
+  if (!target && !RUST_TARGET) {
+    if (process.platform === 'win32') {
+      target = 'x86_64-pc-windows-msvc';
+    } else if (process.platform === 'darwin') {
+      target = process.arch === 'arm64' ? 'aarch64-apple-darwin' : 'x86_64-apple-darwin';
+    } else if (process.platform === 'linux') {
+      target = process.arch === 'arm64' ? 'aarch64-unknown-linux-gnu' : 'x86_64-unknown-linux-gnu';
+    } else {
+      throw new Error("RUST_TARGET not set and platform not supported");
+    }
+  }
 
   const binaryConfig = SIDECAR_BINARIES.find((b) => b.rustTarget === target)
   if (!binaryConfig) throw new Error(`Sidecar configuration not available for Rust target '${RUST_TARGET}'`)

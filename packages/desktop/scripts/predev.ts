@@ -8,7 +8,7 @@ const sidecarConfig = getCurrentSidecar(RUST_TARGET)
 
 const binaryPath = windowsify(`../opencode/dist/${sidecarConfig.ocBinary}/bin/opencode`)
 
-await (sidecarConfig.ocBinary.includes("-baseline")
+await (sidecarConfig.ocBinary.includes("-baseline") && process.env.CI
   ? $`cd ../opencode && bun run build --single --baseline`
   : $`cd ../opencode && bun run build --single`)
 
