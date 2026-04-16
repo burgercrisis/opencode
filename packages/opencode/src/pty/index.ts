@@ -257,7 +257,13 @@ export namespace Pty {
             log.info("session exited", { id, exitCode })
             session.info.status = "exited"
             Effect.runFork(bus.publish(Event.Exited, { id, exitCode }).pipe(Effect.provide(EffectLogger.layer)))
-            Effect.runFork(remove(id).pipe(Effect.provide(EffectLogger.layer)))
+            
+            // Graceful cleanup: delete after 15 minutes if no one is connected
+            setTimeout(() => {
+              if (session.subscribers.size === 0) {
+                Effect.runFork(remove(id).pipe(Effect.provide(EffectLogger.layer)))
+              }
+            }, 15 * 60 * 1000)
           }),
         )
         yield* bus.publish(Event.Created, { info })
