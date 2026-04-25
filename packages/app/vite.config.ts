@@ -10,6 +10,14 @@ export default defineConfig({
   },
   build: {
     target: "esnext",
-    // sourcemap: true,
+    rollupOptions: {
+      external: [
+        "@opencode-ai/core/util/binary",
+        "@opencode-ai/core/util/encode",
+        "@opencode-ai/core/util/path",
+        "@opencode-ai/core/util/array",
+        "@opencode-ai/core/util/retry",
+      ]
+    }
   },
 })
