@@ -5,7 +5,9 @@ import { which } from "@/util/which"
 import path from "path"
 import { spawn, type ChildProcess } from "child_process"
 import { setTimeout as sleep } from "node:timers/promises"
+import * as Log from "@opencode-ai/core/util/log"
 
+const log = Log.create({ service: "shell" })
 const SIGKILL_TIMEOUT_MS = 200
 const META: Record<string, { deny?: boolean; login?: boolean; posix?: boolean; ps?: boolean }> = {
   bash: { login: true, posix: true },
@@ -108,8 +110,13 @@ function select(file: string | undefined, opts?: { acceptable?: boolean }) {
   if (file && (!opts?.acceptable || ok(file))) {
     const shell = resolve(file)
     if (shell) return shell
+    log.warn("configured shell could not be resolved, using fallback", { shell: file })
   }
-  if (process.platform === "win32") return win()[0]!
+  if (process.platform === "win32") {
+    const shells = win()
+    if (shells.length === 0) return fallback()
+    return shells[0]
+  }
   return fallback()
 }
 

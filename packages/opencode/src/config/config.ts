@@ -89,21 +89,21 @@ async function substituteWellKnownRemoteConfig(input: {
   })
   const headers = isRecord(input.value.headers)
     ? Object.fromEntries(
-        await Promise.all(
-          Object.entries(input.value.headers)
-            .filter((entry): entry is [string, string] => typeof entry[1] === "string")
-            .map(async ([key, value]) => [
-              key,
-              await ConfigVariable.substitute({
-                text: value,
-                type: "virtual",
-                dir: input.dir,
-                source: input.source,
-                env: input.env,
-              }),
-            ]),
-        ),
-      )
+      await Promise.all(
+        Object.entries(input.value.headers)
+          .filter((entry): entry is [string, string] => typeof entry[1] === "string")
+          .map(async ([key, value]) => [
+            key,
+            await ConfigVariable.substitute({
+              text: value,
+              type: "virtual",
+              dir: input.dir,
+              source: input.source,
+              env: input.env,
+            }),
+          ]),
+      ),
+    )
     : undefined
 
   return { url, headers }
@@ -332,7 +332,7 @@ export interface Interface {
   readonly waitForDependencies: () => Effect.Effect<void>
 }
 
-export class Service extends Context.Service<Service, Interface>()("@opencode/Config") {}
+export class Service extends Context.Service<Service, Interface>()("@opencode/Config") { }
 
 export const use = serviceUse(Service)
 
@@ -357,7 +357,10 @@ function patchJsonc(input: string, patch: unknown, path: string[] = []): string 
     return applyEdits(input, edits)
   }
 
-  return Object.entries(patch).reduce((result, [key, value]) => patchJsonc(result, value, [...path, key]), input)
+  return Object.entries(patch).reduce((result, [key, value]) => {
+    if (value === undefined) return result
+    return patchJsonc(result, value, [...path, key])
+  }, input)
 }
 
 function writable(info: Info) {
@@ -468,7 +471,7 @@ export const layer = Layer.effect(
               await fsNode.writeFile(path.join(Global.Path.config, "config.json"), JSON.stringify(result, null, 2))
               await fsNode.unlink(legacy)
             })
-            .catch(() => {}),
+            .catch(() => { }),
         )
       }
 
@@ -566,14 +569,14 @@ export const layer = Layer.effect(
             )
             const fetchedConfig = remote
               ? yield* Effect.gen(function* () {
-                  log.debug("fetching remote config", { url: remote.url })
-                  const data = yield* fetchRemoteJson(remote.url, remote.headers, Schema.Json)
-                  if (isRecord(data) && isRecord(data.config)) return data.config
-                  if (isRecord(data)) return data
-                  return yield* Effect.die(
-                    new Error(`failed to decode remote config from ${remote.url}: expected object`),
-                  )
-                })
+                log.debug("fetching remote config", { url: remote.url })
+                const data = yield* fetchRemoteJson(remote.url, remote.headers, Schema.Json)
+                if (isRecord(data) && isRecord(data.config)) return data.config
+                if (isRecord(data)) return data
+                return yield* Effect.die(
+                  new Error(`failed to decode remote config from ${remote.url}: expected object`),
+                )
+              })
               : {}
             const remoteConfig = mergeConfig(isRecord(wellknown.config) ? wellknown.config : {}, fetchedConfig)
             if (!remoteConfig.$schema) remoteConfig.$schema = "https://opencode.ai/config.json"
@@ -645,8 +648,8 @@ export const layer = Layer.effect(
               Effect.tap((exit) =>
                 Exit.isFailure(exit)
                   ? Effect.sync(() => {
-                      log.warn("background dependency install failed", { dir, error: String(exit.cause) })
-                    })
+                    log.warn("background dependency install failed", { dir, error: String(exit.cause) })
+                  })
                   : Effect.void,
               ),
               Effect.asVoid,
