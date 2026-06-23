@@ -1,4 +1,7 @@
 import type { DesktopTheme } from "./types"
+import abyssThemeJson from "./themes/abyss.json"
+import abyss0ThemeJson from "./themes/abyss0.json"
+import oc1ThemeJson from "./themes/oc-1.json"
 import oc2ThemeJson from "./themes/oc-2.json"
 import amoledThemeJson from "./themes/amoled.json"
 import auraThemeJson from "./themes/aura.json"
@@ -9,11 +12,14 @@ import catppuccinFrappeThemeJson from "./themes/catppuccin-frappe.json"
 import catppuccinMacchiatoThemeJson from "./themes/catppuccin-macchiato.json"
 import cobalt2ThemeJson from "./themes/cobalt2.json"
 import cursorThemeJson from "./themes/cursor.json"
+import customThemeJson from "./themes/custom-theme.json"
 import draculaThemeJson from "./themes/dracula.json"
 import everforestThemeJson from "./themes/everforest.json"
 import flexokiThemeJson from "./themes/flexoki.json"
 import githubThemeJson from "./themes/github.json"
 import gruvboxThemeJson from "./themes/gruvbox.json"
+import ipomoeaThemeJson from "./themes/ipomoea.json"
+import ipomoeaMaybeThemeJson from "./themes/ipomoea-maybe.json"
 import kanagawaThemeJson from "./themes/kanagawa.json"
 import lucentOrngThemeJson from "./themes/lucent-orng.json"
 import materialThemeJson from "./themes/material.json"
@@ -28,6 +34,7 @@ import opencodeThemeJson from "./themes/opencode.json"
 import orngThemeJson from "./themes/orng.json"
 import osakaJadeThemeJson from "./themes/osaka-jade.json"
 import palenightThemeJson from "./themes/palenight.json"
+import pinkpowerThemeJson from "./themes/pinkpower.json"
 import rosepineThemeJson from "./themes/rosepine.json"
 import shadesOfPurpleThemeJson from "./themes/shadesofpurple.json"
 import solarizedThemeJson from "./themes/solarized.json"
@@ -37,6 +44,9 @@ import vercelThemeJson from "./themes/vercel.json"
 import vesperThemeJson from "./themes/vesper.json"
 import zenburnThemeJson from "./themes/zenburn.json"
 
+export const abyssTheme = abyssThemeJson as DesktopTheme
+export const abyss0Theme = abyss0ThemeJson as DesktopTheme
+export const oc1Theme = oc1ThemeJson as DesktopTheme
 export const oc2Theme = oc2ThemeJson as DesktopTheme
 export const amoledTheme = amoledThemeJson as DesktopTheme
 export const auraTheme = auraThemeJson as DesktopTheme
@@ -47,11 +57,14 @@ export const catppuccinFrappeTheme = catppuccinFrappeThemeJson as DesktopTheme
 export const catppuccinMacchiatoTheme = catppuccinMacchiatoThemeJson as DesktopTheme
 export const cobalt2Theme = cobalt2ThemeJson as DesktopTheme
 export const cursorTheme = cursorThemeJson as DesktopTheme
+export const customTheme = customThemeJson as DesktopTheme
 export const draculaTheme = draculaThemeJson as DesktopTheme
 export const everforestTheme = everforestThemeJson as DesktopTheme
 export const flexokiTheme = flexokiThemeJson as DesktopTheme
 export const githubTheme = githubThemeJson as DesktopTheme
 export const gruvboxTheme = gruvboxThemeJson as DesktopTheme
+export const ipomoeaTheme = ipomoeaThemeJson as DesktopTheme
+export const ipomoeaMaybeTheme = ipomoeaMaybeThemeJson as DesktopTheme
 export const kanagawaTheme = kanagawaThemeJson as DesktopTheme
 export const lucentOrngTheme = lucentOrngThemeJson as DesktopTheme
 export const materialTheme = materialThemeJson as DesktopTheme
@@ -66,6 +79,7 @@ export const opencodeTheme = opencodeThemeJson as DesktopTheme
 export const orngTheme = orngThemeJson as DesktopTheme
 export const osakaJadeTheme = osakaJadeThemeJson as DesktopTheme
 export const palenightTheme = palenightThemeJson as DesktopTheme
+export const pinkpowerTheme = pinkpowerThemeJson as DesktopTheme
 export const rosepineTheme = rosepineThemeJson as DesktopTheme
 export const shadesOfPurpleTheme = shadesOfPurpleThemeJson as DesktopTheme
 export const solarizedTheme = solarizedThemeJson as DesktopTheme
@@ -76,7 +90,10 @@ export const vesperTheme = vesperThemeJson as DesktopTheme
 export const zenburnTheme = zenburnThemeJson as DesktopTheme
 
 export const DEFAULT_THEMES: Record<string, DesktopTheme> = {
+  "oc-1": oc1Theme,
   "oc-2": oc2Theme,
+  abyss: abyssTheme,
+  abyss0: abyss0Theme,
   amoled: amoledTheme,
   aura: auraTheme,
   ayu: ayuTheme,
@@ -86,11 +103,14 @@ export const DEFAULT_THEMES: Record<string, DesktopTheme> = {
   "catppuccin-macchiato": catppuccinMacchiatoTheme,
   cobalt2: cobalt2Theme,
   cursor: cursorTheme,
+  custom: customTheme,
   dracula: draculaTheme,
   everforest: everforestTheme,
   flexoki: flexokiTheme,
   github: githubTheme,
   gruvbox: gruvboxTheme,
+  ipomoea: ipomoeaTheme,
+  "ipomoea-maybe": ipomoeaMaybeTheme,
   kanagawa: kanagawaTheme,
   "lucent-orng": lucentOrngTheme,
   material: materialTheme,
@@ -105,6 +125,7 @@ export const DEFAULT_THEMES: Record<string, DesktopTheme> = {
   orng: orngTheme,
   "osaka-jade": osakaJadeTheme,
   palenight: palenightTheme,
+  pinkpower: pinkpowerTheme,
   rosepine: rosepineTheme,
   shadesofpurple: shadesOfPurpleTheme,
   solarized: solarizedTheme,
