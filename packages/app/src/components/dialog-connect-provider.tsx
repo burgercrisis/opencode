@@ -9,7 +9,7 @@ import { ProviderIcon } from "@opencode-ai/ui/provider-icon"
 import { Spinner } from "@opencode-ai/ui/spinner"
 import { TextField } from "@opencode-ai/ui/text-field"
 import { showToast } from "@/utils/toast"
-import { createEffect, createMemo, createResource, Match, onCleanup, onMount, Switch } from "solid-js"
+import { type Accessor, createEffect, createMemo, createResource, Match, onCleanup, onMount, Switch } from "solid-js"
 import { createStore, produce } from "solid-js/store"
 import { Link } from "@/components/link"
 import { useServerSDK } from "@/context/server-sdk"
@@ -17,18 +17,16 @@ import { useServerSync } from "@/context/server-sync"
 import { useLanguage } from "@/context/language"
 import { useProviders } from "@/hooks/use-providers"
 
-export function DialogConnectProvider(props: { provider: string }) {
+export function DialogConnectProvider(props: {
+  provider: string
+  directory?: Accessor<string | undefined>
+  onBack: () => void
+}) {
   const dialog = useDialog()
   const serverSync = useServerSync()
   const serverSDK = useServerSDK()
   const language = useLanguage()
-  const providers = useProviders()
-
-  const all = () => {
-    void import("./dialog-select-provider").then((x) => {
-      dialog.show(() => <x.DialogSelectProvider />)
-    })
-  }
+  const providers = useProviders(props.directory)
 
   const alive = { value: true }
   const timer = { current: undefined as ReturnType<typeof setTimeout> | undefined }
@@ -65,6 +63,7 @@ export function DialogConnectProvider(props: { provider: string }) {
   const [store, setStore] = createStore({
     methodIndex: undefined as undefined | number,
     authorization: undefined as undefined | ProviderAuthAuthorization,
+    promptInputs: undefined as undefined | Record<string, string>,
     state: "pending" as undefined | "pending" | "complete" | "error" | "prompt",
     error: undefined as string | undefined,
   })
@@ -73,6 +72,7 @@ export function DialogConnectProvider(props: { provider: string }) {
     | { type: "method.select"; index: number }
     | { type: "method.reset" }
     | { type: "auth.prompt" }
+    | { type: "auth.inputs"; inputs: Record<string, string> }
     | { type: "auth.pending" }
     | { type: "auth.complete"; authorization: ProviderAuthAuthorization }
     | { type: "auth.error"; error: string }
@@ -83,6 +83,7 @@ export function DialogConnectProvider(props: { provider: string }) {
         if (action.type === "method.select") {
           draft.methodIndex = action.index
           draft.authorization = undefined
+          draft.promptInputs = undefined
           draft.state = undefined
           draft.error = undefined
           return
@@ -90,12 +91,19 @@ export function DialogConnectProvider(props: { provider: string }) {
         if (action.type === "method.reset") {
           draft.methodIndex = undefined
           draft.authorization = undefined
+          draft.promptInputs = undefined
           draft.state = undefined
           draft.error = undefined
           return
         }
         if (action.type === "auth.prompt") {
           draft.state = "prompt"
+          draft.error = undefined
+          return
+        }
+        if (action.type === "auth.inputs") {
+          draft.promptInputs = action.inputs
+          draft.state = undefined
           draft.error = undefined
           return
         }
@@ -151,6 +159,15 @@ export function DialogConnectProvider(props: { provider: string }) {
     const method = methods()[index]
     dispatch({ type: "method.select", index })
 
+    if (method.type === "api" && method.prompts?.length) {
+      if (!inputs) {
+        dispatch({ type: "auth.prompt" })
+        return
+      }
+      dispatch({ type: "auth.inputs", inputs })
+      return
+    }
+
     if (method.type === "oauth") {
       if (method.prompts?.length && !inputs) {
         dispatch({ type: "auth.prompt" })
@@ -190,7 +207,7 @@ export function DialogConnectProvider(props: { provider: string }) {
     }
   }
 
-  function OAuthPromptsView() {
+  function AuthPromptsView() {
     const [formStore, setFormStore] = createStore({
       value: {} as Record<string, string>,
       index: 0,
@@ -198,8 +215,7 @@ export function DialogConnectProvider(props: { provider: string }) {
 
     const prompts = createMemo<NonNullable<ProviderAuthMethod["prompts"]>>(() => {
       const value = method()
-      if (value?.type !== "oauth") return []
-      return value.prompts ?? []
+      return value?.prompts ?? []
     })
     const matches = (prompt: NonNullable<ReturnType<typeof prompts>[number]>, value: Record<string, string>) => {
       if (!prompt.when) return true
@@ -228,6 +244,10 @@ export function DialogConnectProvider(props: { provider: string }) {
       const next = prompts().findIndex((prompt, i) => i > index && matches(prompt, value))
       if (next !== -1) {
         setFormStore("index", next)
+        return
+      }
+      if (method()?.type === "api") {
+        dispatch({ type: "auth.inputs", inputs: value })
         return
       }
       await selectMethod(store.methodIndex, value)
@@ -342,19 +362,11 @@ export function DialogConnectProvider(props: { provider: string }) {
   }
 
   function goBack() {
-    if (methods().length === 1) {
-      all()
-      return
-    }
-    if (store.authorization) {
+    if (methods().length > 1 && store.methodIndex !== undefined) {
       dispatch({ type: "method.reset" })
       return
     }
-    if (store.methodIndex !== undefined) {
-      dispatch({ type: "method.reset" })
-      return
-    }
-    all()
+    props.onBack()
   }
 
   function MethodSelection() {
@@ -414,6 +426,7 @@ export function DialogConnectProvider(props: { provider: string }) {
         auth: {
           type: "api",
           key: apiKey,
+          ...(store.promptInputs ? { metadata: store.promptInputs } : {}),
         },
       })
       await complete()
@@ -577,6 +590,7 @@ export function DialogConnectProvider(props: { provider: string }) {
 
   return (
     <Dialog
+      class="h-full"
       title={
         <IconButton
           tabIndex={-1}
@@ -586,6 +600,7 @@ export function DialogConnectProvider(props: { provider: string }) {
           aria-label={language.t("common.goBack")}
         />
       }
+      transition
     >
       <div class="flex flex-col gap-6 px-2.5 pb-3">
         <div class="px-2.5 flex gap-4 items-center">
@@ -622,7 +637,7 @@ export function DialogConnectProvider(props: { provider: string }) {
                 </div>
               </Match>
               <Match when={store.state === "prompt"}>
-                <OAuthPromptsView />
+                <AuthPromptsView />
               </Match>
               <Match when={store.state === "error"}>
                 <div class="text-14-regular text-text-base">

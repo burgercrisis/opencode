@@ -13,10 +13,9 @@ import { useServerSDK } from "@/context/server-sdk"
 import { useServerSync } from "@/context/server-sync"
 import { useLanguage } from "@/context/language"
 import { type FormState, headerRow, modelRow, validateCustomProvider } from "./dialog-custom-provider-form"
-import { DialogSelectProvider } from "./dialog-select-provider"
 
 type Props = {
-  back?: "providers" | "close"
+  onBack: () => void
 }
 
 export function DialogCustomProvider(props: Props) {
@@ -34,14 +33,6 @@ export function DialogCustomProvider(props: Props) {
     headers: [headerRow()],
     err: {},
   })
-
-  const goBack = () => {
-    if (props.back === "close") {
-      dialog.close()
-      return
-    }
-    dialog.show(() => <DialogSelectProvider />)
-  }
 
   const addModel = () => {
     setForm(
@@ -163,12 +154,13 @@ export function DialogCustomProvider(props: Props) {
 
   return (
     <Dialog
+      class="h-full"
       title={
         <IconButton
           tabIndex={-1}
           icon="arrow-left"
           variant="ghost"
-          onClick={goBack}
+          onClick={props.onBack}
           aria-label={language.t("common.goBack")}
         />
       }
